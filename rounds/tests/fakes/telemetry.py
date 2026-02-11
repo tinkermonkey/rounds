@@ -1,7 +1,6 @@
 """Fake TelemetryPort implementation for testing."""
 
 from datetime import datetime
-from typing import Any
 
 from rounds.core.models import ErrorEvent, LogEntry, SpanNode, TraceTree
 from rounds.core.ports import TelemetryPort

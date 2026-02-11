@@ -1,7 +1,6 @@
 """Fake DiagnosisPort implementation for testing."""
 
 from datetime import datetime
-from typing import Optional
 
 from rounds.core.models import Confidence, Diagnosis, InvestigationContext
 from rounds.core.ports import DiagnosisPort
@@ -17,7 +16,7 @@ class FakeDiagnosisPort(DiagnosisPort):
     def __init__(self):
         """Initialize with default values."""
         self.diagnoses: dict[str, Diagnosis] = {}
-        self.default_diagnosis: Optional[Diagnosis] = None
+        self.default_diagnosis: Diagnosis | None = None
         self.default_cost: float = 0.1
         self.diagnose_calls: list[InvestigationContext] = []
         self.estimate_cost_calls: list[InvestigationContext] = []
