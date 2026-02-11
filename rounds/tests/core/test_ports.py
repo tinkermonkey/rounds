@@ -5,10 +5,9 @@ and that implementations must satisfy the interface contract.
 """
 
 import pytest
-from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
 from pathlib import Path
+from typing import Any
 import sys
 
 # Add the rounds directory to path for imports
@@ -20,6 +19,7 @@ from core.models import (
     ErrorEvent,
     InvestigationContext,
     LogEntry,
+    PollResult,
     Severity,
     Signature,
     SignatureStatus,
@@ -189,30 +189,50 @@ class MockTelemetryPort(TelemetryPort):
     """Mock implementation of TelemetryPort for testing."""
 
     async def get_recent_errors(
-        self,
-        service: str | None = None,
-        since_timestamp: datetime | None = None,
-        limit: int = 100,
+        self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
         """Mock implementation."""
         return []
 
-    async def get_trace(self, trace_id: str) -> TraceTree | None:
+    async def get_trace(self, trace_id: str) -> TraceTree:
         """Mock implementation."""
-        return None
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="test-service",
+            operation="test-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
 
-    async def get_logs_for_trace(
-        self, trace_id: str, limit: int = 50
+    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+        """Mock implementation."""
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="test-service",
+            operation="test-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        return [
+            TraceTree(trace_id=tid, root_span=root_span, error_spans=())
+            for tid in trace_ids
+        ]
+
+    async def get_correlated_logs(
+        self, trace_ids: list[str], window_minutes: int = 5
     ) -> list[LogEntry]:
         """Mock implementation."""
         return []
 
-    async def get_related_errors(
-        self,
-        error_type: str,
-        service: str,
-        since_timestamp: datetime,
-        limit: int = 10,
+    async def get_events_for_signature(
+        self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:
         """Mock implementation."""
         return []
@@ -221,36 +241,31 @@ class MockTelemetryPort(TelemetryPort):
 class MockSignatureStorePort(SignatureStorePort):
     """Mock implementation of SignatureStorePort for testing."""
 
-    async def create(self, signature: Signature) -> str:
-        """Mock implementation."""
-        return signature.id
-
-    async def get_by_id(self, signature_id: str) -> Signature | None:
-        """Mock implementation."""
-        return None
-
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Mock implementation."""
         return None
+
+    async def save(self, signature: Signature) -> None:
+        """Mock implementation."""
+        pass
 
     async def update(self, signature: Signature) -> None:
         """Mock implementation."""
         pass
 
-    async def query(
-        self,
-        service: str | None = None,
-        status: SignatureStatus | None = None,
-        error_type: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> tuple[list[Signature], int]:
+    async def get_pending_investigation(self) -> list[Signature]:
         """Mock implementation."""
-        return ([], 0)
+        return []
 
-    async def delete(self, signature_id: str) -> None:
+    async def get_similar(
+        self, signature: Signature, limit: int = 5
+    ) -> list[Signature]:
         """Mock implementation."""
-        pass
+        return []
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Mock implementation."""
+        return {}
 
 
 class MockDiagnosisPort(DiagnosisPort):
@@ -276,7 +291,11 @@ class MockDiagnosisPort(DiagnosisPort):
 class MockNotificationPort(NotificationPort):
     """Mock implementation of NotificationPort for testing."""
 
-    async def notify(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+        """Mock implementation."""
+        pass
+
+    async def report_summary(self, stats: dict[str, Any]) -> None:
         """Mock implementation."""
         pass
 
@@ -284,13 +303,19 @@ class MockNotificationPort(NotificationPort):
 class MockPollPort(PollPort):
     """Mock implementation of PollPort for testing."""
 
-    async def poll_and_investigate(self) -> None:
+    async def execute_poll_cycle(self) -> PollResult:
         """Mock implementation."""
-        pass
+        return PollResult(
+            errors_found=0,
+            new_signatures=0,
+            updated_signatures=0,
+            investigations_queued=0,
+            timestamp=datetime.now(),
+        )
 
-    async def get_poll_summary(self) -> dict[str, Any]:
+    async def execute_investigation_cycle(self) -> list[Diagnosis]:
         """Mock implementation."""
-        return {}
+        return []
 
 
 class MockManagementPort(ManagementPort):
@@ -365,46 +390,45 @@ class TestTelemetryPort:
     ) -> None:
         """get_recent_errors must return a list of ErrorEvent."""
         port = MockTelemetryPort()
-        result = await port.get_recent_errors()
+        result = await port.get_recent_errors(datetime.now())
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_get_recent_errors_respects_limit(self) -> None:
-        """get_recent_errors must respect the limit parameter."""
+    async def test_get_recent_errors_respects_services_filter(self) -> None:
+        """get_recent_errors must filter by services."""
         port = MockTelemetryPort()
-        result = await port.get_recent_errors(limit=50)
+        result = await port.get_recent_errors(
+            datetime.now(), services=["payment-service"]
+        )
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_get_recent_errors_respects_service_filter(self) -> None:
-        """get_recent_errors must filter by service."""
-        port = MockTelemetryPort()
-        result = await port.get_recent_errors(service="payment-service")
-        assert isinstance(result, list)
-
-    @pytest.mark.asyncio
-    async def test_get_trace_returns_trace_or_none(self) -> None:
-        """get_trace must return TraceTree or None."""
+    async def test_get_trace_returns_trace_tree(self) -> None:
+        """get_trace must return TraceTree."""
         port = MockTelemetryPort()
         result = await port.get_trace("trace-123")
-        assert result is None or isinstance(result, TraceTree)
+        assert isinstance(result, TraceTree)
 
     @pytest.mark.asyncio
-    async def test_get_logs_for_trace_returns_list(self) -> None:
-        """get_logs_for_trace must return a list of LogEntry."""
+    async def test_get_traces_returns_list(self) -> None:
+        """get_traces must return a list of TraceTree."""
         port = MockTelemetryPort()
-        result = await port.get_logs_for_trace("trace-123")
+        result = await port.get_traces(["trace-123", "trace-456"])
+        assert isinstance(result, list)
+        assert all(isinstance(t, TraceTree) for t in result)
+
+    @pytest.mark.asyncio
+    async def test_get_correlated_logs_returns_list(self) -> None:
+        """get_correlated_logs must return a list of LogEntry."""
+        port = MockTelemetryPort()
+        result = await port.get_correlated_logs(["trace-123"])
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_get_related_errors_returns_list(self) -> None:
-        """get_related_errors must return a list of ErrorEvent."""
+    async def test_get_events_for_signature_returns_list(self) -> None:
+        """get_events_for_signature must return a list of ErrorEvent."""
         port = MockTelemetryPort()
-        result = await port.get_related_errors(
-            error_type="ConnectionTimeoutError",
-            service="payment-service",
-            since_timestamp=datetime.now(),
-        )
+        result = await port.get_events_for_signature("abc123def456")
         assert isinstance(result, list)
 
 
@@ -417,28 +441,17 @@ class TestSignatureStorePort:
     """Test SignatureStorePort interface contract."""
 
     @pytest.mark.asyncio
-    async def test_create_returns_id(self, signature: Signature) -> None:
-        """create must return the signature ID."""
-        port = MockSignatureStorePort()
-        result = await port.create(signature)
-        assert isinstance(result, str)
-        assert result == signature.id
-
-    @pytest.mark.asyncio
-    async def test_get_by_id_returns_signature_or_none(
-        self, signature: Signature
-    ) -> None:
-        """get_by_id must return Signature or None."""
-        port = MockSignatureStorePort()
-        result = await port.get_by_id("sig-001")
-        assert result is None or isinstance(result, Signature)
-
-    @pytest.mark.asyncio
     async def test_get_by_fingerprint_returns_signature_or_none(self) -> None:
         """get_by_fingerprint must return Signature or None."""
         port = MockSignatureStorePort()
         result = await port.get_by_fingerprint("abc123def456")
         assert result is None or isinstance(result, Signature)
+
+    @pytest.mark.asyncio
+    async def test_save_is_callable(self, signature: Signature) -> None:
+        """save must be callable and not raise."""
+        port = MockSignatureStorePort()
+        await port.save(signature)
 
     @pytest.mark.asyncio
     async def test_update_is_callable(self, signature: Signature) -> None:
@@ -447,34 +460,27 @@ class TestSignatureStorePort:
         await port.update(signature)
 
     @pytest.mark.asyncio
-    async def test_query_returns_tuple(self) -> None:
-        """query must return tuple of (signatures, total_count)."""
+    async def test_get_pending_investigation_returns_list(self) -> None:
+        """get_pending_investigation must return a list of Signature."""
         port = MockSignatureStorePort()
-        result = await port.query()
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        sigs, count = result
-        assert isinstance(sigs, list)
-        assert isinstance(count, int)
+        result = await port.get_pending_investigation()
+        assert isinstance(result, list)
+        assert all(isinstance(sig, Signature) for sig in result)
 
     @pytest.mark.asyncio
-    async def test_query_respects_filters(self) -> None:
-        """query must accept filter parameters."""
+    async def test_get_similar_returns_list(self, signature: Signature) -> None:
+        """get_similar must return a list of Signature."""
         port = MockSignatureStorePort()
-        result = await port.query(
-            service="payment-service",
-            status=SignatureStatus.NEW,
-            error_type="ConnectionTimeoutError",
-            limit=50,
-            offset=0,
-        )
-        assert isinstance(result, tuple)
+        result = await port.get_similar(signature)
+        assert isinstance(result, list)
+        assert all(isinstance(sig, Signature) for sig in result)
 
     @pytest.mark.asyncio
-    async def test_delete_is_callable(self) -> None:
-        """delete must be callable and not raise."""
+    async def test_get_stats_returns_dict(self) -> None:
+        """get_stats must return a dictionary."""
         port = MockSignatureStorePort()
-        await port.delete("sig-001")
+        result = await port.get_stats()
+        assert isinstance(result, dict)
 
 
 # ============================================================================
@@ -521,12 +527,18 @@ class TestNotificationPort:
     """Test NotificationPort interface contract."""
 
     @pytest.mark.asyncio
-    async def test_notify_is_callable(
+    async def test_report_is_callable(
         self, signature: Signature, diagnosis: Diagnosis
     ) -> None:
-        """notify must be callable and not raise."""
+        """report must be callable and not raise."""
         port = MockNotificationPort()
-        await port.notify(signature, diagnosis)
+        await port.report(signature, diagnosis)
+
+    @pytest.mark.asyncio
+    async def test_report_summary_is_callable(self) -> None:
+        """report_summary must be callable and not raise."""
+        port = MockNotificationPort()
+        await port.report_summary({})
 
 
 # ============================================================================
@@ -538,17 +550,22 @@ class TestPollPort:
     """Test PollPort interface contract."""
 
     @pytest.mark.asyncio
-    async def test_poll_and_investigate_is_callable(self) -> None:
-        """poll_and_investigate must be callable and not raise."""
+    async def test_execute_poll_cycle_returns_poll_result(self) -> None:
+        """execute_poll_cycle must return a PollResult."""
         port = MockPollPort()
-        await port.poll_and_investigate()
+        result = await port.execute_poll_cycle()
+        assert isinstance(result, PollResult)
+        assert isinstance(result.errors_found, int)
+        assert isinstance(result.new_signatures, int)
+        assert isinstance(result.timestamp, datetime)
 
     @pytest.mark.asyncio
-    async def test_get_poll_summary_returns_dict(self) -> None:
-        """get_poll_summary must return a dictionary."""
+    async def test_execute_investigation_cycle_returns_list(self) -> None:
+        """execute_investigation_cycle must return a list of Diagnosis."""
         port = MockPollPort()
-        result = await port.get_poll_summary()
-        assert isinstance(result, dict)
+        result = await port.execute_investigation_cycle()
+        assert isinstance(result, list)
+        assert all(isinstance(d, Diagnosis) for d in result)
 
 
 # ============================================================================

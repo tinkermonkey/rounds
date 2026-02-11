@@ -26,6 +26,7 @@ from .models import (
     ErrorEvent,
     InvestigationContext,
     LogEntry,
+    PollResult,
     Signature,
     SignatureStatus,
     TraceTree,
@@ -40,6 +41,9 @@ from .models import (
 class TelemetryPort(ABC):
     """Port for retrieving errors, traces, and logs from telemetry backend.
 
+    How the core retrieves observability data.
+    Defined in terms of domain models, not backend-specific queries.
+
     Adapters implementing this port should retrieve data from external
     telemetry systems (SigNoz, Jaeger, Grafana Loki, etc.) and normalize
     into the core's domain models.
@@ -53,19 +57,16 @@ class TelemetryPort(ABC):
 
     @abstractmethod
     async def get_recent_errors(
-        self,
-        service: str | None = None,
-        since_timestamp: datetime | None = None,
-        limit: int = 100,
+        self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
-        """Retrieve recent errors from the telemetry backend.
+        """Return error events since the given timestamp.
+
+        The adapter translates this to backend-specific queries.
 
         Args:
-            service: Filter to specific service (optional).
+            since: Return errors after this timestamp.
+            services: Filter to specific services (optional).
                 If None, retrieve errors from all services.
-            since_timestamp: Only errors after this timestamp (optional).
-                If None, use backend's default window (usually 1 hour).
-            limit: Maximum number of errors to return (default 100).
 
         Returns:
             List of normalized ErrorEvent objects in descending timestamp order.
@@ -77,31 +78,48 @@ class TelemetryPort(ABC):
         """
 
     @abstractmethod
-    async def get_trace(self, trace_id: str) -> TraceTree | None:
-        """Retrieve complete trace hierarchy by trace ID.
+    async def get_trace(self, trace_id: str) -> TraceTree:
+        """Return the full span tree for a trace.
 
         Args:
             trace_id: OpenTelemetry trace ID (128-bit hex string).
 
         Returns:
-            TraceTree with full span hierarchy, or None if trace not found.
+            TraceTree with full span hierarchy.
+
+        Raises:
+            Exception: If telemetry backend is unreachable or trace not found.
+        """
+
+    @abstractmethod
+    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+        """Batch trace retrieval.
+
+        Args:
+            trace_ids: List of OpenTelemetry trace IDs.
+
+        Returns:
+            List of TraceTree objects in the same order as trace_ids.
+            If a trace is not found, it is omitted from results.
 
         Raises:
             Exception: If telemetry backend is unreachable.
         """
 
     @abstractmethod
-    async def get_logs_for_trace(
-        self, trace_id: str, limit: int = 50
+    async def get_correlated_logs(
+        self, trace_ids: list[str], window_minutes: int = 5
     ) -> list[LogEntry]:
-        """Retrieve all log entries associated with a trace.
+        """Return logs correlated with the given traces.
+
+        Includes a time window around each trace for context.
 
         Args:
-            trace_id: OpenTelemetry trace ID.
-            limit: Maximum number of log entries to return.
+            trace_ids: List of trace IDs to correlate logs with.
+            window_minutes: Time window (minutes) before/after traces to include.
 
         Returns:
-            List of LogEntry objects in ascending timestamp order.
+            List of LogEntry objects correlated with the traces.
             Empty list if no logs found.
 
         Raises:
@@ -109,26 +127,20 @@ class TelemetryPort(ABC):
         """
 
     @abstractmethod
-    async def get_related_errors(
-        self,
-        error_type: str,
-        service: str,
-        since_timestamp: datetime,
-        limit: int = 10,
+    async def get_events_for_signature(
+        self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:
-        """Retrieve other errors of the same type in the service.
+        """Return recent events matching a known fingerprint.
 
-        Used to provide context for diagnosis. Adapter may implement
-        similarity matching based on error message patterns.
+        The adapter may implement this via tag queries, or the core
+        may supply trace_ids from the store for the adapter to fetch.
 
         Args:
-            error_type: Error class/name (e.g. "ConnectionTimeoutError").
-            service: Service name.
-            since_timestamp: Time window start (backward from now).
-            limit: Maximum number of related errors to return.
+            fingerprint: Signature fingerprint hash.
+            limit: Maximum number of events to return.
 
         Returns:
-            List of ErrorEvent objects (may not include the original error).
+            List of ErrorEvent objects matching the fingerprint.
 
         Raises:
             Exception: If telemetry backend is unreachable.
@@ -136,7 +148,9 @@ class TelemetryPort(ABC):
 
 
 class SignatureStorePort(ABC):
-    """Port for persisting and querying signatures in the signature database.
+    """Port for persisting and querying failure signatures.
+
+    How the core persists and queries failure signatures.
 
     Adapters implementing this port should provide ACID-compliant storage
     of Signature objects with support for querying, updating, and archival.
@@ -149,40 +163,8 @@ class SignatureStorePort(ABC):
     """
 
     @abstractmethod
-    async def create(self, signature: Signature) -> str:
-        """Create and persist a new signature.
-
-        Args:
-            signature: Signature object to create. The id field should be
-                a UUID provided by the caller.
-
-        Returns:
-            The signature ID (UUID string).
-
-        Raises:
-            Exception: If signature with same ID already exists or
-                database is unavailable.
-        """
-
-    @abstractmethod
-    async def get_by_id(self, signature_id: str) -> Signature | None:
-        """Retrieve a signature by ID.
-
-        Args:
-            signature_id: UUID of the signature.
-
-        Returns:
-            Signature object if found, None otherwise.
-
-        Raises:
-            Exception: If database is unavailable.
-        """
-
-    @abstractmethod
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
-        """Retrieve a signature by its fingerprint hash.
-
-        Used during deduplication to check if a signature already exists.
+        """Look up a signature by its fingerprint hash.
 
         Args:
             fingerprint: Hex digest of the normalized error.
@@ -195,56 +177,66 @@ class SignatureStorePort(ABC):
         """
 
     @abstractmethod
-    async def update(self, signature: Signature) -> None:
-        """Update an existing signature with new state.
-
-        Updates the entire signature object atomically.
+    async def save(self, signature: Signature) -> None:
+        """Create or update a signature.
 
         Args:
-            signature: Signature with updated fields
-                (usually status, last_seen, occurrence_count, diagnosis).
-
-        Raises:
-            Exception: If signature doesn't exist or database is unavailable.
-        """
-
-    @abstractmethod
-    async def query(
-        self,
-        service: str | None = None,
-        status: SignatureStatus | None = None,
-        error_type: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> tuple[list[Signature], int]:
-        """Query signatures with optional filters.
-
-        Args:
-            service: Filter to signatures from this service (optional).
-            status: Filter to signatures with this status (optional).
-            error_type: Filter to signatures with this error type (optional).
-            limit: Number of results to return.
-            offset: Number of results to skip (for pagination).
-
-        Returns:
-            Tuple of (signature_list, total_count).
-            signature_list is ordered by last_seen descending.
-            total_count is the total number of signatures matching filters
-            (before limit/offset applied).
+            signature: Signature object to persist.
 
         Raises:
             Exception: If database is unavailable.
         """
 
     @abstractmethod
-    async def delete(self, signature_id: str) -> None:
-        """Delete a signature (archive or hard delete).
+    async def update(self, signature: Signature) -> None:
+        """Update an existing signature.
 
         Args:
-            signature_id: UUID of the signature to delete.
+            signature: Signature with updated fields.
 
         Raises:
             Exception: If signature doesn't exist or database is unavailable.
+        """
+
+    @abstractmethod
+    async def get_pending_investigation(self) -> list[Signature]:
+        """Return signatures with status NEW, ordered by priority.
+
+        Returns:
+            List of Signature objects with NEW status.
+
+        Raises:
+            Exception: If database is unavailable.
+        """
+
+    @abstractmethod
+    async def get_similar(
+        self, signature: Signature, limit: int = 5
+    ) -> list[Signature]:
+        """Return signatures with similar characteristics.
+
+        May use vector similarity in the future.
+
+        Args:
+            signature: Reference signature to find similar ones.
+            limit: Maximum number of similar signatures to return.
+
+        Returns:
+            List of similar Signature objects.
+
+        Raises:
+            Exception: If database is unavailable.
+        """
+
+    @abstractmethod
+    async def get_stats(self) -> dict[str, Any]:
+        """Summary statistics for reporting.
+
+        Returns:
+            Dictionary with statistics (keys are implementation-defined).
+
+        Raises:
+            Exception: If database is unavailable.
         """
 
 
@@ -301,7 +293,9 @@ class DiagnosisPort(ABC):
 
 
 class NotificationPort(ABC):
-    """Port for reporting diagnosis results to developers.
+    """Port for reporting findings to developers.
+
+    How the core reports findings to the developer.
 
     Adapters implementing this port should deliver findings to the team
     via various channels (Slack, email, GitHub issues, stdout, etc.).
@@ -314,13 +308,10 @@ class NotificationPort(ABC):
     """
 
     @abstractmethod
-    async def notify(
+    async def report(
         self, signature: Signature, diagnosis: Diagnosis
     ) -> None:
-        """Send a notification with diagnosis results.
-
-        Formatter adapters (e.g., GitHub issue creator) should use the
-        signature and diagnosis to create a notification in their medium.
+        """Report a diagnosed signature through whatever channel the adapter implements.
 
         Args:
             signature: The signature that was diagnosed.
@@ -331,6 +322,17 @@ class NotificationPort(ABC):
                 Caller may choose to queue for retry or log error.
         """
 
+    @abstractmethod
+    async def report_summary(self, stats: dict[str, Any]) -> None:
+        """Periodic summary report.
+
+        Args:
+            stats: Dictionary with summary statistics.
+
+        Raises:
+            Exception: If notification channel is unavailable.
+        """
+
 
 # ============================================================================
 # DRIVING PORTS (Adapters/external systems call into core)
@@ -338,7 +340,10 @@ class NotificationPort(ABC):
 
 
 class PollPort(ABC):
-    """Port for executing poll and investigation cycles.
+    """Entry point for triggering an error-checking cycle.
+
+    The core defines what a poll cycle does;
+    driving adapters decide when to trigger it.
 
     Driving port: the daemon scheduler or CLI invokes these methods to
     perform diagnostic cycles.
@@ -349,10 +354,10 @@ class PollPort(ABC):
     """
 
     @abstractmethod
-    async def poll_and_investigate(self) -> None:
-        """Execute one complete poll → fingerprint → deduplicate → diagnose cycle.
+    async def execute_poll_cycle(self) -> PollResult:
+        """Check for new errors, fingerprint, dedup, and queue investigations.
 
-        This is the main entry point for the daemon loop.
+        Returns a summary of what was found.
 
         High-level flow:
         1. Query telemetry backend for recent errors
@@ -364,12 +369,14 @@ class PollPort(ABC):
            - If within budget, invoke diagnosis
            - Store diagnosis result
            - Notify developers
-        5. Return summary of work completed
 
         Should handle errors gracefully:
         - If telemetry backend is down, backoff and retry
         - If diagnosis exceeds budget, skip and log
         - If notification fails, log but don't fail the cycle
+
+        Returns:
+            PollResult with summary of errors found and signatures created.
 
         Raises:
             Exception: Only for fatal errors (e.g., database corruption).
@@ -378,18 +385,16 @@ class PollPort(ABC):
         """
 
     @abstractmethod
-    async def get_poll_summary(self) -> dict[str, Any]:
-        """Get summary stats from the last poll cycle.
+    async def execute_investigation_cycle(self) -> list[Diagnosis]:
+        """Investigate pending signatures.
 
-        Returns information about recent diagnostic activity:
-        - errors_found: Total errors in the last poll
-        - new_signatures: Signatures created
-        - diagnosed_signatures: Signatures with completed diagnosis
-        - total_cost_usd: Cost of diagnoses performed
-        - last_poll_at: Timestamp of last poll
+        Returns diagnoses produced.
 
         Returns:
-            Dictionary with poll statistics.
+            List of Diagnosis objects for investigated signatures.
+
+        Raises:
+            Exception: Only for fatal errors.
         """
 
 
