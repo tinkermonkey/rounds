@@ -99,6 +99,10 @@ class Settings(BaseSettings):
         default=100,
         description="Number of events to retrieve per poll",
     )
+    error_lookback_minutes: int = Field(
+        default=15,
+        description="Lookback window in minutes for error queries",
+    )
 
     # Budget controls
     daily_budget_limit: float = Field(
@@ -150,12 +154,28 @@ class Settings(BaseSettings):
             raise ValueError("poll_batch_size must be positive")
         return v
 
+    @field_validator("claude_code_budget_usd")
+    @classmethod
+    def validate_claude_budget(cls, v: float) -> float:
+        """Ensure per-diagnosis budget is non-negative."""
+        if v < 0:
+            raise ValueError("claude_code_budget_usd must be non-negative")
+        return v
+
     @field_validator("daily_budget_limit")
     @classmethod
     def validate_budget_limit(cls, v: float) -> float:
         """Ensure budget limit is non-negative."""
         if v < 0:
             raise ValueError("daily_budget_limit must be non-negative")
+        return v
+
+    @field_validator("error_lookback_minutes")
+    @classmethod
+    def validate_lookback_minutes(cls, v: int) -> int:
+        """Ensure lookback window is positive."""
+        if v <= 0:
+            raise ValueError("error_lookback_minutes must be positive")
         return v
 
 

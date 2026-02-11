@@ -7,7 +7,6 @@ triggers poll cycles at configurable intervals.
 import asyncio
 import logging
 import signal
-from typing import Callable
 
 from rounds.core.ports import PollPort
 

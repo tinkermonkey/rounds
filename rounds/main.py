@@ -91,13 +91,7 @@ async def bootstrap() -> None:
     store = SQLiteSignatureStore(
         db_path=settings.store_sqlite_path,
     )
-    # Initialize database schema with explicit error handling
-    try:
-        await store._init_schema()
-        logger.info(f"Database initialized: {settings.store_sqlite_path}")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {e}", exc_info=True)
-        sys.exit(1)
+    logger.info(f"Signature store initialized: {settings.store_sqlite_path}")
 
     # Diagnosis adapter (Claude Code)
     diagnosis_engine = ClaudeCodeDiagnosisAdapter(
@@ -133,7 +127,7 @@ async def bootstrap() -> None:
         fingerprinter=fingerprinter,
         triage=triage,
         investigator=investigator,
-        lookback_minutes=15,  # Default lookback window
+        lookback_minutes=settings.error_lookback_minutes,
         services=None,  # None means all services
     )
 

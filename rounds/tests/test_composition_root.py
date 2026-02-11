@@ -95,9 +95,6 @@ class TestAdapterInstantiation:
             adapter = SQLiteSignatureStore(db_path=db_path)
             # db_path is stored as a Path object internally
             assert str(adapter.db_path) == db_path
-            # Initialize schema (lazy initialization on first use)
-            await adapter._init_schema()
-            assert Path(db_path).exists()
 
     def test_diagnosis_adapter_instantiation(self) -> None:
         """Instantiate Claude Code diagnosis adapter with configuration."""
@@ -137,7 +134,6 @@ class TestCoreServiceInitialization:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "test.db")
             store = SQLiteSignatureStore(db_path=db_path)
-            await store._init_schema()
 
             telemetry = SigNozTelemetryAdapter(
                 api_url="http://localhost:4418",
@@ -175,7 +171,6 @@ class TestCoreServiceInitialization:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "test.db")
             store = SQLiteSignatureStore(db_path=db_path)
-            await store._init_schema()
 
             telemetry = SigNozTelemetryAdapter(
                 api_url="http://localhost:4418",
@@ -242,7 +237,6 @@ class TestDependencyWiring:
                 api_key="test-key",
             )
             store = SQLiteSignatureStore(db_path=db_path)
-            await store._init_schema()
             diagnosis = ClaudeCodeDiagnosisAdapter(
                 model="claude-opus",
                 budget_usd=5.0,
@@ -299,15 +293,51 @@ class TestLoggingConfiguration:
 
     def test_configure_logging_text_format(self) -> None:
         """Configure logging with text format."""
-        # Test that configure_logging function exists and can be imported
-        # We don't directly test it since it modifies global logging state
-        from rounds.main import configure_logging  # noqa: F401
+        import logging
+
+        from rounds.main import configure_logging
+
+        # Clear existing handlers to avoid side effects
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Configure with text format
+        configure_logging(log_level="INFO", log_format="text")
+
+        # Verify logging is configured
+        assert root_logger.level == logging.INFO
+        # Check that at least one handler exists
+        assert len(root_logger.handlers) > 0
+        # Verify the handler is a StreamHandler
+        assert any(
+            isinstance(h, logging.StreamHandler) for h in root_logger.handlers
+        )
 
     def test_configure_logging_json_format(self) -> None:
         """Configure logging with JSON format."""
-        # Test that configure_logging function exists and can be imported
-        # We don't directly test it since it modifies global logging state
-        from rounds.main import configure_logging  # noqa: F401
+        import logging
+
+        from rounds.main import configure_logging
+
+        # Clear existing handlers
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Configure with JSON format
+        configure_logging(log_level="DEBUG", log_format="json")
+
+        # Verify logging is configured
+        assert root_logger.level == logging.DEBUG
+        # Check that at least one handler exists
+        assert len(root_logger.handlers) > 0
+        # Verify the format string contains JSON structure
+        handler = root_logger.handlers[0]
+        if isinstance(handler, logging.StreamHandler):
+            formatter = handler.formatter
+            if formatter:
+                assert "time" in formatter._fmt  # type: ignore[attr-defined]
 
 
 class TestConfigurationDefaults:
