@@ -9,9 +9,9 @@ Invocation format: claude -p --output-format stream-json
 import json
 import logging
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from rounds.core.models import Confidence, Diagnosis, InvestigationContext
 from rounds.core.ports import DiagnosisPort
@@ -172,13 +172,13 @@ Respond with a JSON object in exactly this format:
 
         return prompt
 
-    async def _invoke_claude_code(self, prompt: str) -> dict:
+    async def _invoke_claude_code(self, prompt: str) -> dict[str, Any]:
         """Invoke Claude Code CLI with the investigation prompt asynchronously."""
         try:
             # Invoke Claude Code CLI in an executor to avoid blocking the event loop
             loop = __import__("asyncio").get_event_loop()
 
-            def _run_claude_code():
+            def _run_claude_code() -> str:
                 """Synchronous wrapper for subprocess call."""
                 try:
                     result = subprocess.run(
@@ -205,7 +205,8 @@ Respond with a JSON object in exactly this format:
             lines = output.split("\n")
             for line in lines:
                 if line.startswith("{"):
-                    return json.loads(line)
+                    parsed: dict[str, Any] = json.loads(line)
+                    return parsed
 
             # If no JSON found, return the entire output as diagnosis
             return {
@@ -226,7 +227,7 @@ Respond with a JSON object in exactly this format:
             raise
 
     def _parse_diagnosis_result(
-        self, result: dict, context: InvestigationContext
+        self, result: dict[str, Any], context: InvestigationContext
     ) -> Diagnosis:
         """Parse Claude Code response into a Diagnosis object."""
         try:

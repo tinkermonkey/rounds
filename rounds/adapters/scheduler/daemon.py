@@ -31,7 +31,7 @@ class DaemonScheduler:
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
         self.running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the daemon scheduler loop."""
@@ -78,7 +78,7 @@ class DaemonScheduler:
         try:
             loop = asyncio.get_event_loop()
 
-            def _handle_signal(sig):
+            def _handle_signal(sig: int) -> None:
                 logger.info(f"Received signal {sig}, initiating graceful shutdown...")
                 asyncio.create_task(self.stop())
 

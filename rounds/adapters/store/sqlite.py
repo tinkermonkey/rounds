@@ -228,7 +228,7 @@ class SQLiteSignatureStore(SignatureStorePort):
         finally:
             await conn.close()
 
-    def _row_to_signature(self, row: tuple) -> Signature:
+    def _row_to_signature(self, row: tuple[Any, ...]) -> Signature:
         """Convert a database row to a Signature object."""
         (
             sig_id,

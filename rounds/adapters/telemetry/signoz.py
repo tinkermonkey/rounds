@@ -5,7 +5,7 @@ Normalizes SigNoz-specific data structures into core domain models.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -48,11 +48,11 @@ class SigNozTelemetryAdapter(TelemetryPort):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "SigNozTelemetryAdapter":
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.client.aclose()
 
@@ -163,7 +163,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
                     span_dicts[parent_id]["children"].append(span_id)
 
             # Third pass: construct SpanNode tree (bottom-up, leaves first)
-            span_node_map = {}
+            span_node_map: dict[str, SpanNode] = {}
 
             def build_span_node(span_id: str) -> SpanNode:
                 """Recursively build SpanNode with all children."""
@@ -203,7 +203,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             # Collect error spans
             error_spans = []
 
-            def collect_error_spans(node: SpanNode):
+            def collect_error_spans(node: SpanNode) -> None:
                 """Recursively collect spans with error status."""
                 if node.status == "error" or "error" in (
                     node.attributes.get("otel.status_code") or ""
@@ -312,9 +312,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             List of recent ErrorEvent objects (up to limit).
         """
         # Return recent errors from last 24 hours
-        from datetime import timedelta
-
-        since = datetime.now(datetime.timezone.utc) - timedelta(hours=24)
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
 
         # Fetch recent errors and limit results
         all_errors = await self.get_recent_errors(since)
@@ -331,14 +329,14 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(span_data.get("timestamp", 0))
-            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9)
+            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc)
             severity_text = span_data.get("severityText", "ERROR")
 
             if not error_type:
                 return None
 
             # Parse stack frames from attributes
-            stack_frames = ()
+            stack_frames: tuple[StackFrame, ...] = ()
             attributes = span_data.get("attributes", {})
 
             if isinstance(attributes, dict):
@@ -381,7 +379,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(log_data.get("timestamp", 0))
             return LogEntry(
-                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9),
+                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc),
                 severity=self._parse_severity(log_data.get("severityText", "INFO")),
                 body=log_data.get("body", ""),
                 attributes=log_data.get("attributes", {}),
