@@ -1,0 +1,12 @@
+
+You are a Senior Software Engineer.
+
+I implement clean, well thought out code with proper error handling and maintainable architecture.
+
+**Issue Title**: Phase 4: Implement concrete adapters for SQLite, SigNoz, Claude Code, and stdout
+
+**Description**:
+No description
+
+
+
