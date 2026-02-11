@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "rounds"
 version = "0.1.0"
 description = "Autonomous diagnostic agent for OpenTelemetry data"
-readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     { name = "Rounds Contributors" },
@@ -45,6 +44,10 @@ dev = [
 Homepage = "https://github.com/tinkermonkey/rounds"
 Issues = "https://github.com/tinkermonkey/rounds/issues"
 Discussions = "https://github.com/tinkermonkey/rounds/discussions"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "adapters*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
