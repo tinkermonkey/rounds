@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
@@ -52,19 +53,19 @@ class TestConfigurationLoading:
     def test_load_settings_validates_poll_interval(self) -> None:
         """Poll interval validation rejects zero or negative values."""
         with patch.dict(os.environ, {"POLL_INTERVAL_SECONDS": "0"}):
-            with pytest.raises(Exception):  # ValidationError
+            with pytest.raises(ValidationError):
                 load_settings()
 
     def test_load_settings_validates_batch_size(self) -> None:
         """Batch size validation rejects zero or negative values."""
         with patch.dict(os.environ, {"POLL_BATCH_SIZE": "-1"}):
-            with pytest.raises(Exception):  # ValidationError
+            with pytest.raises(ValidationError):
                 load_settings()
 
     def test_load_settings_validates_budget_limit(self) -> None:
         """Budget limit validation rejects negative values."""
         with patch.dict(os.environ, {"DAILY_BUDGET_LIMIT": "-100"}):
-            with pytest.raises(Exception):  # ValidationError
+            with pytest.raises(ValidationError):
                 load_settings()
 
 

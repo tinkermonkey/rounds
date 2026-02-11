@@ -65,6 +65,10 @@ async def bootstrap() -> None:
     3. Instantiate adapters with configuration
     4. Initialize core services
     5. Select and start run mode
+
+    Raises:
+        SystemExit: On fatal errors (configuration, adapter initialization)
+        asyncio.CancelledError: On graceful shutdown signal
     """
     # Step 1: Load configuration
     settings = load_settings()
@@ -74,65 +78,69 @@ async def bootstrap() -> None:
     logger = logging.getLogger(__name__)
     logger.info("Loading Rounds diagnostic system...")
 
+    # Step 3: Instantiate adapters
+    logger.info("Initializing adapters...")
+
+    # Telemetry adapter (SigNoz)
+    telemetry = SigNozTelemetryAdapter(
+        api_url=settings.signoz_api_url,
+        api_key=settings.signoz_api_key,
+    )
+
+    # Signature store (SQLite)
+    store = SQLiteSignatureStore(
+        db_path=settings.store_sqlite_path,
+    )
+    # Initialize database schema with explicit error handling
     try:
-        # Step 3: Instantiate adapters
-        logger.info("Initializing adapters...")
-
-        # Telemetry adapter (SigNoz)
-        telemetry = SigNozTelemetryAdapter(
-            api_url=settings.signoz_api_url,
-            api_key=settings.signoz_api_key,
-        )
-
-        # Signature store (SQLite)
-        store = SQLiteSignatureStore(
-            db_path=settings.store_sqlite_path,
-        )
-        # Initialize database schema (lazy, called on first port method invocation)
-        # but we can eagerly initialize it here for better error visibility
         await store._init_schema()
+        logger.info(f"Database initialized: {settings.store_sqlite_path}")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}", exc_info=True)
+        sys.exit(1)
 
-        # Diagnosis adapter (Claude Code)
-        diagnosis_engine = ClaudeCodeDiagnosisAdapter(
-            model=settings.claude_code_model,
-            budget_usd=settings.claude_code_budget_usd,
-        )
+    # Diagnosis adapter (Claude Code)
+    diagnosis_engine = ClaudeCodeDiagnosisAdapter(
+        model=settings.claude_code_model,
+        budget_usd=settings.claude_code_budget_usd,
+    )
 
-        # Notification adapter (Stdout)
-        # Future: support multiple notification adapters based on config
-        notification = StdoutNotificationAdapter(verbose=settings.debug)
+    # Notification adapter (Stdout)
+    # Future: support multiple notification adapters based on config
+    notification = StdoutNotificationAdapter(verbose=settings.debug)
 
-        # Step 4: Initialize core services
-        logger.info("Initializing core services...")
+    # Step 4: Initialize core services
+    logger.info("Initializing core services...")
 
-        # Domain logic components
-        fingerprinter = Fingerprinter()
-        triage = TriageEngine()
+    # Domain logic components
+    fingerprinter = Fingerprinter()
+    triage = TriageEngine()
 
-        # Investigator (orchestrates investigation workflow)
-        investigator = Investigator(
-            telemetry=telemetry,
-            store=store,
-            diagnosis_engine=diagnosis_engine,
-            notification=notification,
-            triage=triage,
-            codebase_path=settings.codebase_path,
-        )
+    # Investigator (orchestrates investigation workflow)
+    investigator = Investigator(
+        telemetry=telemetry,
+        store=store,
+        diagnosis_engine=diagnosis_engine,
+        notification=notification,
+        triage=triage,
+        codebase_path=settings.codebase_path,
+    )
 
-        # Poll service (implements PollPort)
-        poll_service = PollService(
-            telemetry=telemetry,
-            store=store,
-            fingerprinter=fingerprinter,
-            triage=triage,
-            investigator=investigator,
-            lookback_minutes=15,  # Default lookback window
-            services=None,  # None means all services
-        )
+    # Poll service (implements PollPort)
+    poll_service = PollService(
+        telemetry=telemetry,
+        store=store,
+        fingerprinter=fingerprinter,
+        triage=triage,
+        investigator=investigator,
+        lookback_minutes=15,  # Default lookback window
+        services=None,  # None means all services
+    )
 
-        # Step 5: Select run mode and start
-        logger.info(f"Starting in {settings.run_mode} mode...")
+    # Step 5: Select run mode and start
+    logger.info(f"Starting in {settings.run_mode} mode...")
 
+    try:
         if settings.run_mode == "daemon":
             # Start daemon polling loop
             scheduler = DaemonScheduler(
@@ -157,9 +165,9 @@ async def bootstrap() -> None:
             logger.error(f"Unknown run mode: {settings.run_mode}")
             sys.exit(1)
 
-    except Exception as e:
-        logger.error(f"Fatal error during bootstrap: {e}", exc_info=True)
-        sys.exit(1)
+    finally:
+        # Clean up resources
+        await telemetry.close()
 
 
 def main() -> None:
@@ -167,12 +175,24 @@ def main() -> None:
 
     Loads configuration, wires adapters, initializes core services,
     and starts the appropriate run mode (daemon, CLI, or webhook).
+
+    Exit codes:
+        0: Successful shutdown
+        1: Fatal bootstrap or runtime error
+        130: Interrupted by user (SIGINT/KeyboardInterrupt)
     """
+    logger = logging.getLogger(__name__)
     try:
         asyncio.run(bootstrap())
     except KeyboardInterrupt:
-        print("\nShutdown requested by user")
+        logger.warning("Shutdown requested by user (SIGINT)")
+        sys.exit(130)
+    except asyncio.CancelledError:
+        logger.info("Graceful shutdown completed")
         sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
