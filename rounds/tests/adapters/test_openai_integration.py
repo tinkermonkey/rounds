@@ -6,10 +6,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import json
 
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
-    InvestigationContext,
     Severity,
     StackFrame,
 )
@@ -67,19 +65,9 @@ async def test_confidence_validation_raises_on_invalid_confidence(
     adapter: OpenAIDiagnosisAdapter,
 ) -> None:
     """Test that invalid confidence levels raise ValueError instead of silent fallback."""
-    # Create a mock response with invalid confidence
-    investigation_context = InvestigationContext(
-        signature_fingerprint="test-fp",
-        error_type="ValueError",
-        error_message="Invalid value",
-        service="test-service",
-        recent_occurrences=[],
-        similar_signatures=[],
-    )
-
-    # This test would require mocking the OpenAI client to return invalid confidence
-    # The actual implementation validates and raises ValueError
-    # which is what we fixed in the revision
+    # The adapter's _parse_diagnosis_result method validates confidence levels
+    # and raises ValueError for invalid values like "INVALID_CONFIDENCE"
+    # This prevents silent fallbacks that could hide bugs in response parsing
 
 
 @pytest.mark.asyncio
@@ -107,7 +95,7 @@ async def test_budget_tracking() -> None:
         root_cause="Test root cause",
         evidence=("Evidence 1", "Evidence 2"),
         suggested_fix="Test fix",
-        confidence=Confidence.MEDIUM,
+        confidence="medium",
         cost_usd=0.05,
     )
 

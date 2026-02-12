@@ -12,9 +12,8 @@ from rounds.core.models import (
     Signature,
     SignatureStatus,
     StackFrame,
-    Confidence,
 )
-from rounds.adapters.store.sqlite import SqliteSignatureStoreAdapter
+from rounds.adapters.store.sqlite import SQLiteSignatureStore
 
 
 @pytest.fixture
@@ -25,16 +24,16 @@ def temp_db() -> Path:
 
 
 @pytest.fixture
-async def store(temp_db: Path) -> SqliteSignatureStoreAdapter:
+async def store(temp_db: Path) -> SQLiteSignatureStore:
     """Create a SQLite store adapter with temporary database."""
-    adapter = SqliteSignatureStoreAdapter(db_path=str(temp_db))
+    adapter = SQLiteSignatureStore(db_path=str(temp_db))
     await adapter.initialize()
     yield adapter
     await adapter.close()
 
 
 @pytest.mark.asyncio
-async def test_create_and_retrieve_signature(store: SqliteSignatureStoreAdapter) -> None:
+async def test_create_and_retrieve_signature(store: SQLiteSignatureStore) -> None:
     """Test creating and retrieving a signature."""
     sig = Signature(
         id="test-1",
@@ -93,7 +92,7 @@ async def test_signature_with_diagnosis(store: SqliteSignatureStoreAdapter) -> N
         root_cause="Database connection timeout",
         evidence=("Connection pool exhausted", "No available connections"),
         suggested_fix="Increase pool size or reduce concurrent requests",
-        confidence=Confidence.HIGH,
+        confidence="high",
         cost_usd=0.05,
     )
 
@@ -117,7 +116,7 @@ async def test_signature_with_diagnosis(store: SqliteSignatureStoreAdapter) -> N
     assert retrieved is not None
     assert retrieved.diagnosis is not None
     assert retrieved.diagnosis.root_cause == diagnosis.root_cause
-    assert retrieved.diagnosis.confidence == Confidence.HIGH
+    assert retrieved.diagnosis.confidence == "high"
 
 
 @pytest.mark.asyncio

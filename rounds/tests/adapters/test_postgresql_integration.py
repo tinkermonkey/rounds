@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     Signature,
     SignatureStatus,
@@ -181,7 +180,7 @@ class TestPostgreSQLTransactions:
             root_cause="Database connection timeout",
             evidence=("Pool exhausted",),
             suggested_fix="Increase pool size",
-            confidence=Confidence.HIGH,
+            confidence="high",
             cost_usd=0.05,
         )
 
