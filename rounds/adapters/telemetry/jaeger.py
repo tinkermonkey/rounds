@@ -501,18 +501,16 @@ class JaegerTelemetryAdapter(TelemetryPort):
         """
         logs: list[LogEntry] = []
 
-        # Jaeger stores logs in span "logs" field
-        # Extract them from the traces we can retrieve
+        # Fetch raw trace data to extract logs
         try:
-            traces = await self.get_traces(trace_ids)
+            for trace_id in trace_ids:
+                try:
+                    logs.extend(await self._extract_logs_from_raw_trace(trace_id))
+                except Exception as e:
+                    logger.warning(f"Failed to extract logs from trace {trace_id}: {e}")
+                    continue
 
-            for trace in traces:
-                # Extract logs from all spans in the trace
-                logs.extend(self._extract_logs_from_trace(trace))
-
-            logger.debug(
-                f"Extracted {len(logs)} log entries from {len(traces)} traces"
-            )
+            logger.debug(f"Extracted {len(logs)} log entries from {len(trace_ids)} traces")
 
         except Exception as e:
             logger.error(f"Failed to extract logs from traces: {e}", exc_info=True)
@@ -520,67 +518,72 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         return logs
 
-    def _extract_logs_from_trace(self, trace: TraceTree) -> list[LogEntry]:
-        """Extract LogEntry objects from a trace tree.
+    async def _extract_logs_from_raw_trace(self, trace_id: str) -> list[LogEntry]:
+        """Extract LogEntry objects from raw Jaeger trace data.
 
         Args:
-            trace: TraceTree object containing spans.
+            trace_id: Jaeger trace ID to fetch and extract logs from.
 
         Returns:
             List of LogEntry objects found in the trace.
         """
         log_entries: list[LogEntry] = []
 
-        def extract_from_span(span: SpanNode) -> None:
-            """Recursively extract logs from span and children."""
-            # In Jaeger, span attributes might contain logs
-            # For now, we extract from the span attributes/tags
-            # A real implementation would access raw span logs field
+        try:
+            response = await self.client.get(f"/api/traces/{trace_id}")
+            response.raise_for_status()
 
-            # Extract from span's stored logs if available
-            if "logs" in span.attributes:
-                span_logs = span.attributes.get("logs", [])
-                if isinstance(span_logs, list):
-                    for log in span_logs:
-                        if isinstance(log, dict):
-                            # Try to extract log fields
-                            timestamp_us = log.get("timestamp", 0)
-                            if timestamp_us:
-                                timestamp = datetime.fromtimestamp(
-                                    timestamp_us / 1e6, tz=timezone.utc
-                                )
-                            else:
-                                timestamp = datetime.now(timezone.utc)
+            data = response.json()
+            traces = data.get("data", [])
 
-                            # Extract message from fields
-                            message = ""
-                            log_attrs: dict[str, any] = {}
-                            for field in log.get("fields", []):
-                                if isinstance(field, dict):
-                                    key = field.get("key", "")
-                                    value = field.get("value", "")
-                                    if key == "message":
-                                        message = value
-                                    else:
-                                        log_attrs[key] = value
+            if not traces:
+                return log_entries
 
-                            if message:
-                                log_entry = LogEntry(
-                                    timestamp=timestamp,
-                                    severity=Severity.INFO,
-                                    body=message,
-                                    attributes=log_attrs,
-                                    trace_id=trace.trace_id,
-                                    span_id=span.span_id,
-                                )
-                                log_entries.append(log_entry)
+            trace = traces[0]
+            spans_data = trace.get("spans", [])
 
-            # Recursively extract from children
-            for child in span.children:
-                extract_from_span(child)
+            # Extract logs from each span's logs field
+            for span_data in spans_data:
+                span_id = span_data.get("spanID", "")
+                span_logs = span_data.get("logs", [])
 
-        # Start from root span
-        extract_from_span(trace.root_span)
+                for log in span_logs:
+                    if isinstance(log, dict):
+                        # Extract timestamp
+                        timestamp_us = log.get("timestamp", 0)
+                        if timestamp_us:
+                            timestamp = datetime.fromtimestamp(
+                                timestamp_us / 1e6, tz=timezone.utc
+                            )
+                        else:
+                            timestamp = datetime.now(timezone.utc)
+
+                        # Extract message and other fields
+                        message = ""
+                        log_attrs: dict[str, Any] = {}
+                        for field in log.get("fields", []):
+                            if isinstance(field, dict):
+                                key = field.get("key", "")
+                                value = field.get("value", "")
+                                if key == "message":
+                                    message = value
+                                else:
+                                    log_attrs[key] = value
+
+                        if message:
+                            log_entry = LogEntry(
+                                timestamp=timestamp,
+                                severity=Severity.INFO,
+                                body=message,
+                                attributes=log_attrs,
+                                trace_id=trace_id,
+                                span_id=span_id,
+                            )
+                            log_entries.append(log_entry)
+
+        except Exception as e:
+            logger.error(f"Failed to fetch raw trace {trace_id}: {e}", exc_info=True)
+            raise
 
         return log_entries
 

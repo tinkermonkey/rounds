@@ -19,14 +19,14 @@ class DaemonScheduler:
 
     def __init__(
         self,
-        poll_port: PollPort,
+        poll_port: PollPort | None = None,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
     ):
         """Initialize daemon scheduler.
 
         Args:
-            poll_port: PollPort implementation to call for poll cycles.
+            poll_port: PollPort implementation to call for poll cycles (can be set later).
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
         """
@@ -132,6 +132,21 @@ class DaemonScheduler:
                         f"{result.updated_signatures} updated, "
                         f"{result.investigations_queued} investigations queued"
                     )
+
+                    # Execute investigation cycle for pending diagnoses
+                    if result.investigations_queued > 0:
+                        logger.debug(f"Starting investigation cycle #{cycle_number}")
+                        try:
+                            diagnoses = await self.poll_port.execute_investigation_cycle()
+                            logger.info(
+                                f"Investigation cycle #{cycle_number} completed: "
+                                f"{len(diagnoses)} diagnoses produced"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error in investigation cycle #{cycle_number}: {e}",
+                                exc_info=True
+                            )
 
             except asyncio.CancelledError:
                 raise

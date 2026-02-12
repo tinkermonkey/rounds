@@ -15,6 +15,7 @@ Module Structure:
 import asyncio
 import logging
 import sys
+from typing import Any
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
@@ -118,8 +119,8 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
 async def _execute_cli_command(
     cli_handler: CLICommandHandler,
     command: str,
-    args: dict[str, any],
-) -> dict[str, any]:
+    args: dict[str, Any],
+) -> dict[str, Any]:
     """Execute a CLI command.
 
     Args:
@@ -140,12 +141,16 @@ async def _execute_cli_command(
         )
 
     elif command == "details":
+        if "signature_id" not in args:
+            raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.get_signature_details(
             signature_id=args["signature_id"],
             output_format=args.get("format", "json"),
         )
 
     elif command == "mute":
+        if "signature_id" not in args:
+            raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.mute_signature(
             signature_id=args["signature_id"],
             reason=args.get("reason"),
@@ -153,6 +158,8 @@ async def _execute_cli_command(
         )
 
     elif command == "resolve":
+        if "signature_id" not in args:
+            raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.resolve_signature(
             signature_id=args["signature_id"],
             fix_applied=args.get("fix_applied"),
@@ -160,12 +167,16 @@ async def _execute_cli_command(
         )
 
     elif command == "retriage":
+        if "signature_id" not in args:
+            raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.retriage_signature(
             signature_id=args["signature_id"],
             verbose=args.get("verbose", False),
         )
 
     elif command == "reinvestigate":
+        if "signature_id" not in args:
+            raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.reinvestigate_signature(
             signature_id=args["signature_id"],
             verbose=args.get("verbose", False),
@@ -178,36 +189,43 @@ async def _execute_cli_command(
 def _print_cli_help() -> None:
     """Print CLI help message."""
     help_text = """
-Available Commands:
+Available Commands (JSON format):
 
-  list [--status <status>] [--format json|text]
+  list
     List all signatures, optionally filtered by status.
-    Status: new, investigating, diagnosed, resolved, muted
+    Status options: new, investigating, diagnosed, resolved, muted
 
     Example: list {"status": "new", "format": "text"}
 
-  details <signature_id> [--format json|text]
+  details
     Get detailed information about a signature.
+    Required: signature_id
 
     Example: details {"signature_id": "uuid-here"}
 
-  mute <signature_id> [--reason <reason>]
+  mute
     Mute a signature to stop notifications.
+    Required: signature_id
+    Optional: reason
 
     Example: mute {"signature_id": "uuid-here", "reason": "false positive"}
 
-  resolve <signature_id> [--fix_applied <description>]
+  resolve
     Mark a signature as resolved.
+    Required: signature_id
+    Optional: fix_applied
 
     Example: resolve {"signature_id": "uuid-here", "fix_applied": "deployed fix"}
 
-  retriage <signature_id>
+  retriage
     Re-evaluate a signature's triage status.
+    Required: signature_id
 
     Example: retriage {"signature_id": "uuid-here"}
 
-  reinvestigate <signature_id>
+  reinvestigate
     Request a new diagnosis for a signature.
+    Required: signature_id
 
     Example: reinvestigate {"signature_id": "uuid-here"}
 
@@ -217,7 +235,8 @@ Available Commands:
   exit
     Exit the CLI.
 
-Note: All arguments should be provided as a single JSON object on the command line.
+Note: All commands accept arguments as a single JSON object.
+Provide the JSON after the command name on the same line.
     """
     print(help_text)
 
