@@ -457,7 +457,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         except Exception as e:
             logger.error(
                 f"Failed to fetch correlated logs: {e}",
-                extra={"trace_id": trace_id},
+                extra={"trace_ids": trace_ids},
                 exc_info=True,
             )
             raise
