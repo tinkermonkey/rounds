@@ -8,6 +8,7 @@ Authorization header (Bearer token or X-API-Key).
 """
 
 import asyncio
+import hmac
 import json
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -44,19 +45,23 @@ class WebhookHTTPHandler(BaseHTTPRequestHandler):
         Returns:
             True if authenticated or auth not required, False otherwise.
         """
-        if not self.require_auth or not self.api_key:
+        if not self.require_auth:
             return True
+
+        # Auth required - api_key must be configured
+        if not self.api_key:
+            return False
 
         # Check Authorization header (Bearer token)
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             provided_key = auth_header[7:]
-            return provided_key == self.api_key
+            return hmac.compare_digest(provided_key, self.api_key)
 
         # Check X-API-Key header
         api_key_header = self.headers.get("X-API-Key", "")
         if api_key_header:
-            return api_key_header == self.api_key
+            return hmac.compare_digest(api_key_header, self.api_key)
 
         return False
 

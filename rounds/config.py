@@ -95,6 +95,10 @@ class Settings(BaseSettings):
         default="gpt-4",
         description="OpenAI model to use for diagnosis",
     )
+    openai_budget_usd: float = Field(
+        default=2.0,
+        description="Budget per diagnosis for OpenAI in USD",
+    )
 
     # Notification configuration
     notification_backend: Literal["stdout", "markdown", "github_issue"] = Field(

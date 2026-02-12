@@ -15,6 +15,7 @@ Module Structure:
 import asyncio
 import logging
 import sys
+import urllib.parse
 from typing import Any
 
 from rounds.adapters.cli.commands import CLICommandHandler
@@ -329,7 +330,6 @@ async def bootstrap() -> None:
         # Parse PostgreSQL connection URL or use individual parameters
         if settings.database_url:
             # Parse connection URL (postgresql://user:password@host:port/database)
-            import urllib.parse
             parsed = urllib.parse.urlparse(settings.database_url)
             store = PostgreSQLSignatureStore(
                 host=parsed.hostname or "localhost",
@@ -360,7 +360,7 @@ async def bootstrap() -> None:
         diagnosis_engine = OpenAIDiagnosisAdapter(
             api_key=settings.openai_api_key,
             model=settings.openai_model,
-            budget_usd=settings.claude_code_budget_usd,
+            budget_usd=settings.openai_budget_usd,
         )
         logger.info("Diagnosis adapter: OpenAI")
     else:

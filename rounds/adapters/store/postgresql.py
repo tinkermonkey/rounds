@@ -51,19 +51,34 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         self._schema_initialized = False
 
     async def _init_pool(self) -> None:
-        """Initialize the connection pool on first use."""
+        """Initialize the connection pool on first use.
+
+        Raises:
+            RuntimeError: If connection to PostgreSQL fails.
+        """
         if self._pool is not None:
             return
 
-        self._pool = await asyncpg.create_pool(
-            host=self.host,
-            port=self.port,
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            min_size=1,
-            max_size=self._pool_size,
-        )
+        try:
+            self._pool = await asyncpg.create_pool(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                min_size=1,
+                max_size=self._pool_size,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to create PostgreSQL connection pool: "
+                f"host={self.host}, port={self.port}, database={self.database}, user={self.user}. "
+                f"Error: {e}",
+                exc_info=True
+            )
+            raise RuntimeError(
+                f"Failed to connect to PostgreSQL database: {e}"
+            ) from e
 
     async def close_pool(self) -> None:
         """Close all pooled connections."""
@@ -76,6 +91,9 @@ class PostgreSQLSignatureStore(SignatureStorePort):
 
         Only runs once per instance. Subsequent calls are no-ops.
         Uses dedicated _schema_lock to avoid contention with pool operations.
+
+        Raises:
+            RuntimeError: If pool is not initialized.
         """
         # Check first without lock to avoid unnecessary locking
         if self._schema_initialized:
@@ -87,7 +105,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 return
 
             await self._init_pool()
-            assert self._pool is not None
+            if self._pool is None:
+                raise RuntimeError(
+                    "Database pool not initialized. "
+                    "Check PostgreSQL connection and configuration."
+                )
 
             async with self._pool.acquire() as conn:
                 # Create table
@@ -130,7 +152,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Look up a signature by its ID."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -144,7 +170,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Look up a signature by its fingerprint hash."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -158,7 +188,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Create or update a signature."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             diagnosis_json = None
@@ -211,7 +245,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Return signatures with status NEW, ordered by priority."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -230,7 +268,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Return all signatures, optionally filtered by status."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             if status is None:
@@ -261,7 +303,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -282,7 +328,11 @@ class PostgreSQLSignatureStore(SignatureStorePort):
         """Summary statistics for reporting."""
         await self._init_schema()
         await self._init_pool()
-        assert self._pool is not None
+        if self._pool is None:
+            raise RuntimeError(
+                "Database pool not initialized. "
+                "Check PostgreSQL connection and configuration."
+            )
 
         async with self._pool.acquire() as conn:
             # Total signatures

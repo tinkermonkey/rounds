@@ -31,20 +31,28 @@ class OpenAIDiagnosisAdapter(DiagnosisPort):
             api_key: OpenAI API key.
             model: OpenAI model to use (e.g., 'gpt-4', 'gpt-4o').
             budget_usd: Budget per diagnosis in USD.
+
+        Raises:
+            ValueError: If API key is empty or not provided.
         """
+        if not api_key or not api_key.strip():
+            raise ValueError(
+                "OpenAI API key must be provided and non-empty. "
+                "Set OPENAI_API_KEY environment variable."
+            )
         self.api_key = api_key
         self.model = model
         self.budget_usd = budget_usd
 
         # Lazy import to avoid requiring openai if not used
-        self._client = None
+        self._client: Any | None = None
 
     async def _get_client(self) -> Any:
-        """Get or initialize the OpenAI async client."""
+        """Get or initialize the OpenAI synchronous client."""
         if self._client is None:
             try:
-                from openai import AsyncOpenAI
-                self._client = AsyncOpenAI(api_key=self.api_key)
+                from openai import OpenAI
+                self._client = OpenAI(api_key=self.api_key)
             except ImportError:
                 raise ImportError(
                     "openai package required for OpenAI adapter. "
@@ -291,7 +299,7 @@ Respond with a JSON object in exactly this format:
             root_cause=root_cause,
             evidence=evidence,
             suggested_fix=suggested_fix,
-            confidence=confidence_raw,
+            confidence=confidence_raw.lower(),
             diagnosed_at=datetime.now(timezone.utc),
             model=self.model,
             cost_usd=0.0,  # Will be overwritten by caller
