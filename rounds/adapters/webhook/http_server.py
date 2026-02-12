@@ -252,6 +252,7 @@ class WebhookHTTPServer:
     async def stop(self) -> None:
         """Stop the HTTP server."""
         if self.server:
+            self.server.shutdown()
             self.server.server_close()
         if self._server_task:
             self._server_task.cancel()

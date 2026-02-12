@@ -436,7 +436,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         return True
                 return False
 
-            for span_id, node in span_dicts.items():
+            for node in span_node_map.values():
                 if has_error(node):
                     error_spans.append(node)
 
