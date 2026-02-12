@@ -5,7 +5,7 @@ signatures should be investigated, in what order, and under what
 conditions.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .models import Confidence, Diagnosis, Signature, SignatureStatus
 
@@ -41,7 +41,8 @@ class TriageEngine:
         # Don't investigate if already diagnosed recently
         if signature.diagnosis is not None:
             cooldown = timedelta(hours=self.investigation_cooldown_hours)
-            if datetime.now() - signature.diagnosis.diagnosed_at < cooldown:
+            now = datetime.now(timezone.utc)
+            if now - signature.diagnosis.diagnosed_at < cooldown:
                 return False
 
         # Need minimum occurrence count for meaningful investigation
@@ -92,8 +93,9 @@ class TriageEngine:
         priority += min(signature.occurrence_count, 100)
 
         # Recency component (0-50 points)
+        now = datetime.now(timezone.utc)
         hours_since_last = (
-            datetime.now() - signature.last_seen
+            now - signature.last_seen
         ).total_seconds() / 3600
         if hours_since_last < 1:
             priority += 50

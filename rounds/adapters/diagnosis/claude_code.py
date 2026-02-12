@@ -229,38 +229,46 @@ Respond with a JSON object in exactly this format:
     def _parse_diagnosis_result(
         self, result: dict[str, Any], context: InvestigationContext
     ) -> Diagnosis:
-        """Parse Claude Code response into a Diagnosis object."""
+        """Parse Claude Code response into a Diagnosis object.
+
+        Raises:
+            ValueError: If required fields are missing or invalid.
+            KeyError: If the response structure is invalid.
+        """
+        root_cause = result.get("root_cause", "")
+        if not root_cause:
+            raise ValueError("Response missing 'root_cause' field")
+
+        evidence_raw = result.get("evidence")
+        if evidence_raw is None:
+            raise ValueError("Response missing 'evidence' field")
+        if not isinstance(evidence_raw, list):
+            raise ValueError(f"'evidence' must be a list, got {type(evidence_raw).__name__}")
+        evidence = tuple(evidence_raw)
+
+        suggested_fix = result.get("suggested_fix", "")
+        if not suggested_fix:
+            raise ValueError("Response missing 'suggested_fix' field")
+
+        confidence_str = result.get("confidence", "")
+        if not confidence_str:
+            raise ValueError("Response missing 'confidence' field")
+
+        # Parse confidence - raise on invalid value
         try:
-            root_cause = result.get("root_cause", "Unknown root cause")
-            evidence = tuple(result.get("evidence", []))
-            suggested_fix = result.get("suggested_fix", "No fix suggested")
-            confidence_str = result.get("confidence", "MEDIUM").upper()
+            confidence = Confidence(confidence_str.lower())
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid confidence level '{confidence_str}'. "
+                f"Must be one of {[c.value for c in Confidence]}"
+            ) from e
 
-            # Parse confidence
-            try:
-                confidence = Confidence(confidence_str.lower())
-            except ValueError:
-                confidence = Confidence.MEDIUM
-
-            return Diagnosis(
-                root_cause=root_cause,
-                evidence=evidence,
-                suggested_fix=suggested_fix,
-                confidence=confidence,
-                diagnosed_at=datetime.now(timezone.utc),
-                model=self.model,
-                cost_usd=0.0,  # Will be filled in by diagnose()
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to parse diagnosis result: {e}")
-            # Return a default diagnosis
-            return Diagnosis(
-                root_cause="Failed to analyze (see logs)",
-                evidence=("Error during analysis",),
-                suggested_fix="Investigate manually",
-                confidence=Confidence.LOW,
-                diagnosed_at=datetime.now(timezone.utc),
-                model=self.model,
-                cost_usd=0.0,
-            )
+        return Diagnosis(
+            root_cause=root_cause,
+            evidence=evidence,
+            suggested_fix=suggested_fix,
+            confidence=confidence,
+            diagnosed_at=datetime.now(timezone.utc),
+            model=self.model,
+            cost_usd=0.0,  # Will be filled in by diagnose()
+        )

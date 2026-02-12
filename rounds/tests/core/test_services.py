@@ -5,7 +5,7 @@ implement the core diagnostic logic correctly.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import sys
@@ -67,7 +67,7 @@ def error_event() -> ErrorEvent:
                 lineno=15,
             ),
         ),
-        timestamp=datetime(2024, 1, 1, 12, 0, 0),
+        timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         attributes={"user_id": "123", "amount": "99.99"},
         severity=Severity.ERROR,
     )
@@ -83,8 +83,8 @@ def signature() -> Signature:
         service="payment-service",
         message_template="Failed to connect to database: timeout",
         stack_hash="hash-stack-001",
-        first_seen=datetime(2024, 1, 1, 12, 0, 0),
-        last_seen=datetime(2024, 1, 1, 12, 5, 0),
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )
@@ -98,7 +98,7 @@ def diagnosis() -> Diagnosis:
         evidence=("Stack trace shows pool limit reached",),
         suggested_fix="Increase connection pool size",
         confidence=Confidence.HIGH,
-        diagnosed_at=datetime(2024, 1, 1, 12, 30, 0),
+        diagnosed_at=datetime(2024, 1, 1, 12, 30, 0, tzinfo=timezone.utc),
         model="claude-opus-4",
         cost_usd=0.45,
     )
@@ -250,6 +250,85 @@ class MockNotificationPort(NotificationPort):
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Mock implementation."""
         pass
+
+
+class FailingNotificationPort(NotificationPort):
+    """Mock that fails on notification."""
+
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+        """Mock implementation that always fails."""
+        raise RuntimeError("Notification service is unavailable")
+
+    async def report_summary(self, stats: dict[str, Any]) -> None:
+        """Mock implementation."""
+        pass
+
+
+class PartialTraceTelemetryPort(TelemetryPort):
+    """Mock telemetry that fails to fetch some traces."""
+
+    def __init__(self, errors: list[ErrorEvent] | None = None, fail_trace_count: int = 2):
+        self.errors = errors or []
+        self.fail_trace_count = fail_trace_count
+        self.fetch_count = 0
+
+    async def get_recent_errors(
+        self, since: datetime, services: list[str] | None = None
+    ) -> list[ErrorEvent]:
+        """Mock implementation."""
+        return self.errors
+
+    async def get_trace(self, trace_id: str) -> TraceTree:
+        """Mock implementation that fails for the first N traces."""
+        self.fetch_count += 1
+        if self.fetch_count <= self.fail_trace_count:
+            raise RuntimeError(f"Failed to fetch trace {trace_id}")
+
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="test-service",
+            operation="test-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
+
+    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+        """Mock implementation."""
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="test-service",
+            operation="test-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        traces = []
+        for tid in trace_ids:
+            try:
+                # Reuse single trace for successful ones
+                trace = await self.get_trace(tid)
+                traces.append(trace)
+            except Exception:
+                pass  # Skip failed traces
+        return traces
+
+    async def get_correlated_logs(
+        self, trace_ids: list[str], window_minutes: int = 5
+    ) -> list[LogEntry]:
+        """Mock implementation."""
+        return []
+
+    async def get_events_for_signature(
+        self, fingerprint: str, limit: int = 5
+    ) -> list[ErrorEvent]:
+        """Mock implementation."""
+        return self.errors
 
 
 # ============================================================================
@@ -440,7 +519,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Should not investigate if within cooldown period."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -457,8 +536,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=100,
             status=SignatureStatus.DIAGNOSED,
             diagnosis=diagnosis,
@@ -469,7 +548,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Should investigate if cooldown period has expired."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -486,8 +565,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=100,
             status=SignatureStatus.DIAGNOSED,
             diagnosis=diagnosis,
@@ -551,6 +630,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase with occurrence count."""
+        now = datetime.now(timezone.utc)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -558,8 +638,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=10,
             status=SignatureStatus.NEW,
         )
@@ -570,8 +650,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=50,
             status=SignatureStatus.NEW,
         )
@@ -583,7 +663,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase for recent signatures."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -616,6 +696,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase with critical tag."""
+        now = datetime.now(timezone.utc)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -623,8 +704,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=10,
             status=SignatureStatus.NEW,
             tags=frozenset(),
@@ -636,8 +717,8 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(),
-            last_seen=datetime.now(),
+            first_seen=now,
+            last_seen=now,
             occurrence_count=10,
             status=SignatureStatus.NEW,
             tags=frozenset(["critical"]),
@@ -759,3 +840,370 @@ class TestPollService:
         assert len(diagnoses) == 1
         assert signature.status == SignatureStatus.DIAGNOSED
         assert signature.diagnosis is not None
+
+
+# ============================================================================
+# Critical Bug Fixes Tests
+# ============================================================================
+
+
+class TestDatetimeAwareness:
+    """Tests for fixing naive/aware datetime mixing."""
+
+    def test_triage_uses_aware_datetimes(self, triage_engine: TriageEngine) -> None:
+        """TriageEngine should use timezone-aware datetimes."""
+        now = datetime.now(timezone.utc)
+        diagnosis = Diagnosis(
+            root_cause="root",
+            evidence=(),
+            suggested_fix="fix",
+            confidence=Confidence.HIGH,
+            diagnosed_at=now - timedelta(hours=12),
+            model="model",
+            cost_usd=0.0,
+        )
+        sig = Signature(
+            id="sig-001",
+            fingerprint="fp-001",
+            error_type="Error",
+            service="service",
+            message_template="msg",
+            stack_hash="hash",
+            first_seen=now,
+            last_seen=now,
+            occurrence_count=100,
+            status=SignatureStatus.DIAGNOSED,
+            diagnosis=diagnosis,
+        )
+        # Should not raise TypeError about comparing naive and aware datetimes
+        assert not triage_engine.should_investigate(sig)
+
+    @pytest.mark.asyncio
+    async def test_poll_uses_aware_datetimes(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """PollService should use timezone-aware datetimes."""
+        telemetry = MockTelemetryPort(errors=[error_event])
+        store = MockSignatureStorePort()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = MockNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        # Should not raise TypeError
+        result = await poll_service.execute_poll_cycle()
+        assert isinstance(result, PollResult)
+
+
+@pytest.mark.asyncio
+class TestPollCycleErrorHandling:
+    """Tests for comprehensive error handling in poll cycle."""
+
+    async def test_poll_handles_telemetry_failure(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Poll cycle should handle telemetry fetch failures gracefully."""
+
+        class FailingTelemetryPort(MockTelemetryPort):
+            async def get_recent_errors(self, since, services=None):
+                raise RuntimeError("Telemetry service unavailable")
+
+        telemetry = FailingTelemetryPort()
+        store = MockSignatureStorePort()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = MockNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        # Should return empty result, not crash
+        result = await poll_service.execute_poll_cycle()
+        assert result.errors_found == 0
+        assert result.new_signatures == 0
+
+    async def test_poll_continues_after_individual_error(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Poll cycle should continue processing after individual error processing fails."""
+
+        class PartiallyBrokenFingerprinter:
+            def __init__(self, broken_on_count: int = 2):
+                self.call_count = 0
+                self.broken_on_count = broken_on_count
+                self.base = Fingerprinter()
+
+            def fingerprint(self, error):
+                self.call_count += 1
+                if self.call_count == self.broken_on_count:
+                    raise RuntimeError("Fingerprinter broke")
+                return self.base.fingerprint(error)
+
+            def normalize_stack(self, frames):
+                return self.base.normalize_stack(frames)
+
+            def templatize_message(self, msg):
+                return self.base.templatize_message(msg)
+
+            def _hash_stack(self, frames):
+                return self.base._hash_stack(frames)
+
+        error1 = ErrorEvent(
+            trace_id="trace-1",
+            span_id="span-1",
+            service="service",
+            error_type="Error1",
+            error_message="Error 1",
+            stack_frames=(),
+            timestamp=datetime.now(timezone.utc),
+            attributes={},
+            severity=Severity.ERROR,
+        )
+        error2 = ErrorEvent(
+            trace_id="trace-2",
+            span_id="span-2",
+            service="service",
+            error_type="Error2",
+            error_message="Error 2",
+            stack_frames=(),
+            timestamp=datetime.now(timezone.utc),
+            attributes={},
+            severity=Severity.ERROR,
+        )
+
+        telemetry = MockTelemetryPort(errors=[error1, error2])
+        store = MockSignatureStorePort()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = MockNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        fingerprinter = PartiallyBrokenFingerprinter(broken_on_count=1)
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        # Should process 2 errors but skip 1 due to fingerprinter failure
+        result = await poll_service.execute_poll_cycle()
+        assert result.errors_found == 2
+        # Only 1 should be successfully processed (the second one)
+        assert (result.new_signatures + result.updated_signatures) >= 1
+
+
+class TestDiagnosisParsingValidation:
+    """Tests for strict diagnosis parsing that raises on errors."""
+
+    def test_diagnosis_parser_requires_root_cause(
+        self, triage_engine: TriageEngine
+    ) -> None:
+        """Diagnosis parser should raise if root_cause is missing."""
+        from adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+
+        adapter = ClaudeCodeDiagnosisAdapter()
+
+        # Create a mock context (not used in parsing)
+        sig = Signature(
+            id="sig",
+            fingerprint="fp",
+            error_type="Error",
+            service="service",
+            message_template="msg",
+            stack_hash="hash",
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+        )
+        context = InvestigationContext(
+            signature=sig,
+            recent_events=(),
+            trace_data=(),
+            related_logs=(),
+            codebase_path="/app",
+            historical_context=(),
+        )
+
+        # Result missing root_cause
+        result = {
+            "evidence": ["test"],
+            "suggested_fix": "fix",
+            "confidence": "HIGH",
+        }
+
+        with pytest.raises(ValueError, match="root_cause"):
+            adapter._parse_diagnosis_result(result, context)
+
+    def test_diagnosis_parser_requires_valid_confidence(
+        self, triage_engine: TriageEngine
+    ) -> None:
+        """Diagnosis parser should raise if confidence is invalid."""
+        from adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+
+        adapter = ClaudeCodeDiagnosisAdapter()
+
+        sig = Signature(
+            id="sig",
+            fingerprint="fp",
+            error_type="Error",
+            service="service",
+            message_template="msg",
+            stack_hash="hash",
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+        )
+        context = InvestigationContext(
+            signature=sig,
+            recent_events=(),
+            trace_data=(),
+            related_logs=(),
+            codebase_path="/app",
+            historical_context=(),
+        )
+
+        # Result with invalid confidence
+        result = {
+            "root_cause": "root",
+            "evidence": ["test"],
+            "suggested_fix": "fix",
+            "confidence": "INVALID",
+        }
+
+        with pytest.raises(ValueError, match="Invalid confidence"):
+            adapter._parse_diagnosis_result(result, context)
+
+
+@pytest.mark.asyncio
+class TestPartialTraceRetrieval:
+    """Tests for handling partial trace retrieval failures."""
+
+    async def test_investigator_detects_incomplete_traces(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """Investigator should log when trace retrieval is incomplete."""
+        # Create 5 events but only successfully fetch 3 traces
+        events = [
+            ErrorEvent(
+                trace_id=f"trace-{i}",
+                span_id=f"span-{i}",
+                service="service",
+                error_type="Error",
+                error_message="Error",
+                stack_frames=(),
+                timestamp=datetime.now(timezone.utc),
+                attributes={},
+                severity=Severity.ERROR,
+            )
+            for i in range(5)
+        ]
+
+        class PartialTelemetryForInvestigator(PartialTraceTelemetryPort):
+            async def get_events_for_signature(self, fingerprint, limit=5):
+                return events
+
+        telemetry = PartialTelemetryForInvestigator(fail_trace_count=2)
+        store = MockSignatureStorePort()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = MockNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        diagnosis = await investigator.investigate(signature)
+
+        # Should still return a diagnosis even with partial trace data
+        assert diagnosis is not None
+        assert signature.status == SignatureStatus.DIAGNOSED
+
+
+@pytest.mark.asyncio
+class TestNotificationFailureHandling:
+    """Tests for notification failure not reverting successful diagnosis."""
+
+    async def test_notification_failure_preserves_diagnosis(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """If notification fails, diagnosis should stay persisted."""
+        # Create a signature that will be diagnosed
+        signature.occurrence_count = 10
+        signature.status = SignatureStatus.NEW
+
+        telemetry = MockTelemetryPort()
+        store = MockSignatureStorePort()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = FailingNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        # Despite notification failure, diagnosis should be recorded
+        diagnosis = await investigator.investigate(signature)
+
+        assert diagnosis is not None
+        # Status should be DIAGNOSED (not reverted to NEW)
+        assert signature.status == SignatureStatus.DIAGNOSED
+        assert signature.diagnosis is not None
+
+    async def test_diagnosis_persisted_before_notification(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """Diagnosis must be persisted before attempting notification."""
+        signature.occurrence_count = 10
+        signature.status = SignatureStatus.NEW
+
+        class TrackingStore(MockSignatureStorePort):
+            def __init__(self):
+                super().__init__()
+                self.update_calls = []
+
+            async def update(self, sig):
+                self.update_calls.append((sig.fingerprint, sig.status, sig.diagnosis))
+                await super().update(sig)
+
+        telemetry = MockTelemetryPort()
+        store = TrackingStore()
+        diagnosis_engine = MockDiagnosisPort()
+        notification = FailingNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        # Investigate - notification will fail
+        diagnosis = await investigator.investigate(signature)
+
+        # Check that diagnosis was persisted before notification was attempted
+        # Should have two updates: INVESTIGATING, then DIAGNOSED
+        assert len(store.update_calls) >= 2
+        # Last update should show DIAGNOSED status with diagnosis set
+        last_fingerprint, last_status, last_diagnosis = store.update_calls[-1]
+        assert last_status == SignatureStatus.DIAGNOSED
+        assert last_diagnosis is not None

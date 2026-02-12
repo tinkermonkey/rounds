@@ -228,15 +228,39 @@ class SigNozTelemetryAdapter(TelemetryPort):
             raise
 
     async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
-        """Batch trace retrieval."""
+        """Batch trace retrieval.
+
+        Attempts to fetch all traces. If any traces fail to fetch, logs warnings
+        for each failure. The caller can detect partial results by comparing the
+        number of returned traces to the number of trace IDs requested.
+
+        Args:
+            trace_ids: List of trace IDs to retrieve.
+
+        Returns:
+            List of successfully retrieved TraceTree objects. May be shorter than
+            trace_ids if some fetches failed. Use len(result) < len(trace_ids)
+            to detect incomplete results.
+        """
         traces = []
+        failed_trace_ids = []
+
         for trace_id in trace_ids:
             try:
                 trace = await self.get_trace(trace_id)
                 traces.append(trace)
             except Exception as e:
                 logger.warning(f"Failed to fetch trace {trace_id}: {e}")
-                # Continue with other traces
+                failed_trace_ids.append(trace_id)
+
+        # Log summary if there were failures
+        if failed_trace_ids:
+            logger.warning(
+                f"Batch trace retrieval incomplete: "
+                f"retrieved {len(traces)}/{len(trace_ids)} traces. "
+                f"Failed trace IDs: {failed_trace_ids}"
+            )
+
         return traces
 
     async def get_correlated_logs(

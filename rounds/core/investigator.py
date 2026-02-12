@@ -57,11 +57,19 @@ class Investigator:
         events = await self.telemetry.get_events_for_signature(
             signature.fingerprint, limit=5
         )
-        traces = await self.telemetry.get_traces(
-            [e.trace_id for e in events]
-        )
+        trace_ids = [e.trace_id for e in events]
+        traces = await self.telemetry.get_traces(trace_ids)
+
+        # Log if trace retrieval was incomplete
+        if len(traces) < len(trace_ids):
+            logger.warning(
+                f"Incomplete trace data for signature {signature.fingerprint}: "
+                f"retrieved {len(traces)} of {len(trace_ids)} traces. "
+                f"Proceeding with partial context."
+            )
+
         logs = await self.telemetry.get_correlated_logs(
-            [e.trace_id for e in events], window_minutes=5
+            trace_ids, window_minutes=5
         )
 
         # 2. Build investigation context
@@ -80,20 +88,8 @@ class Investigator:
 
         try:
             diagnosis = await self.diagnosis_engine.diagnose(context)
-
-            # 4. Record result
-            signature.diagnosis = diagnosis
-            signature.status = SignatureStatus.DIAGNOSED
-            await self.store.update(signature)
-
-            # 5. Notify if warranted
-            if self.triage.should_notify(signature, diagnosis):
-                await self.notification.report(signature, diagnosis)
-
-            return diagnosis
-
         except Exception as e:
-            # Revert signature status to NEW on diagnosis failure
+            # Diagnosis failed - revert status and re-raise
             signature.status = SignatureStatus.NEW
             try:
                 await self.store.update(signature)
@@ -109,3 +105,28 @@ class Investigator:
                 exc_info=True,
             )
             raise
+
+        # 4. Record result (persist diagnosis before notification)
+        signature.diagnosis = diagnosis
+        signature.status = SignatureStatus.DIAGNOSED
+        try:
+            await self.store.update(signature)
+        except Exception as e:
+            logger.error(
+                f"Failed to persist diagnosis for signature {signature.fingerprint}: {e}",
+                exc_info=True,
+            )
+            raise
+
+        # 5. Notify if warranted (failure here should NOT revert the persisted diagnosis)
+        try:
+            if self.triage.should_notify(signature, diagnosis):
+                await self.notification.report(signature, diagnosis)
+        except Exception as e:
+            # Log notification failure but don't revert the successful diagnosis
+            logger.error(
+                f"Failed to notify about diagnosis for signature {signature.fingerprint}: {e}",
+                exc_info=True,
+            )
+
+        return diagnosis
