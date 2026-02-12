@@ -16,6 +16,7 @@ import asyncio
 import logging
 import sys
 
+from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
@@ -25,9 +26,12 @@ from rounds.adapters.store.sqlite import SQLiteSignatureStore
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
+from rounds.adapters.webhook.receiver import WebhookReceiver
+from rounds.adapters.webhook.http_server import WebhookHTTPServer
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
+from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
 from rounds.core.triage import TriageEngine
 
@@ -174,6 +178,13 @@ async def bootstrap() -> None:
         services=None,  # None means all services
     )
 
+    # Management service (implements ManagementPort for CLI/webhook)
+    management_service = ManagementService(
+        store=store,
+        telemetry=telemetry,
+        diagnosis_engine=diagnosis_engine,
+    )
+
     # Step 5: Select run mode and start
     logger.info(f"Starting in {settings.run_mode} mode...")
 
@@ -189,15 +200,39 @@ async def bootstrap() -> None:
         elif settings.run_mode == "cli":
             # CLI mode handles interactive commands via CLICommandHandler
             # Fully implemented with mute, resolve, retriage, and details commands
-            logger.info("Starting in CLI mode")
+            logger.info("CLI mode - ManagementService available for command handling")
+            # Create CLI command handler with the management service
+            cli_handler = CLICommandHandler(management_service)
             # CLI interaction loop would be implemented in main entry point
+            # The handler is ready for use by CLI adapters
             sys.exit(0)
 
         elif settings.run_mode == "webhook":
             # Webhook mode starts an HTTP server for external triggers
-            # Implementation deferred to Phase 5b
-            logger.error("Webhook mode not yet implemented")
-            sys.exit(1)
+            logger.info("Starting in webhook mode")
+
+            # Create webhook receiver
+            webhook_receiver = WebhookReceiver(
+                poll_port=poll_service,
+                management_port=management_service,
+                host=settings.webhook_host,
+                port=settings.webhook_port,
+            )
+
+            # Start HTTP server
+            http_server = WebhookHTTPServer(
+                webhook_receiver=webhook_receiver,
+                host=settings.webhook_host,
+                port=settings.webhook_port,
+            )
+            await http_server.start()
+
+            # Keep the server running
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                await http_server.stop()
 
         else:
             logger.error(f"Unknown run mode: {settings.run_mode}")

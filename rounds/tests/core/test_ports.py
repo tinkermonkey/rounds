@@ -5,7 +5,7 @@ and that implementations must satisfy the interface contract.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import sys
@@ -344,6 +344,24 @@ class MockManagementPort(ManagementPort):
     async def get_signature_details(self, signature_id: str) -> dict[str, Any]:
         """Mock implementation."""
         return {}
+
+    async def list_signatures(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """Mock implementation."""
+        return []
+
+    async def reinvestigate(self, signature_id: str) -> Diagnosis:
+        """Mock implementation."""
+        return Diagnosis(
+            root_cause="Mock root cause",
+            evidence=("Mock evidence",),
+            suggested_fix="Mock fix",
+            confidence=Confidence.HIGH,
+            diagnosed_at=datetime.now(timezone.utc),
+            model="mock-model",
+            cost_usd=0.0,
+        )
 
 
 class TestPortImplementation:

@@ -34,6 +34,8 @@ from rounds.core.models import (
     StackFrame,
 )
 from rounds.tests.fakes.store import FakeSignatureStorePort
+from rounds.tests.fakes.telemetry import FakeTelemetryPort
+from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
 
 
 # --- ManagementService Tests ---
@@ -50,8 +52,14 @@ class TestManagementService:
 
     @pytest.fixture
     def service(self, store: FakeSignatureStorePort) -> ManagementService:
-        """Create a ManagementService with fake store."""
-        return ManagementService(store)
+        """Create a ManagementService with fake dependencies."""
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+        return ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+        )
 
     @pytest.fixture
     def sample_signature(self) -> Signature:

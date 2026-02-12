@@ -268,6 +268,153 @@ class CLICommandHandler:
         return "\n".join(lines)
 
 
+    async def list_signatures(
+        self, status: str | None = None, output_format: str = "json"
+    ) -> dict[str, Any]:
+        """List signatures via CLI.
+
+        Args:
+            status: Optional status filter ('new', 'investigating', 'diagnosed', 'resolved', 'muted').
+            output_format: Output format ('json', 'text'). Default 'json'.
+
+        Returns:
+            Dictionary with signature list or status/message on error.
+
+        Raises:
+            ValueError: If status is invalid.
+            Exception: If operation fails.
+        """
+        try:
+            from rounds.core.models import SignatureStatus
+
+            status_enum = None
+            if status:
+                status_enum = SignatureStatus(status.lower())
+
+            signatures = await self.management.list_signatures(status_enum)
+
+            if output_format == "json":
+                return {
+                    "status": "success",
+                    "operation": "list",
+                    "signatures": [
+                        {
+                            "id": sig.id,
+                            "fingerprint": sig.fingerprint,
+                            "error_type": sig.error_type,
+                            "service": sig.service,
+                            "status": sig.status.value,
+                            "occurrence_count": sig.occurrence_count,
+                            "first_seen": sig.first_seen.isoformat(),
+                            "last_seen": sig.last_seen.isoformat(),
+                        }
+                        for sig in signatures
+                    ],
+                }
+
+            elif output_format == "text":
+                text_output = self._format_signatures_as_text(signatures)
+                return {
+                    "status": "success",
+                    "operation": "list",
+                    "data": text_output,
+                }
+
+            else:
+                return {
+                    "status": "error",
+                    "operation": "list",
+                    "message": f"Unsupported format: {output_format}",
+                }
+
+        except ValueError as e:
+            logger.error(f"Failed to list signatures: {e}")
+            return {
+                "status": "error",
+                "operation": "list",
+                "message": str(e),
+            }
+
+    async def reinvestigate_signature(
+        self, signature_id: str, verbose: bool = False
+    ) -> dict[str, Any]:
+        """Reinvestigate a signature via CLI.
+
+        Args:
+            signature_id: UUID of the signature.
+            verbose: If True, print additional information.
+
+        Returns:
+            Dictionary with diagnosis or status/message on error.
+
+        Raises:
+            ValueError: If signature doesn't exist.
+            Exception: If operation fails.
+        """
+        try:
+            diagnosis = await self.management.reinvestigate(signature_id)
+
+            result = {
+                "status": "success",
+                "operation": "reinvestigate",
+                "signature_id": signature_id,
+                "diagnosis": {
+                    "root_cause": diagnosis.root_cause,
+                    "confidence": diagnosis.confidence.value,
+                    "suggested_fix": diagnosis.suggested_fix,
+                    "cost_usd": diagnosis.cost_usd,
+                    "model": diagnosis.model,
+                },
+            }
+
+            if verbose:
+                logger.info(
+                    f"Reinvestigated signature {signature_id}",
+                    extra={
+                        "confidence": diagnosis.confidence.value,
+                        "cost_usd": diagnosis.cost_usd,
+                        "verbose": True,
+                    },
+                )
+
+            return result
+
+        except ValueError as e:
+            logger.error(f"Failed to reinvestigate signature: {e}")
+            return {
+                "status": "error",
+                "operation": "reinvestigate",
+                "signature_id": signature_id,
+                "message": str(e),
+            }
+
+    def _format_signatures_as_text(self, signatures: list[Any]) -> str:
+        """Format signatures as human-readable text.
+
+        Args:
+            signatures: List of signatures.
+
+        Returns:
+            Formatted text string.
+        """
+        lines = []
+        lines.append(f"Found {len(signatures)} signatures\n")
+        lines.append("-" * 80)
+
+        for sig in signatures:
+            lines.append(f"ID:          {sig.id}")
+            lines.append(f"Fingerprint: {sig.fingerprint}")
+            lines.append(f"Service:     {sig.service}")
+            lines.append(f"Error Type:  {sig.error_type}")
+            lines.append(f"Status:      {sig.status.value}")
+            lines.append(f"Occurrences: {sig.occurrence_count}")
+            lines.append(f"First Seen:  {sig.first_seen.isoformat()}")
+            lines.append(f"Last Seen:   {sig.last_seen.isoformat()}")
+            lines.append("-" * 80)
+
+        return "\n".join(lines)
+
+
 async def run_command(
     management: ManagementPort,
     command: str,
@@ -279,7 +426,7 @@ async def run_command(
 
     Args:
         management: ManagementPort implementation.
-        command: Command name ('mute', 'resolve', 'retriage', 'details').
+        command: Command name ('mute', 'resolve', 'retriage', 'details', 'list', 'reinvestigate').
         args: Dictionary of command arguments.
 
     Returns:
@@ -314,6 +461,18 @@ async def run_command(
         return await handler.get_signature_details(
             args["signature_id"],
             args.get("format", "json"),
+        )
+
+    elif command == "list":
+        return await handler.list_signatures(
+            args.get("status"),
+            args.get("format", "json"),
+        )
+
+    elif command == "reinvestigate":
+        return await handler.reinvestigate_signature(
+            args["signature_id"],
+            args.get("verbose", False),
         )
 
     else:

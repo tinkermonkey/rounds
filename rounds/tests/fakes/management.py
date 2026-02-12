@@ -1,7 +1,9 @@
 """Fake ManagementPort implementation for testing."""
 
+from datetime import datetime, timezone
 from typing import Any
 
+from rounds.core.models import Confidence, Diagnosis, Signature, SignatureStatus
 from rounds.core.ports import ManagementPort
 
 
@@ -17,6 +19,8 @@ class FakeManagementPort(ManagementPort):
         self.resolved_signatures: dict[str, str | None] = {}
         self.retriaged_signatures: list[str] = []
         self.signature_details: dict[str, dict[str, Any]] = {}
+        self.reinvestigated_signatures: list[str] = []
+        self.stored_signatures: list[Signature] = []
         self.should_fail: bool = False
         self.fail_message: str = "Management operation failed"
 
@@ -65,6 +69,39 @@ class FakeManagementPort(ManagementPort):
 
         return self.signature_details.get(signature_id, {})
 
+    async def list_signatures(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """List signatures, optionally filtered by status.
+
+        Returns all stored signatures or filtered by status.
+        """
+        if self.should_fail:
+            raise RuntimeError(self.fail_message)
+
+        if status is None:
+            return self.stored_signatures
+        return [s for s in self.stored_signatures if s.status == status]
+
+    async def reinvestigate(self, signature_id: str) -> Diagnosis:
+        """Trigger reinvestigation of a signature.
+
+        Returns a mock diagnosis and tracks the operation.
+        """
+        if self.should_fail:
+            raise RuntimeError(self.fail_message)
+
+        self.reinvestigated_signatures.append(signature_id)
+        return Diagnosis(
+            root_cause="Fake root cause",
+            evidence=("Fake evidence",),
+            suggested_fix="Fake fix",
+            confidence=Confidence.MEDIUM,
+            diagnosed_at=datetime.now(timezone.utc),
+            model="fake-model",
+            cost_usd=0.0,
+        )
+
     def set_signature_details(
         self, signature_id: str, details: dict[str, Any]
     ) -> None:
@@ -98,11 +135,17 @@ class FakeManagementPort(ManagementPort):
         self.should_fail = should_fail
         self.fail_message = message
 
+    def add_stored_signature(self, signature: Signature) -> None:
+        """Add a signature for list_signatures to return."""
+        self.stored_signatures.append(signature)
+
     def reset(self) -> None:
         """Reset all collected data and state."""
         self.muted_signatures.clear()
         self.resolved_signatures.clear()
         self.retriaged_signatures.clear()
         self.signature_details.clear()
+        self.reinvestigated_signatures.clear()
+        self.stored_signatures.clear()
         self.should_fail = False
         self.fail_message = "Management operation failed"

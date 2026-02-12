@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     )
 
     # Telemetry backend configuration
-    telemetry_backend: Literal["signoz", "jaeger", "grafana"] = Field(
+    telemetry_backend: Literal["signoz", "jaeger", "grafana_stack"] = Field(
         default="signoz",
         description="Telemetry backend type",
     )
@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     signoz_api_key: str = Field(
         default="",
         description="SigNoz API authentication key",
+    )
+    jaeger_api_url: str = Field(
+        default="http://localhost:16686",
+        description="Jaeger Query API endpoint URL",
+    )
+    grafana_loki_url: str = Field(
+        default="http://localhost:3100",
+        description="Grafana Loki API endpoint URL",
+    )
+    grafana_tempo_url: str = Field(
+        default="http://localhost:3200",
+        description="Grafana Tempo API endpoint URL",
+    )
+    grafana_api_key: str = Field(
+        default="",
+        description="Grafana API authentication key",
     )
 
     # Signature store configuration
@@ -77,9 +93,13 @@ class Settings(BaseSettings):
     )
 
     # Notification configuration
-    notification_adapters: str = Field(
+    notification_backend: Literal["stdout", "markdown", "github_issue"] = Field(
         default="stdout",
-        description="Comma-separated list of notification adapters",
+        description="Notification backend type",
+    )
+    notification_output_dir: str = Field(
+        default="./notifications",
+        description="Output directory for markdown notifications",
     )
     github_token: str = Field(
         default="",
@@ -124,6 +144,16 @@ class Settings(BaseSettings):
     run_mode: Literal["daemon", "cli", "webhook"] = Field(
         default="daemon",
         description="Run mode",
+    )
+
+    # Webhook configuration
+    webhook_host: str = Field(
+        default="0.0.0.0",
+        description="Host to listen on for webhook server",
+    )
+    webhook_port: int = Field(
+        default=8080,
+        description="Port to listen on for webhook server",
     )
 
     # Codebase configuration
@@ -176,6 +206,14 @@ class Settings(BaseSettings):
         """Ensure lookback window is positive."""
         if v <= 0:
             raise ValueError("error_lookback_minutes must be positive")
+        return v
+
+    @field_validator("webhook_port")
+    @classmethod
+    def validate_webhook_port(cls, v: int) -> int:
+        """Ensure webhook port is in valid range."""
+        if v <= 0 or v > 65535:
+            raise ValueError("webhook_port must be between 1 and 65535")
         return v
 
 

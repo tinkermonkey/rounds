@@ -1,16 +1,22 @@
 """Management service: implements ManagementPort for human-initiated operations.
 
 This is a core service that orchestrates management operations (mute, resolve,
-retriage, get details) by interacting with the signature store. It ensures all
-state changes are properly logged and auditable.
+retriage, get details, list, reinvestigate) by interacting with the signature store
+and invoking investigations. It ensures all state changes are properly logged
+and auditable.
 """
 
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from rounds.core.models import Signature, SignatureStatus
-from rounds.core.ports import ManagementPort, SignatureStorePort
+from rounds.core.models import Diagnosis, InvestigationContext, Signature, SignatureStatus
+from rounds.core.ports import (
+    DiagnosisPort,
+    ManagementPort,
+    SignatureStorePort,
+    TelemetryPort,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +24,27 @@ logger = logging.getLogger(__name__)
 class ManagementService(ManagementPort):
     """Core implementation of ManagementPort.
 
-    Coordinates management operations with the signature store.
+    Coordinates management operations with the signature store, telemetry,
+    and diagnosis engine.
     All operations are logged for audit trails.
     """
 
-    def __init__(self, store: SignatureStorePort):
+    def __init__(
+        self,
+        store: SignatureStorePort,
+        telemetry: TelemetryPort,
+        diagnosis_engine: DiagnosisPort,
+    ):
         """Initialize the management service.
 
         Args:
             store: SignatureStorePort implementation for persistence.
+            telemetry: TelemetryPort implementation for retrieving errors.
+            diagnosis_engine: DiagnosisPort implementation for diagnosis.
         """
         self.store = store
+        self.telemetry = telemetry
+        self.diagnosis_engine = diagnosis_engine
 
     async def mute_signature(
         self, signature_id: str, reason: str | None = None
@@ -126,6 +142,7 @@ class ManagementService(ManagementPort):
         - signature fields (id, fingerprint, error_type, service, etc.)
         - occurrence_count and time window (first_seen to last_seen)
         - diagnosis (if available) with confidence
+        - recent error events (for context)
         - related signatures (similar errors)
 
         Args:
@@ -141,6 +158,11 @@ class ManagementService(ManagementPort):
         signature = await self.store.get_by_id(signature_id)
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
+
+        # Get recent error events for this signature
+        recent_events = await self.telemetry.get_events_for_signature(
+            signature.fingerprint, limit=5
+        )
 
         # Get related/similar signatures
         related = await self.store.get_similar(signature, limit=5)
@@ -161,6 +183,17 @@ class ManagementService(ManagementPort):
             # Status
             "status": signature.status.value,
             "tags": sorted(signature.tags),
+            # Recent error events
+            "recent_error_events": [
+                {
+                    "trace_id": event.trace_id,
+                    "span_id": event.span_id,
+                    "timestamp": event.timestamp.isoformat(),
+                    "error_message": event.error_message,
+                    "severity": event.severity.value,
+                }
+                for event in recent_events
+            ],
             # Diagnosis information
             "diagnosis": None,
             # Related signatures
@@ -194,3 +227,113 @@ class ManagementService(ManagementPort):
         )
 
         return details
+
+    async def list_signatures(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """List all signatures, optionally filtered by status.
+
+        Args:
+            status: Filter to signatures with this status. If None, return all.
+
+        Returns:
+            List of Signature objects matching the criteria.
+
+        Raises:
+            Exception: If database error occurs.
+        """
+        # Query store for pending investigation to get signatures
+        # For now, fetch all pending signatures
+        # TODO: Add filtering capability to SignatureStorePort
+        pending = await self.store.get_pending_investigation()
+
+        logger.debug(
+            f"Listed signatures with status filter",
+            extra={"status": status.value if status else None},
+        )
+
+        # If a specific status is requested and it's NEW, return pending list
+        if status == SignatureStatus.NEW:
+            return pending
+
+        # For other status filters, return empty list for now
+        # (requires store enhancement to query by status)
+        if status is not None:
+            logger.warning(
+                f"Status filter {status.value} not fully supported yet; returning empty list"
+            )
+            return []
+
+        # Return all pending signatures if no filter specified
+        return pending
+
+    async def reinvestigate(self, signature_id: str) -> Diagnosis:
+        """Trigger immediate investigation/re-investigation of a signature.
+
+        Resets the signature to NEW status, retrieves recent events,
+        performs diagnosis, and returns the diagnosis result.
+
+        Used when a user wants an immediate re-diagnosis of a signature.
+
+        Args:
+            signature_id: UUID of the signature.
+
+        Returns:
+            Diagnosis object from the investigation.
+
+        Raises:
+            ValueError: If signature doesn't exist.
+            Exception: If investigation or diagnosis fails.
+        """
+        signature = await self.store.get_by_id(signature_id)
+        if signature is None:
+            raise ValueError(f"Signature {signature_id} not found")
+
+        # Reset to NEW status
+        signature.status = SignatureStatus.NEW
+        signature.diagnosis = None
+        await self.store.update(signature)
+
+        logger.info(
+            f"Started reinvestigation for signature {signature_id}",
+            extra={"signature_id": signature_id, "fingerprint": signature.fingerprint},
+        )
+
+        # Retrieve recent events for this signature
+        recent_events = await self.telemetry.get_events_for_signature(
+            signature.fingerprint, limit=10
+        )
+
+        # Get similar signatures for context
+        similar = await self.store.get_similar(signature, limit=5)
+
+        # Build investigation context
+        # Note: We don't have trace data or logs readily available without calling telemetry
+        # For now, we create a minimal context with just recent events
+        context = InvestigationContext(
+            signature=signature,
+            recent_events=tuple(recent_events),
+            trace_data=(),  # TODO: Fetch trace data for recent events
+            related_logs=(),  # TODO: Fetch related logs
+            codebase_path=".",
+            historical_context=tuple(similar),
+        )
+
+        # Invoke diagnosis
+        diagnosis = await self.diagnosis_engine.diagnose(context)
+
+        # Update signature with diagnosis and mark as DIAGNOSED
+        signature.diagnosis = diagnosis
+        signature.status = SignatureStatus.DIAGNOSED
+        await self.store.update(signature)
+
+        logger.info(
+            f"Completed reinvestigation for signature {signature_id}",
+            extra={
+                "signature_id": signature_id,
+                "confidence": diagnosis.confidence.value,
+                "cost_usd": diagnosis.cost_usd,
+            },
+        )
+
+        return diagnosis

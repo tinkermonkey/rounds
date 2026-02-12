@@ -481,3 +481,39 @@ class ManagementPort(ABC):
         Raises:
             Exception: If signature doesn't exist or database error.
         """
+
+    @abstractmethod
+    async def list_signatures(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """List all signatures, optionally filtered by status.
+
+        Args:
+            status: Filter to signatures with this status. If None, return all.
+
+        Returns:
+            List of Signature objects matching the criteria.
+
+        Raises:
+            Exception: If database error occurs.
+        """
+
+    @abstractmethod
+    async def reinvestigate(self, signature_id: str) -> Diagnosis:
+        """Trigger immediate investigation/re-investigation of a signature.
+
+        Resets the signature to NEW status, queues for investigation,
+        performs diagnosis, and returns the diagnosis result.
+
+        Used when a user wants an immediate re-diagnosis of a signature.
+
+        Args:
+            signature_id: UUID of the signature.
+
+        Returns:
+            Diagnosis object from the investigation.
+
+        Raises:
+            ValueError: If signature doesn't exist.
+            Exception: If investigation or diagnosis fails.
+        """
