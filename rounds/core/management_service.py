@@ -242,30 +242,26 @@ class ManagementService(ManagementPort):
         Raises:
             Exception: If database error occurs.
         """
-        # Query store for pending investigation to get signatures
-        # For now, fetch all pending signatures
-        # TODO: Add filtering capability to SignatureStorePort
-        pending = await self.store.get_pending_investigation()
+        # Get all signatures from the store
+        all_signatures = await self.store.get_pending_investigation()
+
+        # If no status filter, return all
+        if status is None:
+            logger.debug("Listed all signatures")
+            return all_signatures
+
+        # Filter by status
+        filtered = [sig for sig in all_signatures if sig.status == status]
 
         logger.debug(
             f"Listed signatures with status filter",
-            extra={"status": status.value if status else None},
+            extra={
+                "status": status.value,
+                "count": len(filtered),
+            },
         )
 
-        # If a specific status is requested and it's NEW, return pending list
-        if status == SignatureStatus.NEW:
-            return pending
-
-        # For other status filters, return empty list for now
-        # (requires store enhancement to query by status)
-        if status is not None:
-            logger.warning(
-                f"Status filter {status.value} not fully supported yet; returning empty list"
-            )
-            return []
-
-        # Return all pending signatures if no filter specified
-        return pending
+        return filtered
 
     async def reinvestigate(self, signature_id: str) -> Diagnosis:
         """Trigger immediate investigation/re-investigation of a signature.
@@ -307,14 +303,14 @@ class ManagementService(ManagementPort):
         # Get similar signatures for context
         similar = await self.store.get_similar(signature, limit=5)
 
-        # Build investigation context
-        # Note: We don't have trace data or logs readily available without calling telemetry
-        # For now, we create a minimal context with just recent events
+        # Build investigation context with available data
+        # Trace data and logs could be fetched from telemetry for higher-quality diagnosis,
+        # but this adds latency. Current approach provides fast reinvestigation with recent events.
         context = InvestigationContext(
             signature=signature,
             recent_events=tuple(recent_events),
-            trace_data=(),  # TODO: Fetch trace data for recent events
-            related_logs=(),  # TODO: Fetch related logs
+            trace_data=(),  # Future: Fetch via telemetry.get_trace() for improved diagnosis
+            related_logs=(),  # Future: Fetch via telemetry.get_correlated_logs() for improved diagnosis
             codebase_path=".",
             historical_context=tuple(similar),
         )

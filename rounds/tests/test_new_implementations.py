@@ -179,6 +179,141 @@ class TestManagementService:
 
         assert details["diagnosis"] is None
 
+    async def test_list_signatures_no_filter(
+        self, service: ManagementService, store: FakeSignatureStorePort,
+        sample_signature: Signature
+    ) -> None:
+        """Test listing all signatures without status filter."""
+        # Setup multiple signatures with different statuses
+        sig1 = Signature(
+            id="sig-1",
+            fingerprint="fp-1",
+            error_type="ValueError",
+            service="api",
+            message_template="Invalid value",
+            stack_hash="hash-1",
+            first_seen=datetime.now(tz=timezone.utc),
+            last_seen=datetime.now(tz=timezone.utc),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+        )
+        sig2 = Signature(
+            id="sig-2",
+            fingerprint="fp-2",
+            error_type="TimeoutError",
+            service="api",
+            message_template="Timeout",
+            stack_hash="hash-2",
+            first_seen=datetime.now(tz=timezone.utc),
+            last_seen=datetime.now(tz=timezone.utc),
+            occurrence_count=2,
+            status=SignatureStatus.DIAGNOSED,
+        )
+
+        await store.save(sig1)
+        await store.save(sig2)
+        store.mark_pending(sig1)
+        store.mark_pending(sig2)
+
+        # List without filter should return all pending signatures
+        result = await service.list_signatures()
+        assert len(result) == 2
+
+    async def test_list_signatures_filter_by_status(
+        self, service: ManagementService, store: FakeSignatureStorePort,
+        sample_signature: Signature
+    ) -> None:
+        """Test listing signatures filtered by status."""
+        # Setup signatures with different statuses
+        sig_new = sample_signature  # NEW status
+        sig_diagnosed = Signature(
+            id="sig-diagnosed",
+            fingerprint="fp-diagnosed",
+            error_type="RuntimeError",
+            service="worker",
+            message_template="Runtime error",
+            stack_hash="hash-diagnosed",
+            first_seen=datetime.now(tz=timezone.utc),
+            last_seen=datetime.now(tz=timezone.utc),
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+        )
+        sig_muted = Signature(
+            id="sig-muted",
+            fingerprint="fp-muted",
+            error_type="DeprecationWarning",
+            service="legacy",
+            message_template="Deprecated",
+            stack_hash="hash-muted",
+            first_seen=datetime.now(tz=timezone.utc),
+            last_seen=datetime.now(tz=timezone.utc),
+            occurrence_count=3,
+            status=SignatureStatus.MUTED,
+        )
+
+        await store.save(sig_new)
+        await store.save(sig_diagnosed)
+        await store.save(sig_muted)
+        store.mark_pending(sig_new)
+        store.mark_pending(sig_diagnosed)
+        store.mark_pending(sig_muted)
+
+        # Filter by NEW status
+        new_sigs = await service.list_signatures(status=SignatureStatus.NEW)
+        assert len(new_sigs) == 1
+        assert new_sigs[0].id == "sig-123"
+
+        # Filter by DIAGNOSED status
+        diagnosed_sigs = await service.list_signatures(status=SignatureStatus.DIAGNOSED)
+        assert len(diagnosed_sigs) == 1
+        assert diagnosed_sigs[0].id == "sig-diagnosed"
+
+        # Filter by MUTED status
+        muted_sigs = await service.list_signatures(status=SignatureStatus.MUTED)
+        assert len(muted_sigs) == 1
+        assert muted_sigs[0].id == "sig-muted"
+
+    async def test_list_signatures_empty_filter(
+        self, service: ManagementService, store: FakeSignatureStorePort,
+        sample_signature: Signature
+    ) -> None:
+        """Test listing with a filter that matches no signatures."""
+        await store.save(sample_signature)
+        store.mark_pending(sample_signature)
+
+        # Filter by RESOLVED status (none match)
+        resolved_sigs = await service.list_signatures(status=SignatureStatus.RESOLVED)
+        assert len(resolved_sigs) == 0
+
+    async def test_reinvestigate_signature(
+        self, service: ManagementService, store: FakeSignatureStorePort,
+        sample_signature: Signature
+    ) -> None:
+        """Test reinvestigating a signature."""
+        # Set initial status to DIAGNOSED
+        sample_signature.status = SignatureStatus.DIAGNOSED
+        await store.save(sample_signature)
+
+        # Execute reinvestigation
+        diagnosis = await service.reinvestigate("sig-123")
+
+        # Verify the diagnosis was returned
+        assert diagnosis is not None
+        assert diagnosis.root_cause is not None
+
+        # Verify signature was updated to DIAGNOSED status
+        updated = await store.get_by_id("sig-123")
+        assert updated is not None
+        assert updated.status == SignatureStatus.DIAGNOSED
+        assert updated.diagnosis is not None
+
+    async def test_reinvestigate_nonexistent_signature(
+        self, service: ManagementService
+    ) -> None:
+        """Test reinvestigating a signature that doesn't exist."""
+        with pytest.raises(ValueError, match="not found"):
+            await service.reinvestigate("nonexistent")
+
 
 # --- CLICommandHandler Tests ---
 

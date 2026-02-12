@@ -7,12 +7,16 @@ and asyncio for handling webhook requests.
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
 
 logger = logging.getLogger(__name__)
+
+# Thread-safe executor for running async operations from sync handlers
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
 class WebhookHTTPHandler(BaseHTTPRequestHandler):
@@ -23,6 +27,8 @@ class WebhookHTTPHandler(BaseHTTPRequestHandler):
 
     # Class variable to hold the WebhookReceiver instance
     webhook_receiver: WebhookReceiver | None = None
+    # Class variable to hold the event loop
+    event_loop: asyncio.AbstractEventLoop | None = None
 
     def do_POST(self) -> None:
         """Handle POST requests.
@@ -45,25 +51,53 @@ class WebhookHTTPHandler(BaseHTTPRequestHandler):
 
         # Route based on path
         if self.path == "/api/poll":
-            asyncio.run(self._handle_poll())
+            self._run_async(self._handle_poll())
         elif self.path == "/api/investigate":
-            asyncio.run(self._handle_investigate())
+            self._run_async(self._handle_investigate())
         elif self.path == "/api/mute":
-            asyncio.run(self._handle_mute(data))
+            self._run_async(self._handle_mute(data))
         elif self.path == "/api/resolve":
-            asyncio.run(self._handle_resolve(data))
+            self._run_async(self._handle_resolve(data))
         elif self.path == "/api/retriage":
-            asyncio.run(self._handle_retriage(data))
+            self._run_async(self._handle_retriage(data))
         elif self.path == "/api/reinvestigate":
-            asyncio.run(self._handle_reinvestigate(data))
+            self._run_async(self._handle_reinvestigate(data))
         elif self.path == "/api/details":
-            asyncio.run(self._handle_details(data))
+            self._run_async(self._handle_details(data))
         elif self.path == "/api/list":
-            asyncio.run(self._handle_list(data))
+            self._run_async(self._handle_list(data))
         elif self.path == "/health":
             self._send_response({"status": "healthy"})
         else:
             self.send_error(404, "Not found")
+
+    def do_GET(self) -> None:
+        """Handle GET requests.
+
+        Supports health check via GET.
+        """
+        if self.path == "/health":
+            self._send_response({"status": "healthy"})
+        else:
+            self.send_error(404, "Not found")
+
+    def _run_async(self, coro: Any) -> None:
+        """Run an async coroutine from a sync context.
+
+        Uses the event loop set at class level to schedule the coroutine.
+        """
+        if not self.event_loop:
+            self.send_error(500, "Event loop not available")
+            return
+
+        # Schedule coroutine on the event loop
+        future = asyncio.run_coroutine_threadsafe(coro, self.event_loop)
+        try:
+            # Wait for result with timeout
+            future.result(timeout=30)
+        except Exception as e:
+            logger.error(f"Error handling webhook request: {e}", exc_info=True)
+            self.send_error(500, f"Internal server error: {str(e)}")
 
     async def _handle_poll(self) -> None:
         """Handle poll trigger request."""
@@ -189,8 +223,9 @@ class WebhookHTTPServer:
         """Start the HTTP server."""
         logger.info(f"Starting webhook HTTP server on {self.host}:{self.port}")
 
-        # Set the webhook receiver on the handler class
+        # Set the webhook receiver and event loop on the handler class
         WebhookHTTPHandler.webhook_receiver = self.webhook_receiver
+        WebhookHTTPHandler.event_loop = asyncio.get_event_loop()
 
         # Create the HTTP server
         self.server = HTTPServer((self.host, self.port), WebhookHTTPHandler)

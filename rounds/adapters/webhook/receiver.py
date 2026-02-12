@@ -11,7 +11,6 @@ import json
 import logging
 from typing import Any
 
-from rounds.core.models import ErrorEvent, Severity, StackFrame
 from rounds.core.ports import ManagementPort, PollPort
 
 logger = logging.getLogger(__name__)

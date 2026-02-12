@@ -9,6 +9,7 @@ operations. It handles CLI-specific formatting and error reporting.
 import logging
 from typing import Any
 
+from rounds.core.models import Signature
 from rounds.core.ports import ManagementPort
 
 logger = logging.getLogger(__name__)
@@ -388,7 +389,7 @@ class CLICommandHandler:
                 "message": str(e),
             }
 
-    def _format_signatures_as_text(self, signatures: list[Any]) -> str:
+    def _format_signatures_as_text(self, signatures: list[Signature]) -> str:
         """Format signatures as human-readable text.
 
         Args:
