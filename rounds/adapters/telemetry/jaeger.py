@@ -161,14 +161,22 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         Returns:
             List of service names.
+
+        Raises:
+            httpx.HTTPError: If Jaeger API request fails.
+            Exception: If unexpected error occurs.
         """
         try:
             response = await self.client.get("/api/services")
+            response.raise_for_status()
             data = response.json()
             return data.get("data", [])
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching services from Jaeger: {e}", exc_info=True)
+            raise
         except Exception as e:
-            logger.warning(f"Failed to fetch services from Jaeger: {e}")
-            return []
+            logger.error(f"Unexpected error fetching services from Jaeger: {e}", exc_info=True)
+            raise
 
     def _extract_error_events(self, trace: dict[str, Any]) -> list[ErrorEvent]:
         """Extract ErrorEvent objects from a Jaeger trace.
@@ -213,7 +221,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 timestamp=datetime.fromtimestamp(
                     span.get("startTime", 0) / 1e6, tz=timezone.utc
                 ),
-                attributes=span.get("tags", {}),
+                attributes=tags,
                 severity=Severity.ERROR,
             )
 
@@ -480,7 +488,8 @@ class JaegerTelemetryAdapter(TelemetryPort):
     ) -> list[LogEntry]:
         """Retrieve logs correlated with the given traces.
 
-        Includes a time window around each trace for context.
+        Extracts logs from span logs in the traces. Includes a time window
+        around each trace for context.
 
         Args:
             trace_ids: List of trace IDs to correlate logs with.
@@ -492,26 +501,95 @@ class JaegerTelemetryAdapter(TelemetryPort):
         """
         logs: list[LogEntry] = []
 
-        # Jaeger doesn't have a direct logs query API like SigNoz
-        # Logs are typically embedded in trace spans
+        # Jaeger stores logs in span "logs" field
+        # Extract them from the traces we can retrieve
         try:
-            for trace_id in trace_ids:
-                trace = await self.get_trace(trace_id)
-                # Logs would be extracted from span events/logs
-                # This is a simplified implementation
-                logger.debug(
-                    f"Fetched correlated logs for trace {trace_id}",
-                    extra={"trace_id": trace_id},
-                )
+            traces = await self.get_traces(trace_ids)
+
+            for trace in traces:
+                # Extract logs from all spans in the trace
+                logs.extend(self._extract_logs_from_trace(trace))
+
+            logger.debug(
+                f"Extracted {len(logs)} log entries from {len(traces)} traces"
+            )
+
         except Exception as e:
-            logger.warning(f"Failed to fetch correlated logs: {e}")
+            logger.error(f"Failed to extract logs from traces: {e}", exc_info=True)
+            raise
 
         return logs
+
+    def _extract_logs_from_trace(self, trace: TraceTree) -> list[LogEntry]:
+        """Extract LogEntry objects from a trace tree.
+
+        Args:
+            trace: TraceTree object containing spans.
+
+        Returns:
+            List of LogEntry objects found in the trace.
+        """
+        log_entries: list[LogEntry] = []
+
+        def extract_from_span(span: SpanNode) -> None:
+            """Recursively extract logs from span and children."""
+            # In Jaeger, span attributes might contain logs
+            # For now, we extract from the span attributes/tags
+            # A real implementation would access raw span logs field
+
+            # Extract from span's stored logs if available
+            if "logs" in span.attributes:
+                span_logs = span.attributes.get("logs", [])
+                if isinstance(span_logs, list):
+                    for log in span_logs:
+                        if isinstance(log, dict):
+                            # Try to extract log fields
+                            timestamp_us = log.get("timestamp", 0)
+                            if timestamp_us:
+                                timestamp = datetime.fromtimestamp(
+                                    timestamp_us / 1e6, tz=timezone.utc
+                                )
+                            else:
+                                timestamp = datetime.now(timezone.utc)
+
+                            # Extract message from fields
+                            message = ""
+                            log_attrs: dict[str, any] = {}
+                            for field in log.get("fields", []):
+                                if isinstance(field, dict):
+                                    key = field.get("key", "")
+                                    value = field.get("value", "")
+                                    if key == "message":
+                                        message = value
+                                    else:
+                                        log_attrs[key] = value
+
+                            if message:
+                                log_entry = LogEntry(
+                                    timestamp=timestamp,
+                                    severity=Severity.INFO,
+                                    body=message,
+                                    attributes=log_attrs,
+                                    trace_id=trace.trace_id,
+                                    span_id=span.span_id,
+                                )
+                                log_entries.append(log_entry)
+
+            # Recursively extract from children
+            for child in span.children:
+                extract_from_span(child)
+
+        # Start from root span
+        extract_from_span(trace.root_span)
+
+        return log_entries
 
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 100
     ) -> list[ErrorEvent]:
         """Retrieve recent errors matching a fingerprint.
+
+        Queries all services for error spans and filters by fingerprint tag.
 
         Args:
             fingerprint: The fingerprint to search for.
@@ -521,11 +599,59 @@ class JaegerTelemetryAdapter(TelemetryPort):
             List of ErrorEvent objects matching the fingerprint.
 
         Raises:
-            NotImplementedError: Fingerprint-based search not yet implemented.
+            Exception: If Jaeger API is unavailable.
         """
-        # This requires searching all services for spans with a matching fingerprint tag
-        # Implementation depends on custom tagging strategy
-        raise NotImplementedError(
-            "Fingerprint-based event search not yet implemented for Jaeger adapter. "
-            "Use get_recent_errors() with service filtering instead."
-        )
+        try:
+            # Get all services
+            services = await self._get_services()
+            if not services:
+                logger.warning("No services available for fingerprint search")
+                return []
+
+            all_events: list[ErrorEvent] = []
+
+            # Query each service for recent errors with the fingerprint tag
+            for service in services:
+                try:
+                    # Build tag query for fingerprint and error status
+                    tags = f"error=true AND fingerprint={fingerprint}"
+
+                    now = datetime.now(timezone.utc)
+                    end_time_us = int(now.timestamp() * 1e6)
+                    # Look back 24 hours for events matching this fingerprint
+                    start_time_us = int((now - timedelta(hours=24)).timestamp() * 1e6)
+
+                    response = await self.client.get(
+                        "/api/traces",
+                        params={
+                            "service": service,
+                            "tags": tags,
+                            "start": start_time_us,
+                            "end": end_time_us,
+                            "limit": limit,
+                        },
+                    )
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        traces = data.get("data", [])
+
+                        for trace in traces:
+                            error_events = self._extract_error_events(trace)
+                            all_events.extend(error_events)
+
+                            # Stop if we've collected enough events
+                            if len(all_events) >= limit:
+                                return all_events[:limit]
+
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to query fingerprint {fingerprint} in service {service}: {e}"
+                    )
+                    continue
+
+            return all_events[:limit]
+
+        except Exception as e:
+            logger.error(f"Failed to fetch events for fingerprint {fingerprint}: {e}", exc_info=True)
+            raise

@@ -6,12 +6,21 @@ external diagnosis services.
 """
 
 import logging
+from typing import Protocol
 
 from .models import Diagnosis, InvestigationContext, Signature, SignatureStatus
 from .ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
+
+
+class BudgetTracker(Protocol):
+    """Protocol for budget tracking (used by DaemonScheduler)."""
+
+    def record_diagnosis_cost(self, cost_usd: float) -> None:
+        """Record a diagnosis cost towards the daily budget."""
+        ...
 
 
 class Investigator:
@@ -28,6 +37,7 @@ class Investigator:
         notification: NotificationPort,
         triage: TriageEngine,
         codebase_path: str,
+        budget_tracker: BudgetTracker | None = None,
     ):
         self.telemetry = telemetry
         self.store = store
@@ -35,6 +45,7 @@ class Investigator:
         self.notification = notification
         self.triage = triage
         self.codebase_path = codebase_path
+        self.budget_tracker = budget_tracker
 
     async def investigate(self, signature: Signature) -> Diagnosis:
         """Assemble context, request diagnosis, store result, notify.
@@ -109,7 +120,11 @@ class Investigator:
             )
             raise
 
-        # 4. Record result (persist diagnosis before notification)
+        # 4. Record cost if budget tracker available
+        if self.budget_tracker:
+            self.budget_tracker.record_diagnosis_cost(diagnosis.cost_usd)
+
+        # 5. Persist diagnosis before notification
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
         # so that medium-confidence NEW signatures can still notify
         signature.diagnosis = diagnosis
@@ -123,7 +138,7 @@ class Investigator:
             )
             raise
 
-        # 5. Notify if warranted (failure here should NOT revert the persisted diagnosis)
+        # 6. Notify if warranted (failure here should NOT revert the persisted diagnosis)
         # Pass original status to should_notify for correct medium-confidence logic
         try:
             if self.triage.should_notify(signature, diagnosis, original_status=original_status):

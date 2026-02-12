@@ -36,6 +36,192 @@ from rounds.core.poll_service import PollService
 from rounds.core.triage import TriageEngine
 
 
+async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
+    """Run interactive CLI loop.
+
+    Provides a REPL-like interface for management commands.
+
+    Args:
+        cli_handler: CLICommandHandler instance for executing commands.
+    """
+    import json
+
+    logger = logging.getLogger(__name__)
+    logger.info("Starting interactive CLI. Type 'help' for available commands or 'exit' to quit.")
+
+    loop = asyncio.get_running_loop()
+
+    while True:
+        try:
+            # Read command from stdin in a thread to avoid blocking
+            command_line = await loop.run_in_executor(
+                None,
+                input,
+                "rounds> "
+            )
+
+            command_line = command_line.strip()
+
+            if not command_line:
+                continue
+
+            if command_line.lower() == "exit":
+                logger.info("Exiting CLI")
+                break
+
+            if command_line.lower() == "help":
+                _print_cli_help()
+                continue
+
+            # Parse command and arguments
+            parts = command_line.split(maxsplit=1)
+            if not parts:
+                continue
+
+            command = parts[0].lower()
+            args_str = parts[1] if len(parts) > 1 else ""
+
+            # Try to parse arguments as JSON
+            try:
+                if args_str:
+                    args = json.loads(args_str)
+                else:
+                    args = {}
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON arguments. Use 'help' for command syntax.")
+                continue
+
+            # Execute command
+            try:
+                result = await _execute_cli_command(cli_handler, command, args)
+                # Print result
+                print(json.dumps(result, indent=2, default=str))
+            except Exception as e:
+                logger.error(f"Command execution error: {e}", exc_info=True)
+                print(json.dumps({
+                    "status": "error",
+                    "message": str(e)
+                }, indent=2))
+
+        except EOFError:
+            # Ctrl+D to exit
+            logger.info("EOF received, exiting CLI")
+            break
+        except KeyboardInterrupt:
+            # Ctrl+C
+            logger.info("Interrupted by user")
+            continue
+        except Exception as e:
+            logger.error(f"CLI error: {e}", exc_info=True)
+
+
+async def _execute_cli_command(
+    cli_handler: CLICommandHandler,
+    command: str,
+    args: dict[str, any],
+) -> dict[str, any]:
+    """Execute a CLI command.
+
+    Args:
+        cli_handler: CLICommandHandler instance.
+        command: Command name.
+        args: Command arguments.
+
+    Returns:
+        Command result dictionary.
+
+    Raises:
+        ValueError: If command is not recognized.
+    """
+    if command == "list":
+        return await cli_handler.list_signatures(
+            status=args.get("status"),
+            output_format=args.get("format", "json"),
+        )
+
+    elif command == "details":
+        return await cli_handler.get_signature_details(
+            signature_id=args["signature_id"],
+            output_format=args.get("format", "json"),
+        )
+
+    elif command == "mute":
+        return await cli_handler.mute_signature(
+            signature_id=args["signature_id"],
+            reason=args.get("reason"),
+            verbose=args.get("verbose", False),
+        )
+
+    elif command == "resolve":
+        return await cli_handler.resolve_signature(
+            signature_id=args["signature_id"],
+            fix_applied=args.get("fix_applied"),
+            verbose=args.get("verbose", False),
+        )
+
+    elif command == "retriage":
+        return await cli_handler.retriage_signature(
+            signature_id=args["signature_id"],
+            verbose=args.get("verbose", False),
+        )
+
+    elif command == "reinvestigate":
+        return await cli_handler.reinvestigate_signature(
+            signature_id=args["signature_id"],
+            verbose=args.get("verbose", False),
+        )
+
+    else:
+        raise ValueError(f"Unknown command: {command}. Use 'help' for available commands.")
+
+
+def _print_cli_help() -> None:
+    """Print CLI help message."""
+    help_text = """
+Available Commands:
+
+  list [--status <status>] [--format json|text]
+    List all signatures, optionally filtered by status.
+    Status: new, investigating, diagnosed, resolved, muted
+
+    Example: list {"status": "new", "format": "text"}
+
+  details <signature_id> [--format json|text]
+    Get detailed information about a signature.
+
+    Example: details {"signature_id": "uuid-here"}
+
+  mute <signature_id> [--reason <reason>]
+    Mute a signature to stop notifications.
+
+    Example: mute {"signature_id": "uuid-here", "reason": "false positive"}
+
+  resolve <signature_id> [--fix_applied <description>]
+    Mark a signature as resolved.
+
+    Example: resolve {"signature_id": "uuid-here", "fix_applied": "deployed fix"}
+
+  retriage <signature_id>
+    Re-evaluate a signature's triage status.
+
+    Example: retriage {"signature_id": "uuid-here"}
+
+  reinvestigate <signature_id>
+    Request a new diagnosis for a signature.
+
+    Example: reinvestigate {"signature_id": "uuid-here"}
+
+  help
+    Show this help message.
+
+  exit
+    Exit the CLI.
+
+Note: All arguments should be provided as a single JSON object on the command line.
+    """
+    print(help_text)
+
+
 def configure_logging(log_level: str, log_format: str) -> None:
     """Configure application logging.
 
@@ -158,6 +344,15 @@ async def bootstrap() -> None:
     fingerprinter = Fingerprinter()
     triage = TriageEngine()
 
+    # Create daemon scheduler first (needed for budget tracking in investigator)
+    scheduler: DaemonScheduler | None = None
+    if settings.run_mode == "daemon":
+        scheduler = DaemonScheduler(
+            poll_port=None,  # Will be set after poll_service is created
+            poll_interval_seconds=settings.poll_interval_seconds,
+            budget_limit=settings.daily_budget_limit,
+        )
+
     # Investigator (orchestrates investigation workflow)
     investigator = Investigator(
         telemetry=telemetry,
@@ -166,6 +361,7 @@ async def bootstrap() -> None:
         notification=notification,
         triage=triage,
         codebase_path=settings.codebase_path,
+        budget_tracker=scheduler,
     )
 
     # Poll service (implements PollPort)
@@ -180,6 +376,10 @@ async def bootstrap() -> None:
         batch_size=settings.poll_batch_size,
     )
 
+    # Set poll_port in scheduler if it was created
+    if scheduler is not None:
+        scheduler.poll_port = poll_service
+
     # Management service (implements ManagementPort for CLI/webhook)
     management_service = ManagementService(
         store=store,
@@ -193,22 +393,16 @@ async def bootstrap() -> None:
     try:
         if settings.run_mode == "daemon":
             # Start daemon polling loop
-            scheduler = DaemonScheduler(
-                poll_port=poll_service,
-                poll_interval_seconds=settings.poll_interval_seconds,
-                budget_limit=settings.daily_budget_limit,
-            )
+            assert scheduler is not None
             await scheduler.start()
 
         elif settings.run_mode == "cli":
             # CLI mode handles interactive commands via CLICommandHandler
-            # Fully implemented with mute, resolve, retriage, and details commands
-            logger.info("CLI mode - ManagementService available for command handling")
+            logger.info("CLI mode - Ready for interactive commands")
             # Create CLI command handler with the management service
             cli_handler = CLICommandHandler(management_service)
-            # CLI interaction loop would be implemented in main entry point
-            # The handler is ready for use by CLI adapters
-            sys.exit(0)
+            # Run interactive CLI loop
+            await _run_cli_interactive(cli_handler)
 
         elif settings.run_mode == "webhook":
             # Webhook mode starts an HTTP server for external triggers

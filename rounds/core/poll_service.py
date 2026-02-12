@@ -52,6 +52,9 @@ class PollService(PollPort):
         """Check for new errors, fingerprint, dedup, and queue investigations.
 
         Returns a summary of what was found.
+
+        Raises:
+            Exception: If telemetry fetch fails. Errors are not silenced.
         """
         now = datetime.now(timezone.utc)
         since = now - timedelta(minutes=self.lookback_minutes)
@@ -60,13 +63,7 @@ class PollService(PollPort):
             errors = await self.telemetry.get_recent_errors(since, self.services)
         except Exception as e:
             logger.error(f"Failed to fetch recent errors from telemetry: {e}", exc_info=True)
-            return PollResult(
-                errors_found=0,
-                new_signatures=0,
-                updated_signatures=0,
-                investigations_queued=0,
-                timestamp=now,
-            )
+            raise
 
         # Limit errors to batch_size if configured
         if self.batch_size is not None and len(errors) > self.batch_size:
@@ -138,12 +135,16 @@ class PollService(PollPort):
         )
 
     async def execute_investigation_cycle(self) -> list[Diagnosis]:
-        """Investigate pending signatures. Returns diagnoses produced."""
+        """Investigate pending signatures. Returns diagnoses produced.
+
+        Raises:
+            Exception: If signature store fetch fails. Errors are not silenced.
+        """
         try:
             pending = await self.store.get_pending_investigation()
         except Exception as e:
             logger.error(f"Failed to fetch pending signatures: {e}", exc_info=True)
-            return []
+            raise
 
         # Sort by priority
         pending.sort(
