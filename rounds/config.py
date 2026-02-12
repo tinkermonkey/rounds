@@ -167,6 +167,14 @@ class Settings(BaseSettings):
         default=8080,
         description="Port to listen on for webhook server",
     )
+    webhook_api_key: str = Field(
+        default="",
+        description="API key for webhook authentication (required for production)",
+    )
+    webhook_require_auth: bool = Field(
+        default=False,
+        description="Require API key authentication for webhook endpoints",
+    )
 
     # Codebase configuration
     codebase_path: str = Field(

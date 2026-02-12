@@ -19,11 +19,13 @@ from typing import Any
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
+from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
@@ -317,23 +319,50 @@ async def bootstrap() -> None:
         logger.error(f"Unknown telemetry backend: {settings.telemetry_backend}")
         sys.exit(1)
 
-    # Signature store - select based on config (currently only SQLite supported)
+    # Signature store - select based on config
     if settings.store_backend == "sqlite":
         store = SQLiteSignatureStore(
             db_path=settings.store_sqlite_path,
         )
         logger.info(f"Signature store initialized: {settings.store_sqlite_path}")
+    elif settings.store_backend == "postgresql":
+        # Parse PostgreSQL connection URL or use individual parameters
+        if settings.database_url:
+            # Parse connection URL (postgresql://user:password@host:port/database)
+            import urllib.parse
+            parsed = urllib.parse.urlparse(settings.database_url)
+            store = PostgreSQLSignatureStore(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 5432,
+                database=parsed.path.lstrip("/") or "rounds",
+                user=parsed.username or "rounds",
+                password=parsed.password or "",
+            )
+        else:
+            # Use environment variable defaults from config
+            store = PostgreSQLSignatureStore()
+        logger.info("Signature store initialized: PostgreSQL")
     else:
         logger.error(f"Unknown store backend: {settings.store_backend}")
         sys.exit(1)
 
-    # Diagnosis adapter - select based on config (currently only Claude Code supported)
+    # Diagnosis adapter - select based on config
     if settings.diagnosis_backend == "claude_code":
         diagnosis_engine = ClaudeCodeDiagnosisAdapter(
             model=settings.claude_code_model,
             budget_usd=settings.claude_code_budget_usd,
         )
         logger.info("Diagnosis adapter: Claude Code")
+    elif settings.diagnosis_backend == "openai":
+        if not settings.openai_api_key:
+            logger.error("OpenAI backend selected but OPENAI_API_KEY not set")
+            sys.exit(1)
+        diagnosis_engine = OpenAIDiagnosisAdapter(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            budget_usd=settings.claude_code_budget_usd,
+        )
+        logger.info("Diagnosis adapter: OpenAI")
     else:
         logger.error(f"Unknown diagnosis backend: {settings.diagnosis_backend}")
         sys.exit(1)
@@ -440,6 +469,8 @@ async def bootstrap() -> None:
                 webhook_receiver=webhook_receiver,
                 host=settings.webhook_host,
                 port=settings.webhook_port,
+                api_key=settings.webhook_api_key if settings.webhook_api_key else None,
+                require_auth=settings.webhook_require_auth,
             )
             await http_server.start()
 
