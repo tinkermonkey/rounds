@@ -190,8 +190,9 @@ class JaegerTelemetryAdapter(TelemetryPort):
             # Extract stack frames from span logs
             stack_frames = self._extract_stack_frames(span)
 
-            # Get error information
-            error_type = span.get("tags", {}).get("error.kind", "Exception")
+            # Get error information - convert tags list to dict
+            tags = {t["key"]: t["value"] for t in span.get("tags", [])} if isinstance(span.get("tags", []), list) else span.get("tags", {})
+            error_type = tags.get("error.kind", "Exception")
             error_message = span.get("logs", [{}])[0].get("message", "")
 
             # Parse error message if it's JSON
@@ -230,7 +231,12 @@ class JaegerTelemetryAdapter(TelemetryPort):
         Returns:
             True if span represents an error.
         """
-        tags = span.get("tags", {})
+        # Convert tags list to dict if needed
+        tags_list = span.get("tags", [])
+        if isinstance(tags_list, list):
+            tags = {t["key"]: t["value"] for t in tags_list}
+        else:
+            tags = tags_list
 
         # Check for error tags
         if tags.get("error") is True:
@@ -408,10 +414,35 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
             root_node = build_span_node(root_span_id)
 
+            # Collect error spans for the trace
+            error_spans: list[SpanNode] = []
+            for span_id, node in span_dicts.items():
+                # Check if this span or any descendant is an error
+                def has_error(node: SpanNode) -> bool:
+                    # Check current span tags
+                    span = spans_by_id.get(span_id, {})
+                    tags_list = span.get("tags", [])
+                    if isinstance(tags_list, list):
+                        tags = {t["key"]: t["value"] for t in tags_list}
+                    else:
+                        tags = tags_list
+
+                    if tags.get("error") or tags.get("otel.status_code") == "ERROR":
+                        return True
+
+                    # Check children
+                    for child in node.children:
+                        if has_error(child):
+                            return True
+                    return False
+
+                if has_error(node):
+                    error_spans.append(node)
+
             return TraceTree(
                 trace_id=trace_id,
-                service=root_node.service,
                 root_span=root_node,
+                error_spans=tuple(error_spans),
             )
 
         except httpx.HTTPError as e:

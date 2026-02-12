@@ -369,10 +369,16 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
             root_node = build_span_node(root_span_id)
 
+            # Collect error spans for the trace
+            error_spans: list[SpanNode] = []
+            for span_id, node in span_dicts.items():
+                if node["data"].get("status", {}).get("code", 0) != 0:
+                    error_spans.append(build_span_node(span_id))
+
             return TraceTree(
                 trace_id=trace_id,
-                service=root_node.service,
                 root_span=root_node,
+                error_spans=tuple(error_spans),
             )
 
         except httpx.HTTPError as e:
@@ -440,8 +446,11 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                     for timestamp, log_line in stream.get("values", []):
                         log_entry = LogEntry(
                             timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=timezone.utc),
-                            message=log_line,
-                            service=stream.get("stream", {}).get("service", ""),
+                            severity=Severity.INFO,
+                            body=log_line,
+                            attributes={},
+                            trace_id=None,
+                            span_id=None,
                         )
                         logs.append(log_entry)
 

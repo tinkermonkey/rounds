@@ -27,7 +27,6 @@ dependencies = [
     "pydantic-settings>=2.0",
     "aiosqlite>=0.19",
     "httpx>=0.25",
-    "structlog>=23.0",
     "python-dotenv>=1.0",
 ]
 

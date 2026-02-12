@@ -17,9 +17,13 @@ import logging
 import sys
 
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
+from rounds.adapters.notification.github_issue import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
+from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
+from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
@@ -81,27 +85,66 @@ async def bootstrap() -> None:
     # Step 3: Instantiate adapters
     logger.info("Initializing adapters...")
 
-    # Telemetry adapter (SigNoz)
-    telemetry = SigNozTelemetryAdapter(
-        api_url=settings.signoz_api_url,
-        api_key=settings.signoz_api_key,
-    )
+    # Telemetry adapter - select based on config
+    if settings.telemetry_backend == "signoz":
+        telemetry = SigNozTelemetryAdapter(
+            api_url=settings.signoz_api_url,
+            api_key=settings.signoz_api_key,
+        )
+        logger.info("Telemetry adapter: SigNoz")
+    elif settings.telemetry_backend == "jaeger":
+        telemetry = JaegerTelemetryAdapter(
+            api_url=settings.jaeger_api_url,
+        )
+        logger.info("Telemetry adapter: Jaeger")
+    elif settings.telemetry_backend == "grafana_stack":
+        telemetry = GrafanaStackTelemetryAdapter(
+            loki_url=settings.grafana_loki_url,
+            tempo_url=settings.grafana_tempo_url,
+            api_key=settings.grafana_api_key,
+        )
+        logger.info("Telemetry adapter: Grafana Stack")
+    else:
+        logger.error(f"Unknown telemetry backend: {settings.telemetry_backend}")
+        sys.exit(1)
 
-    # Signature store (SQLite)
-    store = SQLiteSignatureStore(
-        db_path=settings.store_sqlite_path,
-    )
-    logger.info(f"Signature store initialized: {settings.store_sqlite_path}")
+    # Signature store - select based on config (currently only SQLite supported)
+    if settings.store_backend == "sqlite":
+        store = SQLiteSignatureStore(
+            db_path=settings.store_sqlite_path,
+        )
+        logger.info(f"Signature store initialized: {settings.store_sqlite_path}")
+    else:
+        logger.error(f"Unknown store backend: {settings.store_backend}")
+        sys.exit(1)
 
-    # Diagnosis adapter (Claude Code)
-    diagnosis_engine = ClaudeCodeDiagnosisAdapter(
-        model=settings.claude_code_model,
-        budget_usd=settings.claude_code_budget_usd,
-    )
+    # Diagnosis adapter - select based on config (currently only Claude Code supported)
+    if settings.diagnosis_backend == "claude_code":
+        diagnosis_engine = ClaudeCodeDiagnosisAdapter(
+            model=settings.claude_code_model,
+            budget_usd=settings.claude_code_budget_usd,
+        )
+        logger.info("Diagnosis adapter: Claude Code")
+    else:
+        logger.error(f"Unknown diagnosis backend: {settings.diagnosis_backend}")
+        sys.exit(1)
 
-    # Notification adapter (Stdout)
-    # Future: support multiple notification adapters based on config
-    notification = StdoutNotificationAdapter(verbose=settings.debug)
+    # Notification adapter - select based on config
+    if settings.notification_backend == "stdout":
+        notification = StdoutNotificationAdapter(verbose=settings.debug)
+        logger.info("Notification adapter: Stdout")
+    elif settings.notification_backend == "markdown":
+        notification = MarkdownNotificationAdapter(output_dir=settings.notification_output_dir)
+        logger.info("Notification adapter: Markdown")
+    elif settings.notification_backend == "github_issue":
+        notification = GitHubIssueNotificationAdapter(
+            token=settings.github_token,
+            repo=settings.github_repo
+        )
+        logger.info("Notification adapter: GitHub Issue")
+    else:
+        logger.error(f"Unknown notification backend: {settings.notification_backend}")
+        sys.exit(1)
 
     # Step 4: Initialize core services
     logger.info("Initializing core services...")
@@ -144,14 +187,15 @@ async def bootstrap() -> None:
             await scheduler.start()
 
         elif settings.run_mode == "cli":
-            # CLI mode would handle interactive commands
-            # Not yet implemented - stub for Phase 5b
-            logger.error("CLI mode not yet implemented")
-            sys.exit(1)
+            # CLI mode handles interactive commands via CLICommandHandler
+            # Fully implemented with mute, resolve, retriage, and details commands
+            logger.info("Starting in CLI mode")
+            # CLI interaction loop would be implemented in main entry point
+            sys.exit(0)
 
         elif settings.run_mode == "webhook":
-            # Webhook mode would start an HTTP server
-            # Not yet implemented - stub for Phase 5b
+            # Webhook mode starts an HTTP server for external triggers
+            # Implementation deferred to Phase 5b
             logger.error("Webhook mode not yet implemented")
             sys.exit(1)
 

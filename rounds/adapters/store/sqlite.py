@@ -66,14 +66,19 @@ class SQLiteSignatureStore(SignatureStorePort):
         """Initialize database schema on first use.
 
         Only runs once per instance. Subsequent calls are no-ops.
-        Protected by _pool_lock to prevent concurrent schema initialization.
+        Protected by _schema_lock to prevent concurrent schema initialization.
         """
+        # Check first without lock to avoid unnecessary locking
+        if self._schema_initialized:
+            return
+
         async with self._pool_lock:
             # Check again after acquiring lock to prevent race
             if self._schema_initialized:
                 return
 
-            conn = await self._get_connection()
+            # Create connection inline to avoid nested lock acquisition
+            conn = await aiosqlite.connect(str(self.db_path))
             try:
                 await conn.execute(
                     """
@@ -106,7 +111,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 await conn.commit()
                 self._schema_initialized = True
             finally:
-                await self._return_connection(conn)
+                await conn.close()
 
     async def get_by_id(self, signature_id: str) -> Signature | None:
         """Look up a signature by its ID."""

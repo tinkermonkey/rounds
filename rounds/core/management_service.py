@@ -49,7 +49,6 @@ class ManagementService(ManagementPort):
 
         # Update signature status
         signature.status = SignatureStatus.MUTED
-        signature.last_seen = datetime.now(timezone.utc)
 
         await self.store.update(signature)
 
@@ -81,7 +80,6 @@ class ManagementService(ManagementPort):
 
         # Update signature status
         signature.status = SignatureStatus.RESOLVED
-        signature.last_seen = datetime.now(timezone.utc)
 
         await self.store.update(signature)
 
@@ -113,7 +111,6 @@ class ManagementService(ManagementPort):
         # Reset status and clear diagnosis
         signature.status = SignatureStatus.NEW
         signature.diagnosis = None
-        signature.last_seen = datetime.now(timezone.utc)
 
         await self.store.update(signature)
 

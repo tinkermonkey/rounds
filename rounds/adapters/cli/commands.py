@@ -6,8 +6,6 @@ This adapter maps CLI commands (mute, resolve, retriage, details) to ManagementP
 operations. It handles CLI-specific formatting and error reporting.
 """
 
-import asyncio
-import json
 import logging
 from typing import Any
 
@@ -172,13 +170,13 @@ class CLICommandHandler:
             }
 
     async def get_signature_details(
-        self, signature_id: str, format: str = "json"
+        self, signature_id: str, output_format: str = "json"
     ) -> dict[str, Any]:
         """Retrieve signature details via CLI.
 
         Args:
             signature_id: UUID of the signature.
-            format: Output format ('json', 'text'). Default 'json'.
+            output_format: Output format ('json', 'text'). Default 'json'.
 
         Returns:
             Dictionary with signature details or status/message on error.
@@ -190,14 +188,14 @@ class CLICommandHandler:
         try:
             details = await self.management.get_signature_details(signature_id)
 
-            if format == "json":
+            if output_format == "json":
                 return {
                     "status": "success",
                     "operation": "get_details",
                     "data": details,
                 }
 
-            elif format == "text":
+            elif output_format == "text":
                 # Convert to human-readable text format
                 text_output = self._format_details_as_text(details)
                 return {
