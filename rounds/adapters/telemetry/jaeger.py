@@ -416,26 +416,27 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
             # Collect error spans for the trace
             error_spans: list[SpanNode] = []
-            for span_id, node in span_dicts.items():
-                # Check if this span or any descendant is an error
-                def has_error(node: SpanNode) -> bool:
-                    # Check current span tags
-                    span = span_dicts.get(span_id, {}).get("data", {})
-                    tags_list = span.get("tags", [])
-                    if isinstance(tags_list, list):
-                        tags = {t["key"]: t["value"] for t in tags_list}
-                    else:
-                        tags = tags_list
 
-                    if tags.get("error") or tags.get("otel.status_code") == "ERROR":
+            def has_error(node: SpanNode) -> bool:
+                """Recursively check if a span node or its children contain errors."""
+                # Check current span tags
+                span = span_dicts.get(node.span_id, {}).get("data", {})
+                tags_list = span.get("tags", [])
+                if isinstance(tags_list, list):
+                    tags = {t["key"]: t["value"] for t in tags_list}
+                else:
+                    tags = tags_list
+
+                if tags.get("error") or tags.get("otel.status_code") == "ERROR":
+                    return True
+
+                # Check children
+                for child in node.children:
+                    if has_error(child):
                         return True
+                return False
 
-                    # Check children
-                    for child in node.children:
-                        if has_error(child):
-                            return True
-                    return False
-
+            for span_id, node in span_dicts.items():
                 if has_error(node):
                     error_spans.append(node)
 

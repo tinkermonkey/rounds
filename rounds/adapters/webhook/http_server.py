@@ -235,17 +235,17 @@ class WebhookHTTPServer:
         logger.info("Webhook HTTP server started")
 
     async def _run_server(self) -> None:
-        """Run the HTTP server loop."""
+        """Run the HTTP server loop in a thread pool."""
         if not self.server:
             return
 
-        loop = asyncio.get_running_loop()
         try:
-            while True:
-                # Handle one request
-                self.server.handle_request()
-                # Yield control to other tasks
-                await asyncio.sleep(0.01)
+            loop = asyncio.get_running_loop()
+            # Run the blocking server loop in a thread pool to avoid blocking the event loop
+            await loop.run_in_executor(None, self.server.serve_forever)
+        except asyncio.CancelledError:
+            # Normal shutdown
+            pass
         except Exception as e:
             logger.error(f"Webhook HTTP server error: {e}", exc_info=True)
 
