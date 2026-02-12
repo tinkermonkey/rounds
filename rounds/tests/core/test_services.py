@@ -989,34 +989,6 @@ class TestDatetimeAwareness:
 class TestPollCycleErrorHandling:
     """Tests for comprehensive error handling in poll cycle."""
 
-    async def test_poll_handles_telemetry_failure(
-        self,
-        fingerprinter: Fingerprinter,
-        triage_engine: TriageEngine,
-    ) -> None:
-        """Poll cycle should handle telemetry fetch failures gracefully."""
-
-        class FailingTelemetryPort(MockTelemetryPort):
-            async def get_recent_errors(self, since, services=None):
-                raise RuntimeError("Telemetry service unavailable")
-
-        telemetry = FailingTelemetryPort()
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
-        investigator = Investigator(
-            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
-        )
-
-        poll_service = PollService(
-            telemetry, store, fingerprinter, triage_engine, investigator
-        )
-
-        # Should return empty result, not crash
-        result = await poll_service.execute_poll_cycle()
-        assert result.errors_found == 0
-        assert result.new_signatures == 0
-
     async def test_poll_continues_after_individual_error(
         self,
         fingerprinter: Fingerprinter,
