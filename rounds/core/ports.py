@@ -163,6 +163,20 @@ class SignatureStorePort(ABC):
     """
 
     @abstractmethod
+    async def get_by_id(self, signature_id: str) -> Signature | None:
+        """Look up a signature by its ID.
+
+        Args:
+            signature_id: UUID of the signature.
+
+        Returns:
+            Signature object if found, None otherwise.
+
+        Raises:
+            Exception: If database is unavailable.
+        """
+
+    @abstractmethod
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Look up a signature by its fingerprint hash.
 

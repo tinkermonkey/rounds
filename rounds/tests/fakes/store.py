@@ -16,12 +16,22 @@ class FakeSignatureStorePort(SignatureStorePort):
     def __init__(self):
         """Initialize with empty signature store."""
         self.signatures: dict[str, Signature] = {}
+        self.signatures_by_id: dict[str, Signature] = {}
         self.pending_signatures: list[Signature] = []
         self.saved_signatures: list[Signature] = []
         self.updated_signatures: list[Signature] = []
+        self.get_by_id_calls: list[str] = []
         self.get_by_fingerprint_calls: list[str] = []
         self.get_pending_investigation_call_count = 0
         self.get_similar_calls: list[tuple[Signature, int]] = []
+
+    async def get_by_id(self, signature_id: str) -> Signature | None:
+        """Get a signature by ID.
+
+        Returns the signature if found, None otherwise.
+        """
+        self.get_by_id_calls.append(signature_id)
+        return self.signatures_by_id.get(signature_id)
 
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Get a signature by fingerprint.
@@ -37,6 +47,7 @@ class FakeSignatureStorePort(SignatureStorePort):
         Stores the signature and marks it as saved for assertion.
         """
         self.signatures[signature.fingerprint] = signature
+        self.signatures_by_id[signature.id] = signature
         self.saved_signatures.append(signature)
 
     async def update(self, signature: Signature) -> None:
@@ -45,6 +56,7 @@ class FakeSignatureStorePort(SignatureStorePort):
         Updates the signature and marks it as updated for assertion.
         """
         self.signatures[signature.fingerprint] = signature
+        self.signatures_by_id[signature.id] = signature
         self.updated_signatures.append(signature)
 
     async def get_pending_investigation(self) -> list[Signature]:
@@ -108,9 +120,11 @@ class FakeSignatureStorePort(SignatureStorePort):
     def reset(self) -> None:
         """Reset all collected data and statistics."""
         self.signatures.clear()
+        self.signatures_by_id.clear()
         self.pending_signatures.clear()
         self.saved_signatures.clear()
         self.updated_signatures.clear()
+        self.get_by_id_calls.clear()
         self.get_by_fingerprint_calls.clear()
         self.get_pending_investigation_call_count = 0
         self.get_similar_calls.clear()

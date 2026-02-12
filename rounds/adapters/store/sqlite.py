@@ -108,6 +108,22 @@ class SQLiteSignatureStore(SignatureStorePort):
             finally:
                 await self._return_connection(conn)
 
+    async def get_by_id(self, signature_id: str) -> Signature | None:
+        """Look up a signature by its ID."""
+        await self._init_schema()
+
+        conn = await self._get_connection()
+        try:
+            cursor = await conn.execute(
+                "SELECT * FROM signatures WHERE id = ?", (signature_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_signature(row)
+        finally:
+            await self._return_connection(conn)
+
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Look up a signature by its fingerprint hash."""
         await self._init_schema()
