@@ -110,8 +110,7 @@ class PollService(PollPort):
                     new_signatures += 1
                 else:
                     # Update existing signature
-                    signature.last_seen = error.timestamp
-                    signature.occurrence_count += 1
+                    signature.record_occurrence(error.timestamp)
                     await self.store.update(signature)
                     updated_signatures += 1
 

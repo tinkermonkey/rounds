@@ -248,8 +248,16 @@ Respond with a JSON object in exactly this format:
             lines = output.split("\n")
             for line in lines:
                 if line.startswith("{"):
-                    parsed: dict[str, Any] = json.loads(line)
-                    return parsed
+                    try:
+                        parsed: dict[str, Any] = json.loads(line)
+                        return parsed
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"Failed to parse JSON line from OpenAI output: {e}. "
+                            f"Line: {line[:200]}",
+                            exc_info=True,
+                        )
+                        continue
 
             # No valid JSON found
             raise ValueError(
@@ -293,7 +301,10 @@ Respond with a JSON object in exactly this format:
 
         confidence_raw = result.get("confidence", "").upper()
         if confidence_raw not in ("HIGH", "MEDIUM", "LOW"):
-            confidence_raw = "MEDIUM"
+            raise ValueError(
+                f"Invalid confidence level '{confidence_raw}'. "
+                f"Must be one of ['HIGH', 'MEDIUM', 'LOW']"
+            )
 
         return Diagnosis(
             root_cause=root_cause,

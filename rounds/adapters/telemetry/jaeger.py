@@ -322,6 +322,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                             )
                             frames.append(frame)
                 except (IndexError, ValueError):
+                    logger.debug(f"Skipped unparseable stack trace line: {line[:100]}")
                     continue
 
         return tuple(frames)

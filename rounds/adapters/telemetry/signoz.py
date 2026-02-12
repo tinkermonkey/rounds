@@ -462,7 +462,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
                     )
                     frames.append(frame)
                 except (ValueError, IndexError):
-                    logger.warning(f"Skipped unparseable stack trace line: {line[:100]}")
+                    logger.debug(f"Skipped unparseable stack trace line: {line[:100]}")
                     continue
 
         return tuple(frames)

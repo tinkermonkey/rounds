@@ -97,14 +97,14 @@ class Investigator:
         original_status = signature.status
 
         # 3. Send to diagnosis engine
-        signature.status = SignatureStatus.INVESTIGATING
+        signature.mark_investigating()
         await self.store.update(signature)
 
         try:
             diagnosis = await self.diagnosis_engine.diagnose(context)
         except Exception as e:
             # Diagnosis failed - revert status and re-raise
-            signature.status = SignatureStatus.NEW
+            signature.revert_to_new()
             try:
                 await self.store.update(signature)
             except Exception as store_error:
@@ -127,8 +127,7 @@ class Investigator:
         # 5. Persist diagnosis before notification
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
         # so that medium-confidence NEW signatures can still notify
-        signature.diagnosis = diagnosis
-        signature.status = SignatureStatus.DIAGNOSED
+        signature.mark_diagnosed(diagnosis)
         try:
             await self.store.update(signature)
         except Exception as e:

@@ -161,6 +161,17 @@ class Signature:
         self.occurrence_count += 1
         self.last_seen = timestamp
 
+    def revert_to_new(self) -> None:
+        """Revert signature from INVESTIGATING back to NEW status.
+
+        Used for error recovery when diagnosis fails.
+        """
+        if self.status != SignatureStatus.INVESTIGATING:
+            raise ValueError(
+                f"Can only revert from INVESTIGATING status, current status: {self.status}"
+            )
+        self.status = SignatureStatus.NEW
+
 
 @dataclass(frozen=True)
 class SpanNode:

@@ -212,8 +212,16 @@ Respond with a JSON object in exactly this format:
             lines = output.split("\n")
             for line in lines:
                 if line.startswith("{"):
-                    parsed: dict[str, Any] = json.loads(line)
-                    return parsed
+                    try:
+                        parsed: dict[str, Any] = json.loads(line)
+                        return parsed
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"Failed to parse JSON line from Claude Code output: {e}. "
+                            f"Line: {line[:200]}",
+                            exc_info=True,
+                        )
+                        continue
 
             # No valid JSON found - raise exception instead of returning synthetic data
             raise ValueError(
