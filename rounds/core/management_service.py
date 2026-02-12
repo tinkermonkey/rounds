@@ -10,8 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from rounds.core.models import Diagnosis, InvestigationContext, Signature, SignatureStatus
-from rounds.core.ports import (
+from .models import Diagnosis, InvestigationContext, Signature, SignatureStatus
+from .ports import (
     DiagnosisPort,
     ManagementPort,
     SignatureStorePort,
@@ -215,7 +215,7 @@ class ManagementService(ManagementPort):
                 "root_cause": signature.diagnosis.root_cause,
                 "evidence": signature.diagnosis.evidence,
                 "suggested_fix": signature.diagnosis.suggested_fix,
-                "confidence": signature.diagnosis.confidence.value,
+                "confidence": signature.diagnosis.confidence,
                 "diagnosed_at": signature.diagnosis.diagnosed_at.isoformat(),
                 "model": signature.diagnosis.model,
                 "cost_usd": signature.diagnosis.cost_usd,
@@ -318,7 +318,7 @@ class ManagementService(ManagementPort):
             f"Completed reinvestigation for signature {signature_id}",
             extra={
                 "signature_id": signature_id,
-                "confidence": diagnosis.confidence.value,
+                "confidence": diagnosis.confidence,
                 "cost_usd": diagnosis.cost_usd,
             },
         )

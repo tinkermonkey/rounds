@@ -157,10 +157,10 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             return errors
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch errors from Grafana Stack: {e}")
+            logger.error(f"Failed to fetch errors from Grafana Stack: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching errors: {e}")
+            logger.error(f"Unexpected error fetching errors: {e}", exc_info=True)
             raise
 
     @staticmethod
@@ -382,10 +382,10 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             )
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch trace from Grafana Tempo: {e}")
+            logger.error(f"Failed to fetch trace from Grafana Tempo: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching trace: {e}")
+            logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
     async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:

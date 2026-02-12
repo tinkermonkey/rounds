@@ -69,7 +69,7 @@ class CLICommandHandler:
             return result
 
         except ValueError as e:
-            logger.error(f"Failed to mute signature: {e}")
+            logger.error(f"Failed to mute signature: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "mute",
@@ -119,7 +119,7 @@ class CLICommandHandler:
             return result
 
         except ValueError as e:
-            logger.error(f"Failed to resolve signature: {e}")
+            logger.error(f"Failed to resolve signature: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "resolve",
@@ -162,7 +162,7 @@ class CLICommandHandler:
             return result
 
         except ValueError as e:
-            logger.error(f"Failed to retriage signature: {e}")
+            logger.error(f"Failed to retriage signature: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "retriage",
@@ -213,7 +213,7 @@ class CLICommandHandler:
                 }
 
         except ValueError as e:
-            logger.error(f"Failed to get signature details: {e}")
+            logger.error(f"Failed to get signature details: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "get_details",
@@ -329,7 +329,7 @@ class CLICommandHandler:
                 }
 
         except ValueError as e:
-            logger.error(f"Failed to list signatures: {e}")
+            logger.error(f"Failed to list signatures: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "list",
@@ -381,7 +381,7 @@ class CLICommandHandler:
             return result
 
         except ValueError as e:
-            logger.error(f"Failed to reinvestigate signature: {e}")
+            logger.error(f"Failed to reinvestigate signature: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "reinvestigate",

@@ -123,10 +123,10 @@ class SigNozTelemetryAdapter(TelemetryPort):
             return errors
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch errors from SigNoz: {e}")
+            logger.error(f"Failed to fetch errors from SigNoz: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching errors: {e}")
+            logger.error(f"Unexpected error fetching errors: {e}", exc_info=True)
             raise
 
     async def get_trace(self, trace_id: str) -> TraceTree:
@@ -222,10 +222,10 @@ class SigNozTelemetryAdapter(TelemetryPort):
             )
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch trace {trace_id} from SigNoz: {e}")
+            logger.error(f"Failed to fetch trace {trace_id} from SigNoz: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching trace: {e}")
+            logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
     async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
@@ -314,10 +314,10 @@ class SigNozTelemetryAdapter(TelemetryPort):
             return logs
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch correlated logs: {e}")
+            logger.error(f"Failed to fetch correlated logs: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching logs: {e}")
+            logger.error(f"Unexpected error fetching logs: {e}", exc_info=True)
             raise
 
     async def get_events_for_signature(

@@ -115,12 +115,14 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                     "signature_id": signature.id,
                     "response": e.response.text,
                 },
+                exc_info=True,
             )
             raise
         except httpx.RequestError as e:
             logger.error(
                 f"Failed to create GitHub issue: {e}",
                 extra={"signature_id": signature.id},
+                exc_info=True,
             )
             raise
 
@@ -163,10 +165,11 @@ class GitHubIssueNotificationAdapter(NotificationPort):
             logger.error(
                 f"Failed to create summary GitHub issue: {e.response.status_code}",
                 extra={"response": e.response.text},
+                exc_info=True,
             )
             raise
         except httpx.RequestError as e:
-            logger.error(f"Failed to create summary GitHub issue: {e}")
+            logger.error(f"Failed to create summary GitHub issue: {e}", exc_info=True)
             raise
 
     @staticmethod

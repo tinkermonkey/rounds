@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 
 @dataclass(frozen=True)
@@ -68,12 +68,7 @@ class SignatureStatus(Enum):
     MUTED = "muted"
 
 
-class Confidence(Enum):
-    """Confidence levels for diagnosis."""
-
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
+Confidence: TypeAlias = Literal["high", "medium", "low"]
 
 
 @dataclass(frozen=True)

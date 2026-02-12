@@ -132,7 +132,7 @@ class WebhookReceiver:
                 "signature_id": signature_id,
             }
         except Exception as e:
-            logger.error(f"Failed to mute signature via webhook: {e}")
+            logger.error(f"Failed to mute signature via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "mute",
@@ -164,7 +164,7 @@ class WebhookReceiver:
                 "signature_id": signature_id,
             }
         except Exception as e:
-            logger.error(f"Failed to resolve signature via webhook: {e}")
+            logger.error(f"Failed to resolve signature via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "resolve",
@@ -193,7 +193,7 @@ class WebhookReceiver:
                 "signature_id": signature_id,
             }
         except Exception as e:
-            logger.error(f"Failed to retriage signature via webhook: {e}")
+            logger.error(f"Failed to retriage signature via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "retriage",
@@ -231,7 +231,7 @@ class WebhookReceiver:
                 },
             }
         except Exception as e:
-            logger.error(f"Failed to reinvestigate signature via webhook: {e}")
+            logger.error(f"Failed to reinvestigate signature via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "reinvestigate",
@@ -261,7 +261,7 @@ class WebhookReceiver:
                 "data": details,
             }
         except Exception as e:
-            logger.error(f"Failed to get signature details via webhook: {e}")
+            logger.error(f"Failed to get signature details via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "get_details",
@@ -309,7 +309,7 @@ class WebhookReceiver:
                 ],
             }
         except Exception as e:
-            logger.error(f"Failed to list signatures via webhook: {e}")
+            logger.error(f"Failed to list signatures via webhook: {e}", exc_info=True)
             return {
                 "status": "error",
                 "operation": "list",

@@ -7,16 +7,12 @@ and asyncio for handling webhook requests.
 import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
 
 logger = logging.getLogger(__name__)
-
-# Thread-safe executor for running async operations from sync handlers
-_executor = ThreadPoolExecutor(max_workers=4)
 
 
 class WebhookHTTPHandler(BaseHTTPRequestHandler):

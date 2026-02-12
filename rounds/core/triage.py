@@ -20,7 +20,7 @@ class TriageEngine:
         self,
         min_occurrence_for_investigation: int = 3,
         investigation_cooldown_hours: int = 24,
-        high_confidence_threshold: Confidence = Confidence.HIGH,
+        high_confidence_threshold: Confidence = "high",
     ):
         self.min_occurrence_for_investigation = min_occurrence_for_investigation
         self.investigation_cooldown_hours = investigation_cooldown_hours
@@ -79,7 +79,7 @@ class TriageEngine:
         status_for_check = original_status if original_status is not None else signature.status
         if (
             status_for_check == SignatureStatus.NEW
-            and diagnosis.confidence == Confidence.MEDIUM
+            and diagnosis.confidence == "medium"
         ):
             return True
 
@@ -97,7 +97,7 @@ class TriageEngine:
         Weighting rationale:
         - Frequency capped at 100 to prevent high-volume errors from dominating
         - Recency weighted at 50% of frequency since immediate errors are important
-        - New signatures get bonus (equal to max frequency) to surface novel issues
+        - New signatures get bonus (50 points, equal to 50% of max frequency) to surface novel issues
         - Critical tag adds 100 (highest possible boost for confirmed issues)
         - Flaky test penalty -20 to de-prioritize known unstable tests
 

@@ -53,6 +53,7 @@ class MarkdownNotificationAdapter(NotificationPort):
                 logger.error(
                     f"Failed to write markdown report: {e}",
                     extra={"path": str(self.report_path)},
+                    exc_info=True,
                 )
                 raise
 
@@ -73,6 +74,7 @@ class MarkdownNotificationAdapter(NotificationPort):
                 logger.error(
                     f"Failed to write markdown summary: {e}",
                     extra={"path": str(self.report_path)},
+                    exc_info=True,
                 )
                 raise
 

@@ -150,10 +150,10 @@ class JaegerTelemetryAdapter(TelemetryPort):
             return errors
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch errors from Jaeger: {e}")
+            logger.error(f"Failed to fetch errors from Jaeger: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching errors: {e}")
+            logger.error(f"Unexpected error fetching errors: {e}", exc_info=True)
             raise
 
     async def _get_services(self) -> list[str]:
@@ -455,10 +455,10 @@ class JaegerTelemetryAdapter(TelemetryPort):
             )
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch trace from Jaeger: {e}")
+            logger.error(f"Failed to fetch trace from Jaeger: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching trace: {e}")
+            logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
     async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:

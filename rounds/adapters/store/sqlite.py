@@ -66,7 +66,7 @@ class SQLiteSignatureStore(SignatureStorePort):
         """Initialize database schema on first use.
 
         Only runs once per instance. Subsequent calls are no-ops.
-        Protected by _schema_lock to prevent concurrent schema initialization.
+        Protected by _pool_lock to prevent concurrent schema initialization.
         """
         # Check first without lock to avoid unnecessary locking
         if self._schema_initialized:
@@ -342,7 +342,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 raise ValueError(f"Invalid date format: {e}") from e
 
             # Validate occurrence_count
-            if not isinstance(occurrence_count, int) or occurrence_count < 0:
+            if not isinstance(occurrence_count, int) or occurrence_count < 1:
                 raise ValueError(f"Invalid occurrence_count: {occurrence_count}")
 
             # Parse diagnosis
@@ -383,10 +383,10 @@ class SQLiteSignatureStore(SignatureStorePort):
             )
 
         except ValueError as e:
-            logger.error(f"Failed to parse database row: {e}")
+            logger.error(f"Failed to parse database row: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error parsing database row: {e}")
+            logger.error(f"Unexpected error parsing database row: {e}", exc_info=True)
             raise ValueError(f"Row parsing failed: {e}") from e
 
     @staticmethod
@@ -397,7 +397,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 "root_cause": diagnosis.root_cause,
                 "evidence": list(diagnosis.evidence),
                 "suggested_fix": diagnosis.suggested_fix,
-                "confidence": diagnosis.confidence.value,
+                "confidence": diagnosis.confidence,
                 "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
                 "model": diagnosis.model,
                 "cost_usd": diagnosis.cost_usd,
@@ -412,7 +412,7 @@ class SQLiteSignatureStore(SignatureStorePort):
             root_cause=data["root_cause"],
             evidence=tuple(data["evidence"]),
             suggested_fix=data["suggested_fix"],
-            confidence=Confidence(data["confidence"]),
+            confidence=data["confidence"],
             diagnosed_at=datetime.fromisoformat(data["diagnosed_at"]),
             model=data["model"],
             cost_usd=data["cost_usd"],

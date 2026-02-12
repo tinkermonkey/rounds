@@ -73,10 +73,10 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
             return diagnosis
 
         except (ValueError, TimeoutError, RuntimeError) as e:
-            logger.error(f"Failed to diagnose: {e}")
+            logger.error(f"Failed to diagnose: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during diagnosis: {e}")
+            logger.error(f"Unexpected error during diagnosis: {e}", exc_info=True)
             raise
 
     async def estimate_cost(self, context: InvestigationContext) -> float:
@@ -221,16 +221,16 @@ Respond with a JSON object in exactly this format:
             )
 
         except TimeoutError as e:
-            logger.error(f"Claude Code CLI timeout: {e}")
+            logger.error(f"Claude Code CLI timeout: {e}", exc_info=True)
             raise TimeoutError(str(e)) from e
         except RuntimeError as e:
-            logger.error(f"Claude Code CLI error: {e}")
+            logger.error(f"Claude Code CLI error: {e}", exc_info=True)
             raise RuntimeError(str(e)) from e
         except ValueError as e:
-            logger.error(f"Failed to parse Claude Code response: {e}")
+            logger.error(f"Failed to parse Claude Code response: {e}", exc_info=True)
             raise ValueError(str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to invoke Claude Code: {e}")
+            logger.error(f"Failed to invoke Claude Code: {e}", exc_info=True)
             raise
 
     def _parse_diagnosis_result(
@@ -240,7 +240,6 @@ Respond with a JSON object in exactly this format:
 
         Raises:
             ValueError: If required fields are missing or invalid.
-            KeyError: If the response structure is invalid.
         """
         root_cause = result.get("root_cause", "")
         if not root_cause:
@@ -262,19 +261,18 @@ Respond with a JSON object in exactly this format:
             raise ValueError("Response missing 'confidence' field")
 
         # Parse confidence - raise on invalid value
-        try:
-            confidence = Confidence(confidence_str.lower())
-        except ValueError as e:
+        confidence_lower = confidence_str.lower()
+        if confidence_lower not in ("high", "medium", "low"):
             raise ValueError(
                 f"Invalid confidence level '{confidence_str}'. "
-                f"Must be one of {[c.value for c in Confidence]}"
-            ) from e
+                f"Must be one of ['high', 'medium', 'low']"
+            )
 
         return Diagnosis(
             root_cause=root_cause,
             evidence=evidence,
             suggested_fix=suggested_fix,
-            confidence=confidence,
+            confidence=confidence_lower,
             diagnosed_at=datetime.now(timezone.utc),
             model=self.model,
             cost_usd=0.0,  # Will be filled in by diagnose()
