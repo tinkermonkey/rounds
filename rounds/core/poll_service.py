@@ -54,7 +54,6 @@ class PollService(PollPort):
         now = datetime.now(timezone.utc)
         since = now - timedelta(minutes=self.lookback_minutes)
 
-        # Fetch recent errors
         try:
             errors = await self.telemetry.get_recent_errors(since, self.services)
         except Exception as e:

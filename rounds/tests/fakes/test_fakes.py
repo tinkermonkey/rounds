@@ -392,34 +392,26 @@ class TestFakeSignatureStorePort:
         assert stats["total_signatures"] == 1
         assert stats["saved_count"] == 1
 
-    def test_tracked_operations(self, signature: Signature) -> None:
+    @pytest.mark.asyncio
+    async def test_tracked_operations(self, signature: Signature) -> None:
         """Should track all operations for assertions."""
-        import asyncio
-
         store = FakeSignatureStorePort()
 
-        async def run_test():
-            await store.get_by_fingerprint("fp-001")
-            await store.save(signature)
-            await store.update(signature)
-            await store.get_pending_investigation()
-
-        asyncio.run(run_test())
+        await store.get_by_fingerprint("fp-001")
+        await store.save(signature)
+        await store.update(signature)
+        await store.get_pending_investigation()
 
         assert len(store.get_by_fingerprint_calls) == 1
         assert len(store.saved_signatures) == 1
         assert len(store.updated_signatures) == 1
 
-    def test_reset(self, signature: Signature) -> None:
+    @pytest.mark.asyncio
+    async def test_reset(self, signature: Signature) -> None:
         """Should reset all data on reset()."""
-        import asyncio
-
         store = FakeSignatureStorePort()
 
-        async def run_test():
-            await store.save(signature)
-
-        asyncio.run(run_test())
+        await store.save(signature)
 
         assert len(store.signatures) > 0
         store.reset()
@@ -616,17 +608,13 @@ class TestFakeNotificationPort:
         with pytest.raises(RuntimeError, match="Test error"):
             await port.report(signature, diagnosis)
 
-    def test_reset(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    @pytest.mark.asyncio
+    async def test_reset(self, signature: Signature, diagnosis: Diagnosis) -> None:
         """Should reset all data on reset()."""
-        import asyncio
-
         port = FakeNotificationPort()
 
-        async def run_test():
-            await port.report(signature, diagnosis)
-            await port.report_summary({})
-
-        asyncio.run(run_test())
+        await port.report(signature, diagnosis)
+        await port.report_summary({})
 
         assert len(port.reported_diagnoses) > 0
         port.reset()
@@ -758,18 +746,14 @@ class TestFakeManagementPort:
         with pytest.raises(RuntimeError, match="Test error"):
             await port.mute_signature("sig-001")
 
-    def test_reset(self) -> None:
+    @pytest.mark.asyncio
+    async def test_reset(self) -> None:
         """Should reset all data on reset()."""
-        import asyncio
-
         port = FakeManagementPort()
 
-        async def run_test():
-            await port.mute_signature("sig-001")
-            await port.resolve_signature("sig-002")
-            await port.retriage_signature("sig-003")
-
-        asyncio.run(run_test())
+        await port.mute_signature("sig-001")
+        await port.resolve_signature("sig-002")
+        await port.retriage_signature("sig-003")
 
         assert len(port.muted_signatures) > 0
         port.reset()

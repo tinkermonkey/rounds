@@ -215,8 +215,6 @@ class SignatureStorePort(ABC):
     ) -> list[Signature]:
         """Return signatures with similar characteristics.
 
-        May use vector similarity in the future.
-
         Args:
             signature: Reference signature to find similar ones.
             limit: Maximum number of similar signatures to return.

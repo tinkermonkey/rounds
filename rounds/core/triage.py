@@ -94,6 +94,13 @@ class TriageEngine:
 
         Higher score = higher priority.
 
+        Weighting rationale:
+        - Frequency capped at 100 to prevent high-volume errors from dominating
+        - Recency weighted at 50% of frequency since immediate errors are important
+        - New signatures get bonus (equal to max frequency) to surface novel issues
+        - Critical tag adds 100 (highest possible boost for confirmed issues)
+        - Flaky test penalty -20 to de-prioritize known unstable tests
+
         Considers:
         - Frequency (occurrence count)
         - Recency (last seen timestamp)
@@ -105,7 +112,8 @@ class TriageEngine:
         # Frequency component (0-100 points)
         priority += min(signature.occurrence_count, 100)
 
-        # Recency component (0-50 points)
+        # Recency component (0-50 points max)
+        # Recent errors (< 1 hour) are more actionable than older ones
         now = datetime.now(timezone.utc)
         hours_since_last = (
             now - signature.last_seen
@@ -116,6 +124,7 @@ class TriageEngine:
             priority += 25
 
         # New signature bonus (50 points)
+        # Equal to 50% of max frequency to surface novel issues early
         if signature.status == SignatureStatus.NEW:
             priority += 50
 
