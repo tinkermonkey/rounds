@@ -666,7 +666,7 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=now,
+            first_seen=now - timedelta(hours=2),
             last_seen=now - timedelta(hours=2),
             occurrence_count=10,
             status=SignatureStatus.NEW,
@@ -678,7 +678,7 @@ class TestTriageEngine:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=now,
+            first_seen=now - timedelta(minutes=30),
             last_seen=now - timedelta(minutes=30),
             occurrence_count=10,
             status=SignatureStatus.NEW,
@@ -902,7 +902,7 @@ class TestPollService:
         assert sig1.status == SignatureStatus.NEW  # Reverted due to diagnosis failure
         assert sig2.status == SignatureStatus.DIAGNOSED  # Successfully diagnosed
         assert len(diagnoses) == 1  # Only successful diagnosis returned
-        assert diagnoses[0].root_cause == "test root cause"
+        assert diagnoses[0].root_cause == "Mock root cause"
         # Verify both signatures were attempted
         assert len(investigator_calls) == 2
         assert investigator_calls[0] == "failed"
