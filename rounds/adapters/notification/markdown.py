@@ -6,7 +6,7 @@ Useful for creating audit trails and persistent diagnostic records.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -95,7 +95,7 @@ class MarkdownNotificationAdapter(NotificationPort):
         lines = []
 
         # Timestamp
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         lines.append(f"## Diagnosis Report - {timestamp}")
         lines.append("")
 
@@ -161,7 +161,7 @@ class MarkdownNotificationAdapter(NotificationPort):
         lines = []
 
         # Timestamp
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         lines.append(f"## Summary Report - {timestamp}")
         lines.append("")
 

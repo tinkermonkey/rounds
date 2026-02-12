@@ -14,7 +14,6 @@ from typing import Any
 
 import httpx
 
-from rounds.core.fingerprint import Fingerprinter
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
@@ -26,6 +25,35 @@ from rounds.core.models import (
 from rounds.core.ports import TelemetryPort
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_trace_id(trace_id: str) -> bool:
+    """Validate trace ID format (128-bit hex string).
+
+    Args:
+        trace_id: The trace ID to validate.
+
+    Returns:
+        True if the trace ID is valid format.
+    """
+    if not isinstance(trace_id, str):
+        return False
+    return bool(trace_id) and all(c in "0123456789abcdefABCDEF" for c in trace_id)
+
+
+def _is_valid_identifier(identifier: str) -> bool:
+    """Validate an identifier to prevent query injection.
+
+    Args:
+        identifier: The identifier to validate.
+
+    Returns:
+        True if identifier is safe for queries.
+    """
+    if not isinstance(identifier, str):
+        return False
+    # Allow alphanumeric, underscore, hyphen, and dot
+    return bool(identifier) and all(c.isalnum() or c in "_-." for c in identifier)
 
 
 class JaegerTelemetryAdapter(TelemetryPort):
@@ -77,11 +105,20 @@ class JaegerTelemetryAdapter(TelemetryPort):
         if not services and self.service_name:
             services = [self.service_name]
 
+        # Validate service names to prevent injection
+        if services:
+            for service in services:
+                if not _is_valid_identifier(service):
+                    logger.warning(f"Invalid service name format: {service}")
+                    services = [s for s in services if _is_valid_identifier(s)]
+                    if not services:
+                        return []
+
         errors: list[ErrorEvent] = []
 
         try:
             # Calculate time range
-            end_time_us = int(datetime.utcnow().timestamp() * 1e6)
+            end_time_us = int(datetime.now(timezone.utc).timestamp() * 1e6)
             start_time_us = int(since.timestamp() * 1e6)
 
             # If no services specified, query each service separately
@@ -407,30 +444,33 @@ class JaegerTelemetryAdapter(TelemetryPort):
         return traces
 
     async def get_correlated_logs(
-        self, trace_id: str, span_id: str, time_window_ms: int = 1000
+        self, trace_ids: list[str], window_minutes: int = 5
     ) -> list[LogEntry]:
-        """Retrieve logs correlated with a specific span.
+        """Retrieve logs correlated with the given traces.
+
+        Includes a time window around each trace for context.
 
         Args:
-            trace_id: Jaeger trace ID.
-            span_id: Jaeger span ID.
-            time_window_ms: Time window around span for log correlation (ms).
+            trace_ids: List of trace IDs to correlate logs with.
+            window_minutes: Time window (minutes) before/after traces to include.
 
         Returns:
-            List of LogEntry objects.
+            List of LogEntry objects correlated with the traces.
+            Empty list if no logs found.
         """
         logs: list[LogEntry] = []
 
         # Jaeger doesn't have a direct logs query API like SigNoz
         # Logs are typically embedded in trace spans
         try:
-            trace = await self.get_trace(trace_id)
-            # Logs would be extracted from span events/logs
-            # This is a simplified implementation
-            logger.debug(
-                f"Fetched correlated logs for span {span_id}",
-                extra={"trace_id": trace_id},
-            )
+            for trace_id in trace_ids:
+                trace = await self.get_trace(trace_id)
+                # Logs would be extracted from span events/logs
+                # This is a simplified implementation
+                logger.debug(
+                    f"Fetched correlated logs for trace {trace_id}",
+                    extra={"trace_id": trace_id},
+                )
         except Exception as e:
             logger.warning(f"Failed to fetch correlated logs: {e}")
 
@@ -447,9 +487,13 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         Returns:
             List of ErrorEvent objects matching the fingerprint.
+
+        Raises:
+            NotImplementedError: Fingerprint-based search not yet implemented.
         """
         # This requires searching all services for spans with a matching fingerprint tag
         # Implementation depends on custom tagging strategy
-        logger.debug(f"Searching for fingerprint {fingerprint}")
-
-        return []
+        raise NotImplementedError(
+            "Fingerprint-based event search not yet implemented for Jaeger adapter. "
+            "Use get_recent_errors() with service filtering instead."
+        )

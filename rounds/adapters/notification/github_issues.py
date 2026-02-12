@@ -45,6 +45,14 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         self.assignees = assignees or []
         self._client: httpx.AsyncClient | None = None
 
+    async def __aenter__(self) -> "GitHubIssueNotificationAdapter":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit."""
+        await self.close()
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client.
 
@@ -88,25 +96,27 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                 },
             )
 
-            if response.status_code == 201:
-                issue_data = response.json()
-                logger.info(
-                    f"Created GitHub issue #{issue_data['number']}",
-                    extra={
-                        "signature_id": signature.id,
-                        "issue_number": issue_data["number"],
-                        "issue_url": issue_data["html_url"],
-                    },
-                )
-            else:
-                logger.error(
-                    f"Failed to create GitHub issue: {response.status_code}",
-                    extra={
-                        "signature_id": signature.id,
-                        "response": response.text,
-                    },
-                )
+            response.raise_for_status()
 
+            issue_data = response.json()
+            logger.info(
+                f"Created GitHub issue #{issue_data['number']}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_data["number"],
+                    "issue_url": issue_data["html_url"],
+                },
+            )
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to create GitHub issue: {e.response.status_code}",
+                extra={
+                    "signature_id": signature.id,
+                    "response": e.response.text,
+                },
+            )
+            raise
         except httpx.RequestError as e:
             logger.error(
                 f"Failed to create GitHub issue: {e}",
@@ -138,21 +148,23 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                 },
             )
 
-            if response.status_code == 201:
-                issue_data = response.json()
-                logger.info(
-                    f"Created summary GitHub issue #{issue_data['number']}",
-                    extra={
-                        "issue_number": issue_data["number"],
-                        "issue_url": issue_data["html_url"],
-                    },
-                )
-            else:
-                logger.error(
-                    f"Failed to create summary GitHub issue: {response.status_code}",
-                    extra={"response": response.text},
-                )
+            response.raise_for_status()
 
+            issue_data = response.json()
+            logger.info(
+                f"Created summary GitHub issue #{issue_data['number']}",
+                extra={
+                    "issue_number": issue_data["number"],
+                    "issue_url": issue_data["html_url"],
+                },
+            )
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to create summary GitHub issue: {e.response.status_code}",
+                extra={"response": e.response.text},
+            )
+            raise
         except httpx.RequestError as e:
             logger.error(f"Failed to create summary GitHub issue: {e}")
             raise

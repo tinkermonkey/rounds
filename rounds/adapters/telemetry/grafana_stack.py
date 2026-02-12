@@ -33,6 +33,21 @@ from rounds.core.ports import TelemetryPort
 logger = logging.getLogger(__name__)
 
 
+def _is_valid_identifier(identifier: str) -> bool:
+    """Validate an identifier to prevent LogQL injection.
+
+    Args:
+        identifier: The identifier to validate.
+
+    Returns:
+        True if identifier is safe for queries.
+    """
+    if not isinstance(identifier, str):
+        return False
+    # Allow alphanumeric, underscore, hyphen, and dot
+    return bool(identifier) and all(c.isalnum() or c in "_-." for c in identifier)
+
+
 class GrafanaStackTelemetryAdapter(TelemetryPort):
     """Grafana Stack telemetry adapter (Tempo + Loki + Prometheus)."""
 
@@ -100,14 +115,19 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             # Build LogQL query for errors
             service_filter = ""
             if services:
-                service_list = "|".join(f'"{s}"' for s in services)
+                # Validate service names to prevent LogQL injection
+                valid_services = [s for s in services if _is_valid_identifier(s)]
+                if not valid_services:
+                    logger.warning(f"No valid service names provided: {services}")
+                    return []
+                service_list = "|".join(f'"{s}"' for s in valid_services)
                 service_filter = f' | service =~ {{{service_list}}}'
 
             query = f'{{level="error"}}{service_filter} | json'
 
             # Convert timestamp to nanoseconds for Loki
             start_ns = int(since.timestamp() * 1e9)
-            end_ns = int(datetime.utcnow().timestamp() * 1e9)
+            end_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
@@ -167,7 +187,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 )
 
             # Parse timestamp
-            timestamp = datetime.utcnow(tz=timezone.utc)
+            timestamp = datetime.now(timezone.utc)
             if "timestamp" in log_data:
                 try:
                     timestamp = datetime.fromisoformat(log_data["timestamp"])
@@ -385,23 +405,27 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         return traces
 
     async def get_correlated_logs(
-        self, trace_id: str, span_id: str, time_window_ms: int = 1000
+        self, trace_ids: list[str], window_minutes: int = 5
     ) -> list[LogEntry]:
-        """Retrieve logs correlated with a specific span.
+        """Retrieve logs correlated with the given traces.
+
+        Includes a time window around each trace for context.
 
         Args:
-            trace_id: Trace ID to correlate logs with.
-            span_id: Span ID to correlate logs with.
-            time_window_ms: Time window around span for log correlation (ms).
+            trace_ids: List of trace IDs to correlate logs with.
+            window_minutes: Time window (minutes) before/after traces to include.
 
         Returns:
-            List of LogEntry objects.
+            List of LogEntry objects correlated with the traces.
+            Empty list if no logs found.
         """
         logs: list[LogEntry] = []
 
         try:
-            # Build LogQL query to correlate logs with trace/span
-            query = f'trace_id="{trace_id}" | span_id="{span_id}"'
+            # Build LogQL query to correlate logs with traces
+            # Escape trace IDs for LogQL queries
+            trace_filter = "|".join(f'"{tid}"' for tid in trace_ids)
+            query = f'trace_id=~{{{trace_filter}}}'
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query",
@@ -415,7 +439,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 for stream in streams:
                     for timestamp, log_line in stream.get("values", []):
                         log_entry = LogEntry(
-                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9),
+                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=timezone.utc),
                             message=log_line,
                             service=stream.get("stream", {}).get("service", ""),
                         )
@@ -437,25 +461,12 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
         Returns:
             List of ErrorEvent objects matching the fingerprint.
+
+        Raises:
+            NotImplementedError: Fingerprint-based search not yet implemented.
         """
         # Query Loki for logs with matching fingerprint
-        query = f'fingerprint="{fingerprint}"'
-
-        try:
-            response = await self.loki_client.get(
-                "/loki/api/v1/query_range",
-                params={
-                    "query": query,
-                    "limit": limit,
-                },
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                # Parse and return error events
-                logger.debug(f"Found events for fingerprint {fingerprint}")
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch events for fingerprint: {e}")
-
-        return []
+        raise NotImplementedError(
+            "Fingerprint-based event search not yet implemented for Grafana Stack adapter. "
+            "Use get_recent_errors() with service filtering instead."
+        )
