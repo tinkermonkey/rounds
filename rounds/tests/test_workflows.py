@@ -5,7 +5,7 @@ Investigator, PollService) work together correctly using fake adapters.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -94,7 +94,7 @@ def error_event() -> ErrorEvent:
                 lineno=42,
             ),
         ),
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         attributes={"user_id": "user-123", "endpoint": "/api/orders"},
         severity=Severity.ERROR,
     )

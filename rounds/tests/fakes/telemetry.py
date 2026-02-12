@@ -1,6 +1,6 @@
 """Fake TelemetryPort implementation for testing."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from rounds.core.models import ErrorEvent, LogEntry, SpanNode, TraceTree
 from rounds.core.ports import TelemetryPort
@@ -69,7 +69,10 @@ class FakeTelemetryPort(TelemetryPort):
 
         result = []
         for ts, errors in self.errors.items():
-            if ts >= since:
+            # Normalize both timestamps to timezone-aware UTC for comparison
+            ts_normalized = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+            since_normalized = since if since.tzinfo is not None else since.replace(tzinfo=timezone.utc)
+            if ts_normalized >= since_normalized:
                 result.extend(errors)
 
         if services:

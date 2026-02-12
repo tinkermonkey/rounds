@@ -227,7 +227,7 @@ class MockDiagnosisPort(DiagnosisPort):
             evidence=("mock evidence",),
             suggested_fix="Mock fix",
             confidence=Confidence.HIGH,
-            diagnosed_at=datetime.now(),
+            diagnosed_at=datetime.now(timezone.utc),
             model="mock-model",
             cost_usd=0.0,
         )

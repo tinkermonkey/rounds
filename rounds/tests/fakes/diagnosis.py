@@ -1,6 +1,6 @@
 """Fake DiagnosisPort implementation for testing."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from rounds.core.models import Confidence, Diagnosis, InvestigationContext
 from rounds.core.ports import DiagnosisPort
@@ -64,7 +64,7 @@ class FakeDiagnosisPort(DiagnosisPort):
             ),
             suggested_fix="Review and apply recommended fix",
             confidence=Confidence.MEDIUM,
-            diagnosed_at=datetime.now(),
+            diagnosed_at=datetime.now(timezone.utc),
             model="fake-model",
             cost_usd=self.default_cost,
         )
