@@ -389,8 +389,8 @@ class TestFakeSignatureStorePort:
         await store.save(signature)
 
         stats = await store.get_stats()
-        assert stats["total_signatures"] == 1
-        assert stats["saved_count"] == 1
+        assert stats.total_signatures == 1
+        assert stats.by_status[SignatureStatus.NEW.value] == 1
 
     @pytest.mark.asyncio
     async def test_tracked_operations(self, signature: Signature) -> None:

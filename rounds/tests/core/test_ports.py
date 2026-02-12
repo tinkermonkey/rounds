@@ -26,6 +26,7 @@ from core.models import (
     StackFrame,
     TraceTree,
     SpanNode,
+    StoreStats,
 )
 from core.ports import (
     TelemetryPort,
@@ -273,9 +274,15 @@ class MockSignatureStorePort(SignatureStorePort):
         """Mock implementation."""
         return []
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> StoreStats:
         """Mock implementation."""
-        return {}
+        return StoreStats(
+            total_signatures=0,
+            by_status={},
+            by_service={},
+            oldest_signature_age_hours=None,
+            avg_occurrence_count=0.0,
+        )
 
 
 class MockDiagnosisPort(DiagnosisPort):
@@ -504,11 +511,11 @@ class TestSignatureStorePort:
         assert all(isinstance(sig, Signature) for sig in result)
 
     @pytest.mark.asyncio
-    async def test_get_stats_returns_dict(self) -> None:
-        """get_stats must return a dictionary."""
+    async def test_get_stats_returns_store_stats(self) -> None:
+        """get_stats must return a StoreStats instance."""
         port = MockSignatureStorePort()
         result = await port.get_stats()
-        assert isinstance(result, dict)
+        assert isinstance(result, StoreStats)
 
 
 # ============================================================================
