@@ -3,7 +3,7 @@
 Implements DiagnosisPort by invoking Claude Code CLI in headless mode
 for LLM-powered code analysis and root cause diagnosis.
 
-Invocation format: claude -p --output-format json
+Invocation format: claude -p <prompt> --output-format json
 """
 
 import asyncio

@@ -7,10 +7,10 @@ This adapter implements a simple HTTP server that listens for webhook
 requests and forwards them to the ManagementPort for processing.
 """
 
-import json
 import logging
 from typing import Any
 
+from rounds.core.models import SignatureStatus
 from rounds.core.ports import ManagementPort, PollPort
 
 logger = logging.getLogger(__name__)
@@ -280,8 +280,6 @@ class WebhookReceiver:
         """
         try:
             # Convert string status to enum
-            from rounds.core.models import SignatureStatus
-
             status_enum = None
             if status:
                 status_enum = SignatureStatus(status.lower())

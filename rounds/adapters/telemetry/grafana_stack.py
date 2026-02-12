@@ -15,7 +15,7 @@ view of errors, traces, and logs.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -522,7 +522,6 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         Raises:
             Exception: If telemetry backend is unreachable.
         """
-        from datetime import timedelta
         from rounds.core.fingerprint import Fingerprinter
 
         # Fetch recent errors from last 24 hours

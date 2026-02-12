@@ -2,6 +2,10 @@
 
 Provides a simple async HTTP server using Python's built-in http.server module
 and asyncio for handling webhook requests.
+
+TODO: Implement authentication for webhook endpoints. Currently, all endpoints
+are exposed without authorization checks. Add API key validation or JWT tokens
+before deploying to production.
 """
 
 import asyncio

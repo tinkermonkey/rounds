@@ -15,10 +15,10 @@ from typing import Any, Literal, TypeAlias
 class StackFrame:
     """A single frame in a stack trace."""
 
-    module: str  # e.g. "app.services.payment"
-    function: str  # e.g. "process_charge"
-    filename: str  # e.g. "payment.py"
-    lineno: int | None  # present but ignored in fingerprinting
+    module: str
+    function: str
+    filename: str
+    lineno: int | None
 
 
 class Severity(Enum):
