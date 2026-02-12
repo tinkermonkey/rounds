@@ -93,7 +93,7 @@ class StdoutNotificationAdapter(NotificationPort):
             "ANALYSIS",
             "-" * 80,
             f"Model: {diagnosis.model}",
-            f"Confidence: {diagnosis.confidence.value.upper()}",
+            f"Confidence: {diagnosis.confidence.upper()}",
             f"Cost: ${diagnosis.cost_usd:.2f}",
             "",
             "ROOT CAUSE:",

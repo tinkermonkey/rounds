@@ -211,7 +211,7 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         lines.append("")
 
         lines.append("## Root Cause Analysis")
-        lines.append(f"**Confidence**: {diagnosis.confidence.value.upper()}")
+        lines.append(f"**Confidence**: {diagnosis.confidence.upper()}")
         lines.append("")
         lines.append(f"### Root Cause")
         lines.append(f"{diagnosis.root_cause}")

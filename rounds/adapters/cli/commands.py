@@ -361,7 +361,7 @@ class CLICommandHandler:
                 "signature_id": signature_id,
                 "diagnosis": {
                     "root_cause": diagnosis.root_cause,
-                    "confidence": diagnosis.confidence.value,
+                    "confidence": diagnosis.confidence,
                     "suggested_fix": diagnosis.suggested_fix,
                     "cost_usd": diagnosis.cost_usd,
                     "model": diagnosis.model,
@@ -372,7 +372,7 @@ class CLICommandHandler:
                 logger.info(
                     f"Reinvestigated signature {signature_id}",
                     extra={
-                        "confidence": diagnosis.confidence.value,
+                        "confidence": diagnosis.confidence,
                         "cost_usd": diagnosis.cost_usd,
                         "verbose": True,
                     },

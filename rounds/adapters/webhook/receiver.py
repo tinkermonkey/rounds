@@ -216,7 +216,7 @@ class WebhookReceiver:
                 f"Signature reinvestigated via webhook",
                 extra={
                     "signature_id": signature_id,
-                    "confidence": diagnosis.confidence.value,
+                    "confidence": diagnosis.confidence,
                     "cost_usd": diagnosis.cost_usd,
                 },
             )
@@ -226,7 +226,7 @@ class WebhookReceiver:
                 "signature_id": signature_id,
                 "diagnosis": {
                     "root_cause": diagnosis.root_cause,
-                    "confidence": diagnosis.confidence.value,
+                    "confidence": diagnosis.confidence,
                     "cost_usd": diagnosis.cost_usd,
                 },
             }

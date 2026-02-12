@@ -129,7 +129,7 @@ class MarkdownNotificationAdapter(NotificationPort):
         # Diagnosis
         lines.append("### Root Cause Analysis")
         lines.append(f"- **Model**: {diagnosis.model}")
-        lines.append(f"- **Confidence**: **{diagnosis.confidence.value.upper()}**")
+        lines.append(f"- **Confidence**: **{diagnosis.confidence.upper()}**")
         lines.append(f"- **Cost**: ${diagnosis.cost_usd:.2f}")
         lines.append(f"- **Diagnosed At**: {diagnosis.diagnosed_at.isoformat()}")
         lines.append("")
