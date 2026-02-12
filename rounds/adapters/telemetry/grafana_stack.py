@@ -221,8 +221,13 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             )
 
         except (KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Failed to parse error from log: {e}")
-            return None
+            logger.warning(
+                f"Failed to parse error from log entry: {e}",
+                exc_info=True
+            )
+            raise ValueError(
+                f"Cannot parse error from log entry: {e}"
+            ) from e
 
     @staticmethod
     def _parse_stack_frames(stack_str: str) -> list[StackFrame]:

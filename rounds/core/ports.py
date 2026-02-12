@@ -27,6 +27,8 @@ from .models import (
     InvestigationContext,
     LogEntry,
     PollResult,
+    SignatureDetails,
+    StoreStats,
     Signature,
     SignatureStatus,
     TraceTree,
@@ -258,11 +260,11 @@ class SignatureStorePort(ABC):
         """
 
     @abstractmethod
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> "StoreStats":
         """Summary statistics for reporting.
 
         Returns:
-            Dictionary with statistics (keys are implementation-defined).
+            StoreStats with counts by status, service, and age information.
 
         Raises:
             Exception: If database is unavailable.
@@ -479,7 +481,7 @@ class ManagementPort(ABC):
         """
 
     @abstractmethod
-    async def get_signature_details(self, signature_id: str) -> dict[str, Any]:
+    async def get_signature_details(self, signature_id: str) -> "SignatureDetails":
         """Retrieve detailed information about a signature.
 
         Returns all signature fields plus derived information:
@@ -493,7 +495,7 @@ class ManagementPort(ABC):
             signature_id: UUID of the signature.
 
         Returns:
-            Dictionary with all signature details.
+            SignatureDetails with signature, recent events, and related signatures.
 
         Raises:
             Exception: If signature doesn't exist or database error.

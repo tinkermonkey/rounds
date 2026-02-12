@@ -22,6 +22,16 @@ class TriageEngine:
         investigation_cooldown_hours: int = 24,
         high_confidence_threshold: Confidence = "high",
     ):
+        if min_occurrence_for_investigation <= 0:
+            raise ValueError(
+                f"min_occurrence_for_investigation must be positive, "
+                f"got {min_occurrence_for_investigation}"
+            )
+        if investigation_cooldown_hours <= 0:
+            raise ValueError(
+                f"investigation_cooldown_hours must be positive, "
+                f"got {investigation_cooldown_hours}"
+            )
         self.min_occurrence_for_investigation = min_occurrence_for_investigation
         self.investigation_cooldown_hours = investigation_cooldown_hours
         self.high_confidence_threshold = high_confidence_threshold

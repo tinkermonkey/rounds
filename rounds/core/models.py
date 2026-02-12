@@ -83,6 +83,13 @@ class Diagnosis:
     model: str  # which model produced this
     cost_usd: float
 
+    def __post_init__(self) -> None:
+        """Validate diagnosis invariants on creation."""
+        if self.cost_usd < 0:
+            raise ValueError(
+                f"cost_usd must be non-negative, got {self.cost_usd}"
+            )
+
 
 @dataclass
 class Signature:
@@ -119,6 +126,44 @@ class Signature:
                 f"last_seen ({self.last_seen}) cannot be before "
                 f"first_seen ({self.first_seen})"
             )
+
+    def mark_investigating(self) -> None:
+        """Transition signature to investigating status."""
+        if self.status not in {SignatureStatus.NEW, SignatureStatus.INVESTIGATING}:
+            raise ValueError(
+                f"Cannot investigate signature in {self.status} status"
+            )
+        self.status = SignatureStatus.INVESTIGATING
+
+    def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
+        """Transition signature to diagnosed status with diagnosis."""
+        if diagnosis.cost_usd < 0:
+            raise ValueError(
+                f"Diagnosis cost must be non-negative, got {diagnosis.cost_usd}"
+            )
+        self.diagnosis = diagnosis
+        self.status = SignatureStatus.DIAGNOSED
+
+    def mark_resolved(self) -> None:
+        """Transition signature to resolved status."""
+        if self.status == SignatureStatus.RESOLVED:
+            raise ValueError("Signature is already resolved")
+        self.status = SignatureStatus.RESOLVED
+
+    def mark_muted(self) -> None:
+        """Transition signature to muted status."""
+        if self.status == SignatureStatus.MUTED:
+            raise ValueError("Signature is already muted")
+        self.status = SignatureStatus.MUTED
+
+    def record_occurrence(self, timestamp: datetime) -> None:
+        """Record a new occurrence and update last_seen."""
+        if timestamp < self.first_seen:
+            raise ValueError(
+                f"Occurrence timestamp {timestamp} cannot be before first_seen {self.first_seen}"
+            )
+        self.occurrence_count += 1
+        self.last_seen = timestamp
 
 
 @dataclass(frozen=True)
@@ -195,3 +240,23 @@ class PollResult:
     updated_signatures: int
     investigations_queued: int
     timestamp: datetime
+
+
+@dataclass(frozen=True)
+class StoreStats:
+    """Statistics about the signature store."""
+
+    total_signatures: int
+    by_status: dict[str, int]  # status -> count
+    by_service: dict[str, int]  # service -> count
+    oldest_signature_age_hours: float | None  # None if no signatures
+    avg_occurrence_count: float
+
+
+@dataclass(frozen=True)
+class SignatureDetails:
+    """Detailed information about a signature."""
+
+    signature: Signature
+    recent_events: tuple[ErrorEvent, ...]  # Recent occurrences
+    related_signatures: tuple[Signature, ...]  # Similar errors

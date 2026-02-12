@@ -392,8 +392,13 @@ class SigNozTelemetryAdapter(TelemetryPort):
             )
 
         except Exception as e:
-            logger.warning(f"Failed to parse error event: {e}")
-            return None
+            logger.warning(
+                f"Failed to parse error event from span {span_id}: {e}",
+                exc_info=True
+            )
+            raise ValueError(
+                f"Cannot parse error event from span {span_id}: {e}"
+            ) from e
 
     def _parse_span(self, span_data: dict[str, Any]) -> SpanNode:
         """Parse a SigNoz span into a SpanNode."""
@@ -422,8 +427,13 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 span_id=log_data.get("spanID"),
             )
         except Exception as e:
-            logger.warning(f"Failed to parse log entry: {e}")
-            return None
+            logger.warning(
+                f"Failed to parse log entry: {e}",
+                exc_info=True
+            )
+            raise ValueError(
+                f"Cannot parse log entry: {e}"
+            ) from e
 
     @staticmethod
     def _parse_stack_trace(stack_trace: str) -> tuple[StackFrame, ...]:

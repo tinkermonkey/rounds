@@ -493,4 +493,7 @@ class TestErrorRecovery:
         diagnoses = await poll_service.execute_investigation_cycle()
 
         # Assert: diagnosis was generated even though notification failed
-        # (behavior depends on investigator error handling)
+        assert len(diagnoses) == 1
+        diagnosis = diagnoses[0]
+        assert diagnosis.root_cause is not None
+        assert diagnosis.confidence == "high"

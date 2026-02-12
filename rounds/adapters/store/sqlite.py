@@ -33,6 +33,7 @@ class SQLiteSignatureStore(SignatureStorePort):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._pool: list[aiosqlite.Connection] = []
         self._pool_lock = asyncio.Lock()
+        self._schema_lock = asyncio.Lock()
         self._pool_size = pool_size
         self._schema_initialized = False
 
@@ -66,13 +67,13 @@ class SQLiteSignatureStore(SignatureStorePort):
         """Initialize database schema on first use.
 
         Only runs once per instance. Subsequent calls are no-ops.
-        Protected by _pool_lock to prevent concurrent schema initialization.
+        Uses dedicated _schema_lock to avoid contention with pool operations.
         """
         # Check first without lock to avoid unnecessary locking
         if self._schema_initialized:
             return
 
-        async with self._pool_lock:
+        async with self._schema_lock:
             # Check again after acquiring lock to prevent race
             if self._schema_initialized:
                 return

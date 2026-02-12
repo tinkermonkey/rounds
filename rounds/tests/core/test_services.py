@@ -32,6 +32,12 @@ from rounds.core.ports import (
     DiagnosisPort,
     NotificationPort,
 )
+from rounds.tests.fakes import (
+    FakeTelemetryPort,
+    FakeSignatureStorePort,
+    FakeDiagnosisPort,
+    FakeNotificationPort,
+)
 
 
 # ============================================================================
@@ -116,229 +122,37 @@ def triage_engine() -> TriageEngine:
 
 
 # ============================================================================
-# Mock Implementations
+# Test-Specific Port Subclasses
 # ============================================================================
+#
+# These subclasses extend the standard fakes to add test-specific behavior
+# (like tracking calls or simulating failures for specific test scenarios).
+# The majority of the port behavior is inherited from the base fakes.
 
 
-class MockTelemetryPort(TelemetryPort):
-    """Mock implementation of TelemetryPort for testing."""
-
-    def __init__(self, errors: list[ErrorEvent] | None = None):
-        self.errors = errors or []
-        self.get_events_called = False
-
-    async def get_recent_errors(
-        self, since: datetime, services: list[str] | None = None
-    ) -> list[ErrorEvent]:
-        """Mock implementation."""
-        return self.errors
-
-    async def get_trace(self, trace_id: str) -> TraceTree:
-        """Mock implementation."""
-        root_span = SpanNode(
-            span_id="span-1",
-            parent_id=None,
-            service="test-service",
-            operation="test-op",
-            duration_ms=0,
-            status="ok",
-            attributes={},
-            events=(),
-        )
-        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
-
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
-        """Mock implementation."""
-        root_span = SpanNode(
-            span_id="span-1",
-            parent_id=None,
-            service="test-service",
-            operation="test-op",
-            duration_ms=0,
-            status="ok",
-            attributes={},
-            events=(),
-        )
-        return [
-            TraceTree(trace_id=tid, root_span=root_span, error_spans=())
-            for tid in trace_ids
-        ]
-
-    async def get_correlated_logs(
-        self, trace_ids: list[str], window_minutes: int = 5
-    ) -> list[LogEntry]:
-        """Mock implementation."""
-        return []
-
-    async def get_events_for_signature(
-        self, fingerprint: str, limit: int = 5
-    ) -> list[ErrorEvent]:
-        """Mock implementation."""
-        self.get_events_called = True
-        return self.errors
-
-
-class MockSignatureStorePort(SignatureStorePort):
-    """Mock implementation of SignatureStorePort for testing."""
-
-    def __init__(self):
-        self.signatures: dict[str, Signature] = {}
-        self.pending_signatures: list[Signature] = []
-
-    async def get_by_id(self, signature_id: str) -> Signature | None:
-        """Mock implementation."""
-        for sig in self.signatures.values():
-            if sig.id == signature_id:
-                return sig
-        return None
-
-    async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
-        """Mock implementation."""
-        return self.signatures.get(fingerprint)
-
-    async def save(self, signature: Signature) -> None:
-        """Mock implementation."""
-        self.signatures[signature.fingerprint] = signature
-
-    async def update(self, signature: Signature) -> None:
-        """Mock implementation."""
-        self.signatures[signature.fingerprint] = signature
-
-    async def get_pending_investigation(self) -> list[Signature]:
-        """Mock implementation."""
-        return self.pending_signatures
-
-    async def get_all(
-        self, status: SignatureStatus | None = None
-    ) -> list[Signature]:
-        """Mock implementation."""
-        if status is None:
-            return list(self.signatures.values())
-        return [sig for sig in self.signatures.values() if sig.status == status]
-
-    async def get_similar(
-        self, signature: Signature, limit: int = 5
-    ) -> list[Signature]:
-        """Mock implementation."""
-        return []
-
-    async def get_stats(self) -> dict[str, Any]:
-        """Mock implementation."""
-        return {}
-
-
-class MockDiagnosisPort(DiagnosisPort):
-    """Mock implementation of DiagnosisPort for testing."""
-
-    async def diagnose(self, context: InvestigationContext) -> Diagnosis:
-        """Mock implementation."""
-        return Diagnosis(
-            root_cause="Mock root cause",
-            evidence=("mock evidence",),
-            suggested_fix="Mock fix",
-            confidence="high",
-            diagnosed_at=datetime.now(timezone.utc),
-            model="mock-model",
-            cost_usd=0.0,
-        )
-
-    async def estimate_cost(self, context: InvestigationContext) -> float:
-        """Mock implementation."""
-        return 0.0
-
-
-class MockNotificationPort(NotificationPort):
-    """Mock implementation of NotificationPort for testing."""
-
-    def __init__(self):
-        self.reported_diagnoses: list[tuple[Signature, Diagnosis]] = []
+class FailingNotificationPort(FakeNotificationPort):
+    """Extends FakeNotificationPort to simulate notification failures."""
 
     async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
-        """Mock implementation."""
-        self.reported_diagnoses.append((signature, diagnosis))
-
-    async def report_summary(self, stats: dict[str, Any]) -> None:
-        """Mock implementation."""
-        pass
-
-
-class FailingNotificationPort(NotificationPort):
-    """Mock that fails on notification."""
-
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
-        """Mock implementation that always fails."""
+        """Always fails."""
         raise RuntimeError("Notification service is unavailable")
 
-    async def report_summary(self, stats: dict[str, Any]) -> None:
-        """Mock implementation."""
-        pass
 
+class PartialTraceTelemetryPort(FakeTelemetryPort):
+    """Extends FakeTelemetryPort to simulate intermittent trace fetch failures."""
 
-class PartialTraceTelemetryPort(TelemetryPort):
-    """Mock telemetry that fails to fetch some traces."""
-
-    def __init__(self, errors: list[ErrorEvent] | None = None, fail_trace_count: int = 2):
-        self.errors = errors or []
+    def __init__(self, fail_trace_count: int = 2):
+        """Initialize with failure count."""
+        super().__init__()
         self.fail_trace_count = fail_trace_count
         self.fetch_count = 0
 
-    async def get_recent_errors(
-        self, since: datetime, services: list[str] | None = None
-    ) -> list[ErrorEvent]:
-        """Mock implementation."""
-        return self.errors
-
     async def get_trace(self, trace_id: str) -> TraceTree:
-        """Mock implementation that fails for the first N traces."""
+        """Fails for the first N trace fetch attempts."""
         self.fetch_count += 1
         if self.fetch_count <= self.fail_trace_count:
             raise RuntimeError(f"Failed to fetch trace {trace_id}")
-
-        root_span = SpanNode(
-            span_id="span-1",
-            parent_id=None,
-            service="test-service",
-            operation="test-op",
-            duration_ms=0,
-            status="ok",
-            attributes={},
-            events=(),
-        )
-        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
-
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
-        """Mock implementation."""
-        root_span = SpanNode(
-            span_id="span-1",
-            parent_id=None,
-            service="test-service",
-            operation="test-op",
-            duration_ms=0,
-            status="ok",
-            attributes={},
-            events=(),
-        )
-        traces = []
-        for tid in trace_ids:
-            try:
-                # Reuse single trace for successful ones
-                trace = await self.get_trace(tid)
-                traces.append(trace)
-            except Exception:
-                pass  # Skip failed traces
-        return traces
-
-    async def get_correlated_logs(
-        self, trace_ids: list[str], window_minutes: int = 5
-    ) -> list[LogEntry]:
-        """Mock implementation."""
-        return []
-
-    async def get_events_for_signature(
-        self, fingerprint: str, limit: int = 5
-    ) -> list[ErrorEvent]:
-        """Mock implementation."""
-        return self.errors
+        return await super().get_trace(trace_id)
 
 
 # ============================================================================
@@ -754,10 +568,11 @@ class TestPollService:
         error_event: ErrorEvent,
     ) -> None:
         """Poll cycle should create a new signature for unknown error."""
-        telemetry = MockTelemetryPort(errors=[error_event])
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
@@ -781,10 +596,11 @@ class TestPollService:
         signature: Signature,
     ) -> None:
         """Poll cycle should update existing signature."""
-        telemetry = MockTelemetryPort(errors=[error_event])
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
@@ -828,10 +644,10 @@ class TestPollService:
         signature: Signature,
     ) -> None:
         """Investigation cycle should investigate pending signatures."""
-        telemetry = MockTelemetryPort()
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
@@ -857,13 +673,13 @@ class TestPollService:
         triage_engine: TriageEngine,
     ) -> None:
         """Investigation cycle should continue processing after one signature fails."""
-        telemetry = MockTelemetryPort()
-        store = MockSignatureStorePort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        notification = FakeNotificationPort()
         investigator_calls = []
 
         # Create a diagnosis engine that fails on the first signature
-        class PartiallyFailingDiagnosisPort(MockDiagnosisPort):
+        class PartiallyFailingDiagnosisPort(FakeDiagnosisPort):
             async def diagnose(self, context):
                 if len(investigator_calls) == 0:
                     investigator_calls.append("failed")
@@ -968,10 +784,11 @@ class TestDatetimeAwareness:
         error_event: ErrorEvent,
     ) -> None:
         """PollService should use timezone-aware datetimes."""
-        telemetry = MockTelemetryPort(errors=[error_event])
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
@@ -1040,10 +857,11 @@ class TestPollCycleErrorHandling:
             severity=Severity.ERROR,
         )
 
-        telemetry = MockTelemetryPort(errors=[error1, error2])
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        telemetry = FakeTelemetryPort()
+        telemetry.add_errors([error1, error2])
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
@@ -1176,9 +994,9 @@ class TestPartialTraceRetrieval:
                 return events
 
         telemetry = PartialTelemetryForInvestigator(fail_trace_count=2)
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
-        notification = MockNotificationPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
 
         investigator = Investigator(
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
@@ -1206,9 +1024,9 @@ class TestNotificationFailureHandling:
         signature.occurrence_count = 10
         signature.status = SignatureStatus.NEW
 
-        telemetry = MockTelemetryPort()
-        store = MockSignatureStorePort()
-        diagnosis_engine = MockDiagnosisPort()
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
         notification = FailingNotificationPort()
 
         investigator = Investigator(
@@ -1233,7 +1051,7 @@ class TestNotificationFailureHandling:
         signature.occurrence_count = 10
         signature.status = SignatureStatus.NEW
 
-        class TrackingStore(MockSignatureStorePort):
+        class TrackingStore(FakeSignatureStorePort):
             def __init__(self):
                 super().__init__()
                 self.update_calls = []
@@ -1255,9 +1073,9 @@ class TestNotificationFailureHandling:
                 self.update_calls.append((sig.fingerprint, sig.status, sig.diagnosis))
                 await super().update(sig)
 
-        telemetry = MockTelemetryPort()
+        telemetry = FakeTelemetryPort()
         store = TrackingStore()
-        diagnosis_engine = MockDiagnosisPort()
+        diagnosis_engine = FakeDiagnosisPort()
         notification = FailingNotificationPort()
 
         investigator = Investigator(
