@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from rounds.core.models import Confidence, Diagnosis, InvestigationContext
+from rounds.core.models import Diagnosis, InvestigationContext
 from rounds.core.ports import DiagnosisPort
 
 

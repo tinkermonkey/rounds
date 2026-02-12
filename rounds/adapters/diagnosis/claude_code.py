@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from rounds.core.models import Confidence, Diagnosis, InvestigationContext
+from rounds.core.models import Diagnosis, InvestigationContext
 from rounds.core.ports import DiagnosisPort
 
 logger = logging.getLogger(__name__)

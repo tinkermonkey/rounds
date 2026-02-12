@@ -13,7 +13,7 @@ from typing import Any
 
 import aiosqlite
 
-from rounds.core.models import Confidence, Diagnosis, Signature, SignatureStatus
+from rounds.core.models import Diagnosis, Signature, SignatureStatus
 from rounds.core.ports import SignatureStorePort
 
 logger = logging.getLogger(__name__)

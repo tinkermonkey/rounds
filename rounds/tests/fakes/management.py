@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from rounds.core.models import Confidence, Diagnosis, Signature, SignatureStatus
+from rounds.core.models import Diagnosis, Signature, SignatureStatus
 from rounds.core.ports import ManagementPort
 
 
