@@ -241,6 +241,10 @@ class MockTelemetryPort(TelemetryPort):
 class MockSignatureStorePort(SignatureStorePort):
     """Mock implementation of SignatureStorePort for testing."""
 
+    async def get_by_id(self, signature_id: str) -> Signature | None:
+        """Mock implementation."""
+        return None
+
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Mock implementation."""
         return None
