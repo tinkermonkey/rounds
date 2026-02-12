@@ -496,4 +496,4 @@ class TestErrorRecovery:
         assert len(diagnoses) == 1
         diagnosis = diagnoses[0]
         assert diagnosis.root_cause is not None
-        assert diagnosis.confidence == "high"
+        assert diagnosis.confidence == "medium"

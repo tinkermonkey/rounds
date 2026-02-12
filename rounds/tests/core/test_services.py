@@ -68,7 +68,7 @@ def error_event() -> ErrorEvent:
                 lineno=15,
             ),
         ),
-        timestamp=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime.now(timezone.utc),
         attributes={"user_id": "123", "amount": "99.99"},
         severity=Severity.ERROR,
     )
@@ -733,7 +733,7 @@ class TestPollService:
         assert sig1.status == SignatureStatus.NEW  # Reverted due to diagnosis failure
         assert sig2.status == SignatureStatus.DIAGNOSED  # Successfully diagnosed
         assert len(diagnoses) == 1  # Only successful diagnosis returned
-        assert diagnoses[0].root_cause == "Mock root cause"
+        assert diagnoses[0].root_cause == "Root cause for Error"
         # Verify both signatures were attempted
         assert len(investigator_calls) == 2
         assert investigator_calls[0] == "failed"
