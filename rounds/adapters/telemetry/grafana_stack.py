@@ -120,8 +120,8 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 if not valid_services:
                     logger.warning(f"No valid service names provided: {services}")
                     return []
-                service_list = "|".join(f'"{s}"' for s in valid_services)
-                service_filter = f' | service =~ {{{service_list}}}'
+                service_regex = "|".join(valid_services)
+                service_filter = f' | json | service =~ "{service_regex}"'
 
             query = f'{{level="error"}}{service_filter} | json'
 

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
         default="",
         description="Grafana API authentication key",
     )
+    grafana_prometheus_url: str = Field(
+        default="http://localhost:9090",
+        description="Grafana Prometheus API endpoint URL",
+    )
 
     # Signature store configuration
     store_backend: Literal["sqlite", "postgresql"] = Field(
@@ -108,6 +112,14 @@ class Settings(BaseSettings):
     github_repo: str = Field(
         default="",
         description="GitHub repository for issue creation (owner/repo)",
+    )
+    github_repo_owner: str = Field(
+        default="",
+        description="GitHub repository owner for issue creation",
+    )
+    github_repo_name: str = Field(
+        default="",
+        description="GitHub repository name for issue creation",
     )
 
     # Poll cycle configuration

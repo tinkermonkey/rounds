@@ -37,6 +37,7 @@ class PollService(PollPort):
         investigator: Investigator,
         lookback_minutes: int = 15,
         services: list[str] | None = None,
+        batch_size: int | None = None,
     ):
         self.telemetry = telemetry
         self.store = store
@@ -45,6 +46,7 @@ class PollService(PollPort):
         self.investigator = investigator
         self.lookback_minutes = lookback_minutes
         self.services = services
+        self.batch_size = batch_size
 
     async def execute_poll_cycle(self) -> PollResult:
         """Check for new errors, fingerprint, dedup, and queue investigations.
@@ -65,6 +67,14 @@ class PollService(PollPort):
                 investigations_queued=0,
                 timestamp=now,
             )
+
+        # Limit errors to batch_size if configured
+        if self.batch_size is not None and len(errors) > self.batch_size:
+            logger.info(
+                f"Limiting poll to {self.batch_size} errors "
+                f"(found {len(errors)}, taking first {self.batch_size})"
+            )
+            errors = errors[: self.batch_size]
 
         new_signatures = 0
         updated_signatures = 0

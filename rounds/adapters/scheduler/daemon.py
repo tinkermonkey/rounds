@@ -7,6 +7,7 @@ triggers poll cycles at configurable intervals.
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
 
 from rounds.core.ports import PollPort
 
@@ -20,17 +21,22 @@ class DaemonScheduler:
         self,
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
+        budget_limit: float | None = None,
     ):
         """Initialize daemon scheduler.
 
         Args:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
+            budget_limit: Daily budget limit in USD (None = unlimited).
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
+        self.budget_limit = budget_limit
         self.running = False
         self._task: asyncio.Task[None] | None = None
+        self._daily_cost_usd = 0.0
+        self._budget_date = datetime.now(timezone.utc).date()
 
     async def start(self) -> None:
         """Start the daemon scheduler loop."""
@@ -103,20 +109,29 @@ class DaemonScheduler:
             try:
                 logger.debug(f"Starting poll cycle #{cycle_number}")
 
-                start_time = loop.time()
+                # Check if budget is exceeded
+                if self._is_budget_exceeded():
+                    logger.warning(
+                        f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
+                        f"${self.budget_limit:.2f}), skipping investigation cycles"
+                    )
+                    # Still poll for errors, but don't diagnose
+                    result = await self.poll_port.execute_poll_cycle()
+                else:
+                    start_time = loop.time()
 
-                # Execute poll cycle
-                result = await self.poll_port.execute_poll_cycle()
+                    # Execute poll cycle
+                    result = await self.poll_port.execute_poll_cycle()
 
-                elapsed = loop.time() - start_time
+                    elapsed = loop.time() - start_time
 
-                logger.info(
-                    f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
-                    f"{result.errors_found} errors, "
-                    f"{result.new_signatures} new, "
-                    f"{result.updated_signatures} updated, "
-                    f"{result.investigations_queued} investigations queued"
-                )
+                    logger.info(
+                        f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
+                        f"{result.errors_found} errors, "
+                        f"{result.new_signatures} new, "
+                        f"{result.updated_signatures} updated, "
+                        f"{result.investigations_queued} investigations queued"
+                    )
 
             except asyncio.CancelledError:
                 raise
@@ -131,6 +146,44 @@ class DaemonScheduler:
                     await asyncio.sleep(self.poll_interval_seconds)
                 except asyncio.CancelledError:
                     raise
+
+    def _is_budget_exceeded(self) -> bool:
+        """Check if daily budget limit has been exceeded.
+
+        Returns:
+            True if budget_limit is set and daily cost exceeds it.
+        """
+        if self.budget_limit is None:
+            return False
+
+        # Reset daily cost if date has changed
+        today = datetime.now(timezone.utc).date()
+        if today != self._budget_date:
+            self._daily_cost_usd = 0.0
+            self._budget_date = today
+            return False
+
+        return self._daily_cost_usd >= self.budget_limit
+
+    def record_diagnosis_cost(self, cost_usd: float) -> None:
+        """Record a diagnosis cost towards the daily budget.
+
+        Args:
+            cost_usd: Cost of the diagnosis in USD.
+        """
+        # Reset daily cost if date has changed
+        today = datetime.now(timezone.utc).date()
+        if today != self._budget_date:
+            self._daily_cost_usd = 0.0
+            self._budget_date = today
+
+        self._daily_cost_usd += cost_usd
+
+        if self.budget_limit and self._daily_cost_usd >= self.budget_limit:
+            logger.warning(
+                f"Daily budget limit reached (${self._daily_cost_usd:.2f}/"
+                f"${self.budget_limit:.2f})"
+            )
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""
@@ -150,12 +203,14 @@ class DaemonFactory:
     def create(
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
+        budget_limit: float | None = None,
     ) -> DaemonScheduler:
         """Create a new daemon scheduler instance.
 
         Args:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
+            budget_limit: Daily budget limit in USD (None = unlimited).
 
         Returns:
             DaemonScheduler instance.
@@ -163,22 +218,26 @@ class DaemonFactory:
         return DaemonScheduler(
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
+            budget_limit=budget_limit,
         )
 
     @staticmethod
     async def run_daemon(
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
+        budget_limit: float | None = None,
     ) -> None:
         """Create and run a daemon scheduler (blocking until stopped).
 
         Args:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
+            budget_limit: Daily budget limit in USD (None = unlimited).
         """
         daemon = DaemonFactory.create(
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
+            budget_limit=budget_limit,
         )
         await daemon.start()
 

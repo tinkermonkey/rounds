@@ -420,7 +420,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 # Check if this span or any descendant is an error
                 def has_error(node: SpanNode) -> bool:
                     # Check current span tags
-                    span = spans_by_id.get(span_id, {})
+                    span = span_dicts.get(span_id, {}).get("data", {})
                     tags_list = span.get("tags", [])
                     if isinstance(tags_list, list):
                         tags = {t["key"]: t["value"] for t in tags_list}

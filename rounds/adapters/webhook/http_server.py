@@ -225,7 +225,7 @@ class WebhookHTTPServer:
 
         # Set the webhook receiver and event loop on the handler class
         WebhookHTTPHandler.webhook_receiver = self.webhook_receiver
-        WebhookHTTPHandler.event_loop = asyncio.get_event_loop()
+        WebhookHTTPHandler.event_loop = asyncio.get_running_loop()
 
         # Create the HTTP server
         self.server = HTTPServer((self.host, self.port), WebhookHTTPHandler)
@@ -239,7 +239,7 @@ class WebhookHTTPServer:
         if not self.server:
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             while True:
                 # Handle one request

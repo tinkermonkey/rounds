@@ -39,9 +39,7 @@ class MarkdownNotificationAdapter(NotificationPort):
         # Append to file
         async with self._lock:
             try:
-                with open(self.report_path, "a") as f:
-                    f.write(entry)
-                    f.write("\n")
+                await asyncio.to_thread(self._write_to_file, entry)
 
                 logger.info(
                     f"Appended diagnosis report to {self.report_path}",
@@ -64,9 +62,7 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         async with self._lock:
             try:
-                with open(self.report_path, "a") as f:
-                    f.write(summary)
-                    f.write("\n")
+                await asyncio.to_thread(self._write_to_file, summary)
 
                 logger.info(
                     f"Appended summary report to {self.report_path}",
@@ -79,6 +75,12 @@ class MarkdownNotificationAdapter(NotificationPort):
                     extra={"path": str(self.report_path)},
                 )
                 raise
+
+    def _write_to_file(self, content: str) -> None:
+        """Write content to file (blocking operation)."""
+        with open(self.report_path, "a") as f:
+            f.write(content)
+            f.write("\n")
 
     def _format_report_entry(
         self, signature: Signature, diagnosis: Diagnosis

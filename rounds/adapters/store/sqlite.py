@@ -91,7 +91,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                         stack_hash TEXT NOT NULL,
                         first_seen TIMESTAMP NOT NULL,
                         last_seen TIMESTAMP NOT NULL,
-                        occurrence_count INTEGER NOT NULL DEFAULT 0,
+                        occurrence_count INTEGER NOT NULL DEFAULT 1,
                         status TEXT NOT NULL DEFAULT 'new',
                         diagnosis_json TEXT,
                         tags TEXT NOT NULL DEFAULT '[]'

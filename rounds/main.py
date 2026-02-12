@@ -177,6 +177,7 @@ async def bootstrap() -> None:
         investigator=investigator,
         lookback_minutes=settings.error_lookback_minutes,
         services=None,  # None means all services
+        batch_size=settings.poll_batch_size,
     )
 
     # Management service (implements ManagementPort for CLI/webhook)
@@ -195,6 +196,7 @@ async def bootstrap() -> None:
             scheduler = DaemonScheduler(
                 poll_port=poll_service,
                 poll_interval_seconds=settings.poll_interval_seconds,
+                budget_limit=settings.daily_budget_limit,
             )
             await scheduler.start()
 
