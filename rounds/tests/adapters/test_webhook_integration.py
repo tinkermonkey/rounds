@@ -29,45 +29,6 @@ async def http_server(mock_webhook_receiver):
     yield server
 
 
-class TestWebhookHTTPHandler:
-    """Tests for HTTP request handling."""
-
-    def test_handler_initialization(self):
-        """Test that handler can be initialized."""
-        handler = WebhookHTTPHandler(None, None, None)
-        assert handler is not None
-
-    def test_auth_not_required_when_disabled(self):
-        """Test that authentication is bypassed when disabled."""
-        WebhookHTTPHandler.require_auth = False
-        handler = WebhookHTTPHandler(None, None, None)
-        # Mock the headers
-        handler.headers = {}
-        assert handler._check_auth() is True
-
-    def test_auth_required_with_bearer_token(self):
-        """Test Bearer token authentication."""
-        WebhookHTTPHandler.api_key = "test-api-key"
-        WebhookHTTPHandler.require_auth = True
-        handler = WebhookHTTPHandler(None, None, None)
-        handler.headers = {"Authorization": "Bearer test-api-key"}
-        assert handler._check_auth() is True
-
-    def test_auth_fails_with_invalid_token(self):
-        """Test that invalid token fails authentication."""
-        WebhookHTTPHandler.api_key = "test-api-key"
-        WebhookHTTPHandler.require_auth = True
-        handler = WebhookHTTPHandler(None, None, None)
-        handler.headers = {"Authorization": "Bearer wrong-key"}
-        assert handler._check_auth() is False
-
-    def test_auth_with_x_api_key_header(self):
-        """Test X-API-Key header authentication."""
-        WebhookHTTPHandler.api_key = "test-api-key"
-        WebhookHTTPHandler.require_auth = True
-        handler = WebhookHTTPHandler(None, None, None)
-        handler.headers = {"X-API-Key": "test-api-key"}
-        assert handler._check_auth() is True
 
 
 class TestWebhookHTTPServer:

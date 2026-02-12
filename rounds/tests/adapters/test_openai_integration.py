@@ -61,26 +61,6 @@ async def test_adapter_rejects_whitespace_only_api_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confidence_validation_raises_on_invalid_confidence(
-    adapter: OpenAIDiagnosisAdapter,
-) -> None:
-    """Test that invalid confidence levels raise ValueError instead of silent fallback."""
-    # The adapter's _parse_diagnosis_result method validates confidence levels
-    # and raises ValueError for invalid values like "INVALID_CONFIDENCE"
-    # This prevents silent fallbacks that could hide bugs in response parsing
-
-
-@pytest.mark.asyncio
-async def test_json_parsing_with_error_handling(
-    adapter: OpenAIDiagnosisAdapter,
-) -> None:
-    """Test that JSON parsing failures are logged with context."""
-    # This test verifies that invalid JSON lines are logged before continuing
-    # The actual implementation now catches json.JSONDecodeError and logs the line
-    # which is what we fixed in the revision
-
-
-@pytest.mark.asyncio
 async def test_budget_tracking() -> None:
     """Test that diagnosis cost is properly recorded."""
     adapter = OpenAIDiagnosisAdapter(
@@ -96,6 +76,8 @@ async def test_budget_tracking() -> None:
         evidence=("Evidence 1", "Evidence 2"),
         suggested_fix="Test fix",
         confidence="medium",
+        diagnosed_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        model="gpt-4",
         cost_usd=0.05,
     )
 
