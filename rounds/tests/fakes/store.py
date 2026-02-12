@@ -1,8 +1,8 @@
 """Fake SignatureStorePort implementation for testing."""
 
-from typing import Any
+from datetime import datetime
 
-from rounds.core.models import Signature, SignatureStatus
+from rounds.core.models import Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort
 
 
@@ -97,26 +97,42 @@ class FakeSignatureStorePort(SignatureStorePort):
 
         return similar[:limit]
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> StoreStats:
         """Get store statistics.
 
-        Returns counts of signatures by status.
+        Returns counts of signatures by status and service, plus age/occurrence metrics.
         """
-        stats = {
-            "total_signatures": len(self.signatures),
-            "saved_count": len(self.saved_signatures),
-            "updated_count": len(self.updated_signatures),
-        }
-
         # Group by status
         status_counts: dict[str, int] = {}
         for sig in self.signatures.values():
             status = sig.status.value
             status_counts[status] = status_counts.get(status, 0) + 1
 
-        stats.update(status_counts)
+        # Group by service
+        service_counts: dict[str, int] = {}
+        for sig in self.signatures.values():
+            service = sig.service
+            service_counts[service] = service_counts.get(service, 0) + 1
 
-        return stats
+        # Calculate oldest age and average occurrence count
+        if self.signatures:
+            oldest_first_seen = min(sig.first_seen for sig in self.signatures.values())
+            now = datetime.now(oldest_first_seen.tzinfo) if oldest_first_seen.tzinfo else datetime.now()
+            age_delta = now - oldest_first_seen
+            oldest_age_hours = age_delta.total_seconds() / 3600
+
+            avg_occurrence = sum(sig.occurrence_count for sig in self.signatures.values()) / len(self.signatures)
+        else:
+            oldest_age_hours = None
+            avg_occurrence = 0.0
+
+        return StoreStats(
+            total_signatures=len(self.signatures),
+            by_status=status_counts,
+            by_service=service_counts,
+            oldest_signature_age_hours=oldest_age_hours,
+            avg_occurrence_count=avg_occurrence,
+        )
 
     def mark_pending(self, signature: Signature) -> None:
         """Mark a signature as pending investigation."""

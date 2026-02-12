@@ -13,7 +13,7 @@ from typing import Any
 
 import aiosqlite
 
-from rounds.core.models import Diagnosis, Signature, SignatureStatus
+from rounds.core.models import Diagnosis, Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort
 
 logger = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ class SQLiteSignatureStore(SignatureStorePort):
         finally:
             await self._return_connection(conn)
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> StoreStats:
         """Summary statistics for reporting."""
         await self._init_schema()
 
@@ -293,16 +293,30 @@ class SQLiteSignatureStore(SignatureStorePort):
             )
             service_counts = {row[0]: row[1] for row in await cursor.fetchall()}
 
-            # Total errors seen
-            cursor = await conn.execute("SELECT SUM(occurrence_count) FROM signatures")
-            total_errors = (await cursor.fetchone())[0] or 0
+            # Oldest signature age and average occurrence count
+            cursor = await conn.execute(
+                """
+                SELECT
+                    CASE WHEN COUNT(*) > 0 THEN
+                        (julianday('now') - julianday(MIN(first_seen))) * 24
+                    ELSE NULL END as oldest_age_hours,
+                    CASE WHEN COUNT(*) > 0 THEN
+                        AVG(occurrence_count)
+                    ELSE 0 END as avg_occurrence
+                FROM signatures
+                """
+            )
+            row = await cursor.fetchone()
+            oldest_age_hours = row[0] if row[0] is not None else None
+            avg_occurrence = float(row[1]) if row[1] is not None else 0.0
 
-            return {
-                "total_signatures": total,
-                "by_status": status_counts,
-                "by_service": service_counts,
-                "total_errors_seen": total_errors,
-            }
+            return StoreStats(
+                total_signatures=total,
+                by_status=status_counts,
+                by_service=service_counts,
+                oldest_signature_age_hours=oldest_age_hours,
+                avg_occurrence_count=avg_occurrence,
+            )
         finally:
             await self._return_connection(conn)
 

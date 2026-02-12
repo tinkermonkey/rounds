@@ -137,10 +137,6 @@ class Signature:
 
     def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
         """Transition signature to diagnosed status with diagnosis."""
-        if diagnosis.cost_usd < 0:
-            raise ValueError(
-                f"Diagnosis cost must be non-negative, got {diagnosis.cost_usd}"
-            )
         self.diagnosis = diagnosis
         self.status = SignatureStatus.DIAGNOSED
 
