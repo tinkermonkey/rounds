@@ -1,0 +1,91 @@
+CRITICAL ERROR HANDLING AUDIT - ROUNDS PROJECT PR REVIEW
+========================================================
+
+AUDIT SCOPE
+-----------
+Recent PR changes (git diff main...HEAD)
+All Python adapter implementations in rounds/adapters/
+
+FINDINGS OVERVIEW
+-----------------
+CRITICAL ISSUES:    3
+HIGH ISSUES:        4  
+MEDIUM ISSUES:      2
+TOTAL FINDINGS:     9
+
+SEVERITY BREAKDOWN
+------------------
+
+3 CRITICAL SEVERITY (Must fix before merge):
+  1. CLI Commands: Exception swallowing (6 locations) 
+  2. Daemon Scheduler: Silent investigation cycle failures
+  3. Claude Code: Unsafe JSON parsing with lost context
+
+4 HIGH SEVERITY (Should fix before merge):
+  4. Claude Code: Redundant exception re-wrapping
+  5. Telemetry: Silent stack frame parsing failures
+  6. Store: Inconsistent exception handling
+  7. Notifications: Missing error context
+
+2 MEDIUM SEVERITY (Address before production):
+  8. Daemon: Unhandled budget exceeded case
+  9. CLI: Missing logging for unsupported formats
+
+KEY PROBLEMS
+------------
+
+1. SILENT FAILURES
+   - CLI handlers catch exceptions but don't propagate
+   - Daemon investigation cycle fails silently
+   - Telemetry stack parsing returns empty list on error
+   - JSON parsing skips invalid lines without logging
+
+2. INADEQUATE ERROR CONTEXT
+   - Claude Code output truncated to 200 chars
+   - File I/O errors don't indicate permission/disk issues
+   - Invalid CLI input not logged
+   - Exception context lost in re-wrapping
+
+3. INCONSISTENT ERROR HANDLING
+   - Some ValueError cases logged as errors, others as info
+   - Database parsing catches broad Exception
+   - Different logging levels for similar errors
+
+FILES REQUIRING ATTENTION
+-------------------------
+/workspace/rounds/adapters/cli/commands.py         (6 critical issues)
+/workspace/rounds/adapters/scheduler/daemon.py    (2 critical issues)
+/workspace/rounds/adapters/diagnosis/claude_code.py (2 high issues)
+/workspace/rounds/adapters/store/sqlite.py        (1 high issue)
+/workspace/rounds/adapters/notification/markdown.py (1 high issue)
+/workspace/rounds/adapters/telemetry/grafana_stack.py (1 high issue)
+
+IMMEDIATE ACTION REQUIRED
+-------------------------
+1. Fix CLI command handlers - stop swallowing exceptions
+2. Fix daemon investigation cycle error handling  
+3. Improve Claude Code JSON parsing with full context logging
+4. Add structured error logging with context
+5. Add tests for all error paths
+
+DETAILED ANALYSIS
+-----------------
+See: /workspace/ERROR_HANDLING_AUDIT.md (comprehensive report)
+See: /workspace/ERROR_HANDLING_FIXES.md (implementation examples)
+
+TESTING RECOMMENDATIONS
+-----------------------
+- Add error path tests for each adapter
+- Verify exceptions propagate correctly
+- Test partial failure scenarios
+- Verify logging at appropriate levels
+- Test error recovery/retry logic
+
+CONCLUSION
+----------
+This PR introduces important new functionality but contains systematic
+error handling issues that create silent failure modes. These MUST be
+addressed for a production error diagnosis system that cannot afford to
+silently fail at diagnosing errors.
+
+Priority: FIX BEFORE MERGE

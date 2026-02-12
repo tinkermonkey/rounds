@@ -1,0 +1,109 @@
+================================================================================
+ERROR HANDLING ISSUES - PRIORITY MATRIX
+================================================================================
+
+CRITICAL (3) - Fix Before Merge
+────────────────────────────────────────────────────────────────────────────
+
+1. CLI COMMANDS: EXCEPTION SWALLOWING
+   File:      rounds/adapters/cli/commands.py (6 locations)
+   Lines:     50-78, 100-128, 146-171, 189-222, 288-337, 355-390
+   Impact:    Errors converted to dict responses instead of propagating
+   Methods:   mute_signature, resolve_signature, retriage_signature,
+              get_signature_details, list_signatures, reinvestigate_signature
+   Fix:       Either propagate exceptions or explicitly re-raise after logging
+   
+2. DAEMON: SILENT INVESTIGATION CYCLE FAILURES
+   File:      rounds/adapters/scheduler/daemon.py
+   Lines:     137-149
+   Impact:    Diagnosis failures silently logged, daemon continues normally
+   Problem:   Signatures queued for diagnosis but failures are invisible
+   Fix:       Distinguish error types and take appropriate action
+   
+3. CLAUDE CODE: UNSAFE JSON PARSING
+   File:      rounds/adapters/diagnosis/claude_code.py
+   Lines:     210-221
+   Impact:    Output truncated (200 chars), loop skips silently, errors hidden
+   Problem:   No logging of parse attempts, full output hidden from debugging
+   Fix:       Log each parse attempt, provide full output context
+
+────────────────────────────────────────────────────────────────────────────
+
+HIGH (4) - Should Fix Before Merge
+────────────────────────────────────────────────────────────────────────────
+
+4. CLAUDE CODE: EXCEPTION RE-WRAPPING
+   File:      rounds/adapters/diagnosis/claude_code.py
+   Lines:     223-234
+   Impact:    Redundant re-wrapping loses original context
+   Problem:   Converting exceptions to strings creates confusing chains
+   Fix:       Re-raise without redundant wrapping, add exc_info=True
+
+5. TELEMETRY: SILENT STACK PARSING FAILURES
+   File:      rounds/adapters/telemetry/grafana_stack.py
+   Lines:     256-258
+   Impact:    Stack frames lost silently, only debug-level logging
+   Problem:   Core data extraction fails invisibly
+   Fix:       Log at warning level, indicate partial frame extraction
+
+6. STORE: INCONSISTENT EXCEPTION HANDLING
+   File:      rounds/adapters/store/sqlite.py
+   Lines:     385-390
+   Impact:    Broad Exception catch masks logic errors
+   Problem:   KeyError, AttributeError treated same as ValueError
+   Fix:       Be specific about expected exceptions
+
+7. NOTIFICATIONS: MISSING ERROR CONTEXT
+   File:      rounds/adapters/notification/markdown.py
+   Lines:     52-57, 72-77
+   Impact:    File I/O errors don't indicate root cause
+   Problem:   Can't distinguish permission denied from disk full
+   Fix:       Add errno, operation type, and signature context
+
+────────────────────────────────────────────────────────────────────────────
+
+MEDIUM (2) - Address Before Production
+────────────────────────────────────────────────────────────────────────────
+
+8. DAEMON: BUDGET EXCEEDED CASE
+   File:      rounds/adapters/scheduler/daemon.py
+   Lines:     112-119
+   Impact:    Orphaned signatures during budget exhaustion
+   Problem:   Not explicitly handling budgeted period in logs
+   Fix:       Add explicit logging for budget-exceeded pauses
+
+9. CLI: UNSUPPORTED FORMAT LOGGING
+   File:      rounds/adapters/cli/commands.py
+   Lines:     208-213, 324-329
+   Impact:    Invalid input not logged
+   Problem:   Can't detect format misuse
+   Fix:       Log at warning level with supported format list
+
+================================================================================
+QUICK FIX PRIORITY
+================================================================================
+
+FIRST   → CLI commands (6 identical issues, straightforward fix)
+SECOND  → Daemon investigation cycle (1 critical, high impact)
+THIRD   → Claude Code JSON parsing (safety + context)
+FOURTH  → Telemetry, Store, Notification adapters (parallel work)
+FIFTH   → Medium severity items (nice-to-have improvements)
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+For each issue, add:
+  □ Test that error path is triggered
+  □ Test exception is raised (not swallowed)
+  □ Test error is logged at correct level
+  □ Test error context is included in logs
+  □ Test error message is actionable
+
+Example test:
+  async def test_cli_propagates_signature_not_found():
+      handler = CLICommandHandler(FakeManagementPort())
+      with pytest.raises(ValueError, match="not found"):
+          await handler.mute_signature("nonexistent")
+
+================================================================================
