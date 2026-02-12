@@ -4,6 +4,7 @@ Implements NotificationPort by printing findings to terminal with
 human-readable formatting.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -30,23 +31,23 @@ class StdoutNotificationAdapter(NotificationPort):
         """Report a diagnosed signature to stdout."""
         # Format header
         header = self._format_header(signature)
-        print(header)
+        await asyncio.to_thread(print, header)
 
         # Format signature details
         sig_details = self._format_signature_details(signature)
-        print(sig_details)
+        await asyncio.to_thread(print, sig_details)
 
         # Format diagnosis
         diagnosis_details = self._format_diagnosis(diagnosis)
-        print(diagnosis_details)
+        await asyncio.to_thread(print, diagnosis_details)
 
         # Footer
-        print(self._format_footer())
+        await asyncio.to_thread(print, self._format_footer())
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Periodic summary report."""
         summary = self._format_summary(stats)
-        print(summary)
+        await asyncio.to_thread(print, summary)
 
     @staticmethod
     def _format_header(signature: Signature) -> str:

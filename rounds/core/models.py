@@ -47,7 +47,7 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: MappingProxyType  # read-only dict proxy for immutability
+    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
     severity: Severity
 
     def __post_init__(self) -> None:
@@ -131,7 +131,7 @@ class SpanNode:
     operation: str
     duration_ms: float
     status: str
-    attributes: MappingProxyType  # read-only dict proxy for immutability
+    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
     events: tuple[dict[str, Any], ...]  # immutable for frozen dataclass
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
@@ -159,7 +159,7 @@ class LogEntry:
     timestamp: datetime
     severity: Severity
     body: str
-    attributes: MappingProxyType  # read-only dict proxy for immutability
+    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
     trace_id: str | None
     span_id: str | None
 

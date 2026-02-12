@@ -15,9 +15,11 @@ class Fingerprinter:
     """Produces stable fingerprints from error events.
 
     No external dependencies — pure function over domain objects.
+    All methods are static as the class carries no state.
     """
 
-    def fingerprint(self, event: ErrorEvent) -> str:
+    @staticmethod
+    def fingerprint(event: ErrorEvent) -> str:
         """Create a stable hash that identifies this class of error.
 
         Same bug, different occurrence → same fingerprint.
@@ -28,9 +30,9 @@ class Fingerprinter:
         - Templatized message
         - Normalized stack hash
         """
-        message_template = self.templatize_message(event.error_message)
-        normalized_stack = self.normalize_stack(event.stack_frames)
-        stack_hash = self.hash_stack(normalized_stack)
+        message_template = Fingerprinter.templatize_message(event.error_message)
+        normalized_stack = Fingerprinter.normalize_stack(event.stack_frames)
+        stack_hash = Fingerprinter.hash_stack(normalized_stack)
 
         # Combine components for final fingerprint
         components = [
@@ -43,7 +45,8 @@ class Fingerprinter:
         fingerprint_input = "|".join(components)
         return hashlib.sha256(fingerprint_input.encode()).hexdigest()
 
-    def normalize_stack(self, frames: tuple[StackFrame, ...] | list[StackFrame]) -> list[StackFrame]:
+    @staticmethod
+    def normalize_stack(frames: tuple[StackFrame, ...] | list[StackFrame]) -> list[StackFrame]:
         """Strip line numbers, variable data. Keep module + function.
 
         Line numbers change frequently and shouldn't affect fingerprint.
@@ -58,7 +61,8 @@ class Fingerprinter:
             for frame in frames
         ]
 
-    def templatize_message(self, message: str) -> str:
+    @staticmethod
+    def templatize_message(message: str) -> str:
         """Replace variable parts (IPs, ports, IDs, timestamps) with placeholders.
 
         Examples:
@@ -88,7 +92,8 @@ class Fingerprinter:
 
         return message
 
-    def hash_stack(self, frames: list[StackFrame]) -> str:
+    @staticmethod
+    def hash_stack(frames: list[StackFrame]) -> str:
         """Create a hash of the normalized stack structure."""
         stack_repr = "|".join(f"{frame.module}::{frame.function}" for frame in frames)
         return hashlib.sha256(stack_repr.encode()).hexdigest()[:16]

@@ -48,6 +48,20 @@ def _is_valid_identifier(identifier: str) -> bool:
     return bool(identifier) and all(c.isalnum() or c in "_-." for c in identifier)
 
 
+def _is_valid_trace_id(trace_id: str) -> bool:
+    """Validate trace ID format (128-bit hex string).
+
+    Args:
+        trace_id: The trace ID to validate.
+
+    Returns:
+        True if the trace ID is valid format.
+    """
+    if not isinstance(trace_id, str):
+        return False
+    return bool(trace_id) and all(c in "0123456789abcdefABCDEF" for c in trace_id)
+
+
 class GrafanaStackTelemetryAdapter(TelemetryPort):
     """Grafana Stack telemetry adapter (Tempo + Loki + Prometheus)."""
 
@@ -270,9 +284,12 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             TraceTree object with span hierarchy.
 
         Raises:
-            ValueError: If trace not found.
+            ValueError: If trace not found or invalid.
             Exception: If API error occurs.
         """
+        if not _is_valid_trace_id(trace_id):
+            raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         try:
             response = await self.tempo_client.get(f"/api/traces/{trace_id}")
             response.raise_for_status()
@@ -397,7 +414,15 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         Returns:
             List of TraceTree objects. Partial results may be returned if some
             traces cannot be fetched.
+
+        Raises:
+            ValueError: If any trace ID format is invalid.
         """
+        # Validate all trace IDs upfront
+        for trace_id in trace_ids:
+            if not _is_valid_trace_id(trace_id):
+                raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         traces: list[TraceTree] = []
 
         for trace_id in trace_ids:
@@ -424,14 +449,22 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         Returns:
             List of LogEntry objects correlated with the traces.
             Empty list if no logs found.
+
+        Raises:
+            ValueError: If any trace ID format is invalid.
         """
+        # Validate all trace IDs upfront
+        for trace_id in trace_ids:
+            if not _is_valid_trace_id(trace_id):
+                raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         logs: list[LogEntry] = []
 
         try:
             # Build LogQL query to correlate logs with traces
-            # Escape trace IDs for LogQL queries
-            trace_filter = "|".join(f'"{tid}"' for tid in trace_ids)
-            query = f'trace_id=~{{{trace_filter}}}'
+            # Use correct LogQL syntax with stream selectors
+            trace_regex = "|".join(trace_ids)
+            query = f'{{trace_id=~"{trace_regex}"}}'
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query",

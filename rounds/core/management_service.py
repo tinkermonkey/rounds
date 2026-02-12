@@ -276,6 +276,10 @@ class ManagementService(ManagementPort):
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
 
+        # Preserve the original diagnosis in case diagnosis fails
+        original_diagnosis = signature.diagnosis
+        original_status = signature.status
+
         # Reset to NEW status
         signature.status = SignatureStatus.NEW
         signature.diagnosis = None
@@ -307,7 +311,26 @@ class ManagementService(ManagementPort):
         )
 
         # Invoke diagnosis
-        diagnosis = await self.diagnosis_engine.diagnose(context)
+        try:
+            diagnosis = await self.diagnosis_engine.diagnose(context)
+        except Exception as e:
+            # Diagnosis failed - restore original diagnosis and status
+            signature.diagnosis = original_diagnosis
+            signature.status = original_status
+            try:
+                await self.store.update(signature)
+            except Exception as store_error:
+                logger.error(
+                    f"Failed to restore signature state after diagnosis failure: "
+                    f"{store_error}",
+                    exc_info=True,
+                )
+            # Log the original diagnosis error and re-raise
+            logger.error(
+                f"Diagnosis failed during reinvestigation for signature {signature_id}: {e}",
+                exc_info=True,
+            )
+            raise
 
         # Update signature with diagnosis and mark as DIAGNOSED
         signature.diagnosis = diagnosis

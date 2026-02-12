@@ -336,9 +336,12 @@ class JaegerTelemetryAdapter(TelemetryPort):
             TraceTree object with span hierarchy.
 
         Raises:
-            ValueError: If trace not found.
+            ValueError: If trace not found or invalid.
             Exception: If Jaeger API error occurs.
         """
+        if not _is_valid_trace_id(trace_id):
+            raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         try:
             response = await self.client.get(f"/api/traces/{trace_id}")
             response.raise_for_status()
@@ -470,7 +473,15 @@ class JaegerTelemetryAdapter(TelemetryPort):
         Returns:
             List of TraceTree objects. Partial results may be returned if some
             traces cannot be fetched.
+
+        Raises:
+            ValueError: If any trace ID format is invalid.
         """
+        # Validate all trace IDs upfront
+        for trace_id in trace_ids:
+            if not _is_valid_trace_id(trace_id):
+                raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         traces: list[TraceTree] = []
 
         for trace_id in trace_ids:
@@ -498,7 +509,15 @@ class JaegerTelemetryAdapter(TelemetryPort):
         Returns:
             List of LogEntry objects correlated with the traces.
             Empty list if no logs found.
+
+        Raises:
+            ValueError: If any trace ID format is invalid.
         """
+        # Validate all trace IDs upfront
+        for trace_id in trace_ids:
+            if not _is_valid_trace_id(trace_id):
+                raise ValueError(f"Invalid trace ID format: {trace_id}")
+
         logs: list[LogEntry] = []
 
         # Fetch raw trace data to extract logs

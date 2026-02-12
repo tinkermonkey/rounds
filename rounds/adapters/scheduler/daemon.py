@@ -39,7 +39,14 @@ class DaemonScheduler:
         self._budget_date = datetime.now(timezone.utc).date()
 
     async def start(self) -> None:
-        """Start the daemon scheduler loop."""
+        """Start the daemon scheduler loop.
+
+        Raises:
+            ValueError: If poll_port is not set.
+        """
+        if self.poll_port is None:
+            raise ValueError("poll_port must be set before starting the scheduler")
+
         if self.running:
             logger.warning("Daemon scheduler already running")
             return
