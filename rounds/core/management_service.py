@@ -242,26 +242,17 @@ class ManagementService(ManagementPort):
         Raises:
             Exception: If database error occurs.
         """
-        # Get all signatures from the store
-        all_signatures = await self.store.get_pending_investigation()
-
-        # If no status filter, return all
-        if status is None:
-            logger.debug("Listed all signatures")
-            return all_signatures
-
-        # Filter by status
-        filtered = [sig for sig in all_signatures if sig.status == status]
+        # Get signatures from the store, filtered by status if provided
+        signatures = await self.store.get_all(status=status)
 
         logger.debug(
-            f"Listed signatures with status filter",
+            f"Listed signatures" + (f" with status={status.value}" if status else ""),
             extra={
-                "status": status.value,
-                "count": len(filtered),
+                "count": len(signatures),
             },
         )
 
-        return filtered
+        return signatures
 
     async def reinvestigate(self, signature_id: str) -> Diagnosis:
         """Trigger immediate investigation/re-investigation of a signature.

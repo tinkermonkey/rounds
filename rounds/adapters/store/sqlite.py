@@ -209,6 +209,35 @@ class SQLiteSignatureStore(SignatureStorePort):
         finally:
             await self._return_connection(conn)
 
+    async def get_all(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """Return all signatures, optionally filtered by status."""
+        await self._init_schema()
+
+        conn = await self._get_connection()
+        try:
+            if status is None:
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM signatures
+                    ORDER BY last_seen DESC, occurrence_count DESC
+                    """
+                )
+            else:
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM signatures
+                    WHERE status = ?
+                    ORDER BY last_seen DESC, occurrence_count DESC
+                    """,
+                    (status.value,),
+                )
+            rows = await cursor.fetchall()
+            return [self._row_to_signature(row) for row in rows]
+        finally:
+            await self._return_connection(conn)
+
     async def get_similar(
         self, signature: Signature, limit: int = 5
     ) -> list[Signature]:

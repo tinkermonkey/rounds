@@ -224,6 +224,22 @@ class SignatureStorePort(ABC):
         """
 
     @abstractmethod
+    async def get_all(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """Return all signatures, optionally filtered by status.
+
+        Args:
+            status: Filter to signatures with this status. If None, return all.
+
+        Returns:
+            List of Signature objects matching the criteria.
+
+        Raises:
+            Exception: If database is unavailable.
+        """
+
+    @abstractmethod
     async def get_similar(
         self, signature: Signature, limit: int = 5
     ) -> list[Signature]:

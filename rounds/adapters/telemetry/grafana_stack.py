@@ -455,7 +455,12 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                         logs.append(log_entry)
 
         except Exception as e:
-            logger.warning(f"Failed to fetch correlated logs: {e}")
+            logger.error(
+                f"Failed to fetch correlated logs: {e}",
+                extra={"trace_id": trace_id},
+                exc_info=True,
+            )
+            raise
 
         return logs
 
@@ -464,18 +469,36 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
     ) -> list[ErrorEvent]:
         """Retrieve recent errors matching a fingerprint.
 
+        Filters errors by computing fingerprints locally and matching against
+        the requested fingerprint. This compensates for Grafana Stack not having
+        native fingerprint support.
+
         Args:
-            fingerprint: The fingerprint to search for.
-            limit: Maximum number of events to return.
+            fingerprint: Signature fingerprint to match against.
+            limit: Maximum number of matching events to return.
 
         Returns:
-            List of ErrorEvent objects matching the fingerprint.
+            List of ErrorEvent objects with matching fingerprints.
+            May be empty if no recent matches found.
 
         Raises:
-            NotImplementedError: Fingerprint-based search not yet implemented.
+            Exception: If telemetry backend is unreachable.
         """
-        # Query Loki for logs with matching fingerprint
-        raise NotImplementedError(
-            "Fingerprint-based event search not yet implemented for Grafana Stack adapter. "
-            "Use get_recent_errors() with service filtering instead."
-        )
+        from datetime import timedelta
+        from rounds.core.fingerprint import Fingerprinter
+
+        # Fetch recent errors from last 24 hours
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        all_errors = await self.get_recent_errors(since)
+
+        # Filter by fingerprint using local computation
+        matching_errors = []
+        fingerprinter = Fingerprinter()
+
+        for error in all_errors:
+            if fingerprinter.fingerprint(error) == fingerprint:
+                matching_errors.append(error)
+                if len(matching_errors) >= limit:
+                    break
+
+        return matching_errors

@@ -103,9 +103,9 @@ async def bootstrap() -> None:
         logger.info("Telemetry adapter: Jaeger")
     elif settings.telemetry_backend == "grafana_stack":
         telemetry = GrafanaStackTelemetryAdapter(
-            loki_url=settings.grafana_loki_url,
             tempo_url=settings.grafana_tempo_url,
-            api_key=settings.grafana_api_key,
+            loki_url=settings.grafana_loki_url,
+            prometheus_url=settings.grafana_prometheus_url,
         )
         logger.info("Telemetry adapter: Grafana Stack")
     else:
@@ -138,12 +138,13 @@ async def bootstrap() -> None:
         notification = StdoutNotificationAdapter(verbose=settings.debug)
         logger.info("Notification adapter: Stdout")
     elif settings.notification_backend == "markdown":
-        notification = MarkdownNotificationAdapter(output_dir=settings.notification_output_dir)
+        notification = MarkdownNotificationAdapter(report_path=settings.notification_output_dir)
         logger.info("Notification adapter: Markdown")
     elif settings.notification_backend == "github_issue":
         notification = GitHubIssueNotificationAdapter(
-            token=settings.github_token,
-            repo=settings.github_repo
+            repo_owner=settings.github_repo_owner,
+            repo_name=settings.github_repo_name,
+            github_token=settings.github_token
         )
         logger.info("Notification adapter: GitHub Issue")
     else:
