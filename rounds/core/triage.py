@@ -51,21 +51,34 @@ class TriageEngine:
 
         return True
 
-    def should_notify(self, signature: Signature, diagnosis: Diagnosis) -> bool:
+    def should_notify(
+        self,
+        signature: Signature,
+        diagnosis: Diagnosis,
+        original_status: SignatureStatus | None = None,
+    ) -> bool:
         """Should this diagnosis be reported?
 
         Considers:
         - Confidence level
         - Whether it's a new diagnosis (vs re-investigation)
         - Signature severity
+
+        Args:
+            signature: The signature being diagnosed
+            diagnosis: The diagnosis result
+            original_status: The original status before diagnosis. If provided,
+                            used to determine if this is a new signature diagnosis.
         """
         # Always notify high-confidence diagnoses
         if diagnosis.confidence == self.high_confidence_threshold:
             return True
 
         # Notify medium confidence if it's a new signature
+        # Use original_status if provided, otherwise check current status
+        status_for_check = original_status if original_status is not None else signature.status
         if (
-            signature.status == SignatureStatus.NEW
+            status_for_check == SignatureStatus.NEW
             and diagnosis.confidence == Confidence.MEDIUM
         ):
             return True

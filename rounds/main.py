@@ -162,6 +162,7 @@ async def bootstrap() -> None:
     finally:
         # Clean up resources
         await telemetry.close()
+        await store.close_pool()
 
 
 def main() -> None:

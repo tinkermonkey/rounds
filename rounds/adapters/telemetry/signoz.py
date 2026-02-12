@@ -471,9 +471,9 @@ class SigNozTelemetryAdapter(TelemetryPort):
     def _is_valid_trace_id(trace_id: str) -> bool:
         """Validate that a trace ID is a safe hex string.
 
-        OpenTelemetry trace IDs are 128-bit hex strings (32 hex chars).
+        OpenTelemetry trace IDs are 128-bit hex strings (exactly 32 hex chars).
         """
-        if not trace_id or len(trace_id) > 32:
+        if not trace_id or len(trace_id) != 32:
             return False
         return all(c in "0123456789abcdefABCDEF" for c in trace_id)
 

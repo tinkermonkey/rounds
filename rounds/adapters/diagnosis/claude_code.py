@@ -3,7 +3,7 @@
 Implements DiagnosisPort by invoking Claude Code CLI in headless mode
 for LLM-powered code analysis and root cause diagnosis.
 
-Invocation format: claude -p --output-format stream-json
+Invocation format: claude -p --output-format json
 """
 
 import asyncio
@@ -208,7 +208,7 @@ Respond with a JSON object in exactly this format:
             output = await loop.run_in_executor(None, _run_claude_code)
 
             # Parse the JSON output
-            # Claude Code returns stream-json, so we need to extract the content
+            # Claude Code returns json format, so we need to extract the content
             lines = output.split("\n")
             for line in lines:
                 if line.startswith("{"):

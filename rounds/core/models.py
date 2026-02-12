@@ -113,6 +113,18 @@ class Signature:
     diagnosis: Diagnosis | None = None
     tags: frozenset[str] = field(default_factory=frozenset)  # immutable set
 
+    def __post_init__(self) -> None:
+        """Validate signature invariants on creation or deserialization."""
+        if self.occurrence_count < 1:
+            raise ValueError(
+                f"occurrence_count must be >= 1, got {self.occurrence_count}"
+            )
+        if self.last_seen < self.first_seen:
+            raise ValueError(
+                f"last_seen ({self.last_seen}) cannot be before "
+                f"first_seen ({self.first_seen})"
+            )
+
 
 @dataclass(frozen=True)
 class SpanNode:

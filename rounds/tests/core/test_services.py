@@ -6,18 +6,13 @@ implement the core diagnostic logic correctly.
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
-import sys
 
-# Add the rounds directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from core.fingerprint import Fingerprinter
-from core.triage import TriageEngine
-from core.investigator import Investigator
-from core.poll_service import PollService
-from core.models import (
+from rounds.core.fingerprint import Fingerprinter
+from rounds.core.triage import TriageEngine
+from rounds.core.investigator import Investigator
+from rounds.core.poll_service import PollService
+from rounds.core.models import (
     Confidence,
     Diagnosis,
     ErrorEvent,
@@ -31,7 +26,7 @@ from core.models import (
     TraceTree,
     SpanNode,
 )
-from core.ports import (
+from rounds.core.ports import (
     TelemetryPort,
     SignatureStorePort,
     DiagnosisPort,
@@ -841,6 +836,78 @@ class TestPollService:
         assert signature.status == SignatureStatus.DIAGNOSED
         assert signature.diagnosis is not None
 
+    async def test_investigation_cycle_continues_after_one_fails(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Investigation cycle should continue processing after one signature fails."""
+        telemetry = MockTelemetryPort()
+        store = MockSignatureStorePort()
+        notification = MockNotificationPort()
+        investigator_calls = []
+
+        # Create a diagnosis engine that fails on the first signature
+        class PartiallyFailingDiagnosisPort(MockDiagnosisPort):
+            async def diagnose(self, context):
+                if len(investigator_calls) == 0:
+                    investigator_calls.append("failed")
+                    raise RuntimeError("Diagnosis failed for first signature")
+                investigator_calls.append("succeeded")
+                return await super().diagnose(context)
+
+        diagnosis_engine = PartiallyFailingDiagnosisPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        # Create two pending signatures
+        now = datetime.now(timezone.utc)
+        sig1 = Signature(
+            id="sig-1",
+            fingerprint="fp-1",
+            error_type="Error",
+            service="service",
+            message_template="msg1",
+            stack_hash="hash1",
+            first_seen=now,
+            last_seen=now,
+            occurrence_count=10,
+            status=SignatureStatus.NEW,
+        )
+        sig2 = Signature(
+            id="sig-2",
+            fingerprint="fp-2",
+            error_type="Error",
+            service="service",
+            message_template="msg2",
+            stack_hash="hash2",
+            first_seen=now,
+            last_seen=now,
+            occurrence_count=10,
+            status=SignatureStatus.NEW,
+        )
+        store.pending_signatures = [sig1, sig2]
+
+        # Execute investigation cycle
+        diagnoses = await poll_service.execute_investigation_cycle()
+
+        # Should have processed both signatures despite first failure
+        # First signature should fail and revert to NEW
+        # Second signature should succeed and be DIAGNOSED
+        assert sig1.status == SignatureStatus.NEW  # Reverted due to diagnosis failure
+        assert sig2.status == SignatureStatus.DIAGNOSED  # Successfully diagnosed
+        assert len(diagnoses) == 1  # Only successful diagnosis returned
+        assert diagnoses[0].root_cause == "test root cause"
+        # Verify both signatures were attempted
+        assert len(investigator_calls) == 2
+        assert investigator_calls[0] == "failed"
+        assert investigator_calls[1] == "succeeded"
+
 
 # ============================================================================
 # Critical Bug Fixes Tests
@@ -1013,7 +1080,7 @@ class TestDiagnosisParsingValidation:
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if root_cause is missing."""
-        from adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 
         adapter = ClaudeCodeDiagnosisAdapter()
 
@@ -1053,7 +1120,7 @@ class TestDiagnosisParsingValidation:
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if confidence is invalid."""
-        from adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 
         adapter = ClaudeCodeDiagnosisAdapter()
 

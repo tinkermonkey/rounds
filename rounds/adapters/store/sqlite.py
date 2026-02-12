@@ -66,44 +66,47 @@ class SQLiteSignatureStore(SignatureStorePort):
         """Initialize database schema on first use.
 
         Only runs once per instance. Subsequent calls are no-ops.
+        Protected by _pool_lock to prevent concurrent schema initialization.
         """
-        if self._schema_initialized:
-            return
+        async with self._pool_lock:
+            # Check again after acquiring lock to prevent race
+            if self._schema_initialized:
+                return
 
-        conn = await self._get_connection()
-        try:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS signatures (
-                    id TEXT PRIMARY KEY,
-                    fingerprint TEXT UNIQUE NOT NULL,
-                    error_type TEXT NOT NULL,
-                    service TEXT NOT NULL,
-                    message_template TEXT NOT NULL,
-                    stack_hash TEXT NOT NULL,
-                    first_seen TIMESTAMP NOT NULL,
-                    last_seen TIMESTAMP NOT NULL,
-                    occurrence_count INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'new',
-                    diagnosis_json TEXT,
-                    tags TEXT NOT NULL DEFAULT '[]'
+            conn = await self._get_connection()
+            try:
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS signatures (
+                        id TEXT PRIMARY KEY,
+                        fingerprint TEXT UNIQUE NOT NULL,
+                        error_type TEXT NOT NULL,
+                        service TEXT NOT NULL,
+                        message_template TEXT NOT NULL,
+                        stack_hash TEXT NOT NULL,
+                        first_seen TIMESTAMP NOT NULL,
+                        last_seen TIMESTAMP NOT NULL,
+                        occurrence_count INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'new',
+                        diagnosis_json TEXT,
+                        tags TEXT NOT NULL DEFAULT '[]'
+                    )
+                    """
                 )
-                """
-            )
-            # Index for common queries
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_status ON signatures(status)"
-            )
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_service ON signatures(service)"
-            )
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_fingerprint ON signatures(fingerprint)"
-            )
-            await conn.commit()
-            self._schema_initialized = True
-        finally:
-            await self._return_connection(conn)
+                # Index for common queries
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_status ON signatures(status)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_service ON signatures(service)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_fingerprint ON signatures(fingerprint)"
+                )
+                await conn.commit()
+                self._schema_initialized = True
+            finally:
+                await self._return_connection(conn)
 
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Look up a signature by its fingerprint hash."""
