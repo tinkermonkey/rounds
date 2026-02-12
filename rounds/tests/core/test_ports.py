@@ -98,7 +98,7 @@ def diagnosis() -> Diagnosis:
             "Database logs show 'connection limit exceeded' at 12:00:00",
         ),
         suggested_fix="Wrap database operations in try-finally to ensure connections are closed",
-        confidence=Confidence.HIGH,
+        confidence="high",
         diagnosed_at=datetime(2024, 1, 1, 12, 30, 0),
         model="claude-opus-4",
         cost_usd=0.45,
@@ -287,7 +287,7 @@ class MockDiagnosisPort(DiagnosisPort):
             root_cause="Mock root cause",
             evidence=("mock evidence",),
             suggested_fix="Mock fix",
-            confidence=Confidence.HIGH,
+            confidence="high",
             diagnosed_at=datetime.now(),
             model="mock-model",
             cost_usd=0.0,
@@ -363,7 +363,7 @@ class MockManagementPort(ManagementPort):
             root_cause="Mock root cause",
             evidence=("Mock evidence",),
             suggested_fix="Mock fix",
-            confidence=Confidence.HIGH,
+            confidence="high",
             diagnosed_at=datetime.now(timezone.utc),
             model="mock-model",
             cost_usd=0.0,
@@ -530,7 +530,7 @@ class TestDiagnosisPort:
         assert isinstance(result.root_cause, str)
         assert isinstance(result.evidence, tuple)
         assert isinstance(result.suggested_fix, str)
-        assert isinstance(result.confidence, Confidence)
+        assert result.confidence in ("high", "medium", "low")
         assert isinstance(result.diagnosed_at, datetime)
         assert isinstance(result.model, str)
         assert isinstance(result.cost_usd, float)

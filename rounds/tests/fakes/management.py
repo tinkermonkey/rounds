@@ -96,7 +96,7 @@ class FakeManagementPort(ManagementPort):
             root_cause="Fake root cause",
             evidence=("Fake evidence",),
             suggested_fix="Fake fix",
-            confidence=Confidence.MEDIUM,
+            confidence="medium",
             diagnosed_at=datetime.now(timezone.utc),
             model="fake-model",
             cost_usd=0.0,

@@ -63,7 +63,7 @@ class FakeDiagnosisPort(DiagnosisPort):
                 f"Service: {context.signature.service}",
             ),
             suggested_fix="Review and apply recommended fix",
-            confidence=Confidence.MEDIUM,
+            confidence="medium",
             diagnosed_at=datetime.now(timezone.utc),
             model="fake-model",
             cost_usd=self.default_cost,

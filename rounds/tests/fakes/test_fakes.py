@@ -88,7 +88,7 @@ def diagnosis() -> Diagnosis:
         root_cause="Database connection pool exhausted",
         evidence=("Stack trace shows pool limit reached",),
         suggested_fix="Increase connection pool size",
-        confidence=Confidence.HIGH,
+        confidence="high",
         diagnosed_at=datetime(2024, 1, 1, 12, 30, 0),
         model="claude-opus-4",
         cost_usd=0.45,
@@ -435,7 +435,7 @@ class TestFakeDiagnosisPort:
             root_cause="Test root cause",
             evidence=("test evidence",),
             suggested_fix="test fix",
-            confidence=Confidence.HIGH,
+            confidence="high",
             diagnosed_at=datetime.now(),
             model="test-model",
             cost_usd=0.5,
@@ -462,7 +462,7 @@ class TestFakeDiagnosisPort:
             root_cause="Cause 1",
             evidence=(),
             suggested_fix="fix",
-            confidence=Confidence.HIGH,
+            confidence="high",
             diagnosed_at=datetime.now(),
             model="model",
             cost_usd=0.0,
@@ -471,7 +471,7 @@ class TestFakeDiagnosisPort:
             root_cause="Cause 2",
             evidence=(),
             suggested_fix="fix",
-            confidence=Confidence.HIGH,
+            confidence="high",
             diagnosed_at=datetime.now(),
             model="model",
             cost_usd=0.0,
@@ -651,7 +651,7 @@ class TestFakePollPort:
         port = FakePollPort()
         diagnosis = Diagnosis(
             root_cause="Test", evidence=(), suggested_fix="fix",
-            confidence=Confidence.HIGH, diagnosed_at=datetime.now(),
+            confidence="high", diagnosed_at=datetime.now(),
             model="model", cost_usd=0.0,
         )
         port.set_default_investigation_result([diagnosis])

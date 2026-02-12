@@ -49,7 +49,7 @@ def triage_engine() -> TriageEngine:
     return TriageEngine(
         min_occurrence_for_investigation=3,
         investigation_cooldown_hours=24,
-        high_confidence_threshold=Confidence.HIGH,
+        high_confidence_threshold="high",
     )
 
 
@@ -294,7 +294,7 @@ class TestInvestigationWorkflow:
                 root_cause="Test root cause",
                 evidence=("Test evidence",),
                 suggested_fix="Test fix",
-                confidence=Confidence.HIGH,
+                confidence="high",
                 diagnosed_at=datetime.now(),
                 model="test-model",
                 cost_usd=0.1,
