@@ -7,6 +7,7 @@ ensuring zero external dependencies in the core domain.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 
@@ -46,8 +47,15 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: dict[str, str]  # OTel span attributes
+    attributes: MappingProxyType  # read-only dict proxy for immutability
     severity: Severity
+
+    def __post_init__(self) -> None:
+        """Convert attributes dict to read-only proxy."""
+        if isinstance(self.attributes, dict):
+            object.__setattr__(
+                self, "attributes", MappingProxyType(self.attributes)
+            )
 
 
 class SignatureStatus(Enum):
@@ -116,9 +124,16 @@ class SpanNode:
     operation: str
     duration_ms: float
     status: str
-    attributes: dict[str, str]
+    attributes: MappingProxyType  # read-only dict proxy for immutability
     events: tuple[dict[str, Any], ...]  # immutable for frozen dataclass
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
+
+    def __post_init__(self) -> None:
+        """Convert attributes dict to read-only proxy."""
+        if isinstance(self.attributes, dict):
+            object.__setattr__(
+                self, "attributes", MappingProxyType(self.attributes)
+            )
 
 
 @dataclass(frozen=True)
@@ -137,9 +152,16 @@ class LogEntry:
     timestamp: datetime
     severity: Severity
     body: str
-    attributes: dict[str, str]
+    attributes: MappingProxyType  # read-only dict proxy for immutability
     trace_id: str | None
     span_id: str | None
+
+    def __post_init__(self) -> None:
+        """Convert attributes dict to read-only proxy."""
+        if isinstance(self.attributes, dict):
+            object.__setattr__(
+                self, "attributes", MappingProxyType(self.attributes)
+            )
 
 
 @dataclass(frozen=True)

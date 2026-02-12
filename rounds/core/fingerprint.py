@@ -30,7 +30,7 @@ class Fingerprinter:
         """
         message_template = self.templatize_message(event.error_message)
         normalized_stack = self.normalize_stack(event.stack_frames)
-        stack_hash = self._hash_stack(normalized_stack)
+        stack_hash = self.hash_stack(normalized_stack)
 
         # Combine components for final fingerprint
         components = [
@@ -88,7 +88,7 @@ class Fingerprinter:
 
         return message
 
-    def _hash_stack(self, frames: list[StackFrame]) -> str:
+    def hash_stack(self, frames: list[StackFrame]) -> str:
         """Create a hash of the normalized stack structure."""
         stack_repr = "|".join(f"{frame.module}::{frame.function}" for frame in frames)
         return hashlib.sha256(stack_repr.encode()).hexdigest()[:16]

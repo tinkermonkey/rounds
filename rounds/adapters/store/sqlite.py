@@ -4,6 +4,7 @@ Implements SignatureStorePort using SQLite with aiosqlite for async access.
 Provides ACID guarantees for signature state with zero operational overhead.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -19,24 +20,47 @@ logger = logging.getLogger(__name__)
 
 
 class SQLiteSignatureStore(SignatureStorePort):
-    """SQLite-backed signature store with async access."""
+    """SQLite-backed signature store with connection pooling and async access."""
 
-    def __init__(self, db_path: str):
-        """Initialize SQLite store.
+    def __init__(self, db_path: str, pool_size: int = 5):
+        """Initialize SQLite store with connection pooling.
 
         Args:
             db_path: Path to SQLite database file.
+            pool_size: Number of connections to maintain in the pool.
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._pool: list[aiosqlite.Connection] = []
+        self._pool_lock = asyncio.Lock()
+        self._pool_size = pool_size
         self._schema_initialized = False
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get a database connection."""
-        conn = await aiosqlite.connect(str(self.db_path))
-        # Enable foreign keys
-        await conn.execute("PRAGMA foreign_keys = ON")
+        """Get a connection from the pool or create a new one."""
+        async with self._pool_lock:
+            if self._pool:
+                conn = self._pool.pop()
+            else:
+                conn = await aiosqlite.connect(str(self.db_path))
+                # Enable foreign keys
+                await conn.execute("PRAGMA foreign_keys = ON")
         return conn
+
+    async def _return_connection(self, conn: aiosqlite.Connection) -> None:
+        """Return a connection to the pool."""
+        async with self._pool_lock:
+            if len(self._pool) < self._pool_size:
+                self._pool.append(conn)
+            else:
+                await conn.close()
+
+    async def close_pool(self) -> None:
+        """Close all pooled connections."""
+        async with self._pool_lock:
+            for conn in self._pool:
+                await conn.close()
+            self._pool.clear()
 
     async def _init_schema(self) -> None:
         """Initialize database schema on first use.
@@ -95,7 +119,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 return None
             return self._row_to_signature(row)
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     async def save(self, signature: Signature) -> None:
         """Create or update a signature."""
@@ -135,7 +159,7 @@ class SQLiteSignatureStore(SignatureStorePort):
             )
             await conn.commit()
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     async def update(self, signature: Signature) -> None:
         """Update an existing signature."""
@@ -159,7 +183,7 @@ class SQLiteSignatureStore(SignatureStorePort):
             rows = await cursor.fetchall()
             return [self._row_to_signature(row) for row in rows]
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     async def get_similar(
         self, signature: Signature, limit: int = 5
@@ -185,7 +209,7 @@ class SQLiteSignatureStore(SignatureStorePort):
             rows = await cursor.fetchall()
             return [self._row_to_signature(row) for row in rows]
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     async def get_stats(self) -> dict[str, Any]:
         """Summary statistics for reporting."""
@@ -226,51 +250,91 @@ class SQLiteSignatureStore(SignatureStorePort):
                 "total_errors_seen": total_errors,
             }
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     def _row_to_signature(self, row: tuple[Any, ...]) -> Signature:
-        """Convert a database row to a Signature object."""
-        (
-            sig_id,
-            fingerprint,
-            error_type,
-            service,
-            message_template,
-            stack_hash,
-            first_seen,
-            last_seen,
-            occurrence_count,
-            status,
-            diagnosis_json,
-            tags_json,
-        ) = row
+        """Convert a database row to a Signature object.
 
-        # Parse dates
-        first_seen_dt = datetime.fromisoformat(first_seen)
-        last_seen_dt = datetime.fromisoformat(last_seen)
+        Raises:
+            ValueError: If row is malformed or contains invalid data.
+        """
+        try:
+            if not row or len(row) != 12:
+                raise ValueError(f"Invalid row length: expected 12, got {len(row) if row else 0}")
 
-        # Parse diagnosis
-        diagnosis = None
-        if diagnosis_json:
-            diagnosis = self._deserialize_diagnosis(diagnosis_json)
+            (
+                sig_id,
+                fingerprint,
+                error_type,
+                service,
+                message_template,
+                stack_hash,
+                first_seen,
+                last_seen,
+                occurrence_count,
+                status,
+                diagnosis_json,
+                tags_json,
+            ) = row
 
-        # Parse tags
-        tags = frozenset(json.loads(tags_json))
+            # Validate required fields
+            if not sig_id or not fingerprint:
+                raise ValueError("Missing required fields: id or fingerprint")
 
-        return Signature(
-            id=sig_id,
-            fingerprint=fingerprint,
-            error_type=error_type,
-            service=service,
-            message_template=message_template,
-            stack_hash=stack_hash,
-            first_seen=first_seen_dt,
-            last_seen=last_seen_dt,
-            occurrence_count=occurrence_count,
-            status=SignatureStatus(status),
-            diagnosis=diagnosis,
-            tags=tags,
-        )
+            # Parse dates
+            try:
+                first_seen_dt = datetime.fromisoformat(first_seen)
+                last_seen_dt = datetime.fromisoformat(last_seen)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid date format: {e}") from e
+
+            # Validate occurrence_count
+            if not isinstance(occurrence_count, int) or occurrence_count < 0:
+                raise ValueError(f"Invalid occurrence_count: {occurrence_count}")
+
+            # Parse diagnosis
+            diagnosis = None
+            if diagnosis_json:
+                try:
+                    diagnosis = self._deserialize_diagnosis(diagnosis_json)
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.warning(
+                        f"Failed to parse diagnosis for signature {sig_id}: {e}. "
+                        f"Diagnosis will be discarded."
+                    )
+                    diagnosis = None
+
+            # Parse tags
+            try:
+                tags = frozenset(json.loads(tags_json))
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(
+                    f"Failed to parse tags for signature {sig_id}: {e}. "
+                    f"Using empty tags."
+                )
+                tags = frozenset()
+
+            return Signature(
+                id=sig_id,
+                fingerprint=fingerprint,
+                error_type=error_type,
+                service=service,
+                message_template=message_template,
+                stack_hash=stack_hash,
+                first_seen=first_seen_dt,
+                last_seen=last_seen_dt,
+                occurrence_count=occurrence_count,
+                status=SignatureStatus(status),
+                diagnosis=diagnosis,
+                tags=tags,
+            )
+
+        except ValueError as e:
+            logger.error(f"Failed to parse database row: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error parsing database row: {e}")
+            raise ValueError(f"Row parsing failed: {e}") from e
 
     @staticmethod
     def _serialize_diagnosis(diagnosis: Diagnosis) -> str:

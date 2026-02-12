@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from rounds.core.fingerprint import Fingerprinter
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
@@ -324,23 +325,33 @@ class SigNozTelemetryAdapter(TelemetryPort):
     ) -> list[ErrorEvent]:
         """Return recent events matching a known fingerprint.
 
-        Note: SigNoz doesn't have native fingerprint support.
-        Returns errors from the last 24 hours as a reasonable compromise.
-        A real implementation would tag errors with fingerprints in the telemetry backend.
+        Filters errors by computing fingerprints locally and matching against
+        the requested fingerprint. This compensates for SigNoz not having
+        native fingerprint support.
 
         Args:
-            fingerprint: Signature fingerprint (currently unused due to SigNoz limitations).
-            limit: Maximum number of events to return.
+            fingerprint: Signature fingerprint to match against.
+            limit: Maximum number of matching events to return.
 
         Returns:
-            List of recent ErrorEvent objects (up to limit).
+            List of ErrorEvent objects with matching fingerprints.
+            May be empty if no recent matches found.
         """
-        # Return recent errors from last 24 hours
+        # Fetch recent errors from last 24 hours
         since = datetime.now(timezone.utc) - timedelta(hours=24)
-
-        # Fetch recent errors and limit results
         all_errors = await self.get_recent_errors(since)
-        return all_errors[:limit]
+
+        # Filter by fingerprint using local computation
+        matching_errors = []
+        fingerprinter = Fingerprinter()
+
+        for error in all_errors:
+            if fingerprinter.fingerprint(error) == fingerprint:
+                matching_errors.append(error)
+                if len(matching_errors) >= limit:
+                    break
+
+        return matching_errors
 
     def _parse_error_event(self, span_data: dict[str, Any]) -> ErrorEvent | None:
         """Parse a span with exception into an ErrorEvent."""

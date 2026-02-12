@@ -75,7 +75,7 @@ class DaemonScheduler:
     def _setup_signal_handlers(self) -> None:
         """Set up signal handlers for graceful shutdown."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _handle_signal(sig: int) -> None:
                 logger.info(f"Received signal {sig}, initiating graceful shutdown...")
@@ -95,6 +95,7 @@ class DaemonScheduler:
     async def _run_loop(self) -> None:
         """Main daemon loop."""
         cycle_number = 0
+        loop = asyncio.get_running_loop()
 
         while self.running:
             cycle_number += 1
@@ -102,12 +103,12 @@ class DaemonScheduler:
             try:
                 logger.debug(f"Starting poll cycle #{cycle_number}")
 
-                start_time = asyncio.get_event_loop().time()
+                start_time = loop.time()
 
                 # Execute poll cycle
                 result = await self.poll_port.execute_poll_cycle()
 
-                elapsed = asyncio.get_event_loop().time() - start_time
+                elapsed = loop.time() - start_time
 
                 logger.info(
                     f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "

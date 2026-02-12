@@ -6,6 +6,7 @@ for LLM-powered code analysis and root cause diagnosis.
 Invocation format: claude -p --output-format stream-json
 """
 
+import asyncio
 import json
 import logging
 import subprocess
@@ -173,10 +174,16 @@ Respond with a JSON object in exactly this format:
         return prompt
 
     async def _invoke_claude_code(self, prompt: str) -> dict[str, Any]:
-        """Invoke Claude Code CLI with the investigation prompt asynchronously."""
+        """Invoke Claude Code CLI with the investigation prompt asynchronously.
+
+        Raises:
+            ValueError: If JSON parsing fails or no valid JSON found in output.
+            TimeoutError: If CLI invocation times out.
+            RuntimeError: If CLI returns non-zero exit code.
+        """
         try:
             # Invoke Claude Code CLI in an executor to avoid blocking the event loop
-            loop = __import__("asyncio").get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _run_claude_code() -> str:
                 """Synchronous wrapper for subprocess call."""
@@ -208,13 +215,10 @@ Respond with a JSON object in exactly this format:
                     parsed: dict[str, Any] = json.loads(line)
                     return parsed
 
-            # If no JSON found, return the entire output as diagnosis
-            return {
-                "root_cause": output,
-                "evidence": ["CLI output provided"],
-                "suggested_fix": "See root cause",
-                "confidence": "MEDIUM",
-            }
+            # No valid JSON found - raise exception instead of returning synthetic data
+            raise ValueError(
+                f"Claude Code CLI did not return valid JSON. Output: {output[:200]}"
+            )
 
         except TimeoutError as e:
             logger.error(f"Claude Code CLI timeout: {e}")
@@ -222,6 +226,9 @@ Respond with a JSON object in exactly this format:
         except RuntimeError as e:
             logger.error(f"Claude Code CLI error: {e}")
             raise RuntimeError(str(e)) from e
+        except ValueError as e:
+            logger.error(f"Failed to parse Claude Code response: {e}")
+            raise ValueError(str(e)) from e
         except Exception as e:
             logger.error(f"Failed to invoke Claude Code: {e}")
             raise

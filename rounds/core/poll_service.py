@@ -92,7 +92,7 @@ class PollService(PollPort):
                         message_template=self.fingerprinter.templatize_message(
                             error.error_message
                         ),
-                        stack_hash=self.fingerprinter._hash_stack(normalized_stack),
+                        stack_hash=self.fingerprinter.hash_stack(normalized_stack),
                         first_seen=error.timestamp,
                         last_seen=error.timestamp,
                         occurrence_count=1,

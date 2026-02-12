@@ -107,6 +107,9 @@ class Investigator:
             raise
 
         # 4. Record result (persist diagnosis before notification)
+        # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
+        # so that medium-confidence NEW signatures can still notify
+        original_status = signature.status
         signature.diagnosis = diagnosis
         signature.status = SignatureStatus.DIAGNOSED
         try:
@@ -119,9 +122,14 @@ class Investigator:
             raise
 
         # 5. Notify if warranted (failure here should NOT revert the persisted diagnosis)
+        # Pass original status to should_notify for correct medium-confidence logic
         try:
+            # Temporarily restore original status for notification check
+            signature.status = original_status
             if self.triage.should_notify(signature, diagnosis):
                 await self.notification.report(signature, diagnosis)
+            # Restore DIAGNOSED status (it was already persisted)
+            signature.status = SignatureStatus.DIAGNOSED
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis
             logger.error(
