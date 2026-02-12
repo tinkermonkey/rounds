@@ -103,7 +103,7 @@ class SQLiteSignatureStore(SignatureStorePort):
             await conn.commit()
             self._schema_initialized = True
         finally:
-            await conn.close()
+            await self._return_connection(conn)
 
     async def get_by_fingerprint(self, fingerprint: str) -> Signature | None:
         """Look up a signature by its fingerprint hash."""

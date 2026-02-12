@@ -82,6 +82,9 @@ class Investigator:
             historical_context=tuple(await self.store.get_similar(signature)),
         )
 
+        # Save original status before mutation for notification logic
+        original_status = signature.status
+
         # 3. Send to diagnosis engine
         signature.status = SignatureStatus.INVESTIGATING
         await self.store.update(signature)
@@ -109,7 +112,6 @@ class Investigator:
         # 4. Record result (persist diagnosis before notification)
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
         # so that medium-confidence NEW signatures can still notify
-        original_status = signature.status
         signature.diagnosis = diagnosis
         signature.status = SignatureStatus.DIAGNOSED
         try:
