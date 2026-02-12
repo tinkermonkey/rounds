@@ -58,7 +58,7 @@ async def test_create_and_retrieve_signature(store: SQLiteSignatureStore) -> Non
 
 
 @pytest.mark.asyncio
-async def test_update_signature(store: SqliteSignatureStoreAdapter) -> None:
+async def test_update_signature(store: SQLiteSignatureStore) -> None:
     """Test updating a signature."""
     sig = Signature(
         id="test-2",
@@ -86,7 +86,7 @@ async def test_update_signature(store: SqliteSignatureStoreAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_signature_with_diagnosis(store: SqliteSignatureStoreAdapter) -> None:
+async def test_signature_with_diagnosis(store: SQLiteSignatureStore) -> None:
     """Test storing and retrieving signature with diagnosis."""
     diagnosis = Diagnosis(
         root_cause="Database connection timeout",
@@ -120,7 +120,7 @@ async def test_signature_with_diagnosis(store: SqliteSignatureStoreAdapter) -> N
 
 
 @pytest.mark.asyncio
-async def test_find_by_status(store: SqliteSignatureStoreAdapter) -> None:
+async def test_find_by_status(store: SQLiteSignatureStore) -> None:
     """Test finding signatures by status."""
     now = datetime.now(timezone.utc)
 
@@ -148,7 +148,7 @@ async def test_find_by_status(store: SqliteSignatureStoreAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_corrupted_diagnosis_json(store: SqliteSignatureStoreAdapter) -> None:
+async def test_corrupted_diagnosis_json(store: SQLiteSignatureStore) -> None:
     """Test handling of corrupted diagnosis JSON during deserialization."""
     # This test verifies that corrupted data is logged at ERROR level and discarded gracefully
     # Create a signature with valid data first
