@@ -18,7 +18,7 @@ import sys
 
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
-from rounds.adapters.notification.github_issue import GitHubIssueNotificationAdapter
+from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore

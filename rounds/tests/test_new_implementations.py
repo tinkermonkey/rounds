@@ -257,7 +257,7 @@ class TestCLICommandHandler:
         """Test getting details in JSON format."""
         mock_management.get_signature_details.return_value = sample_details
 
-        result = await handler.get_signature_details("sig-123", format="json")
+        result = await handler.get_signature_details("sig-123", output_format="json")
 
         assert result["status"] == "success"
         assert result["operation"] == "get_details"
@@ -270,7 +270,7 @@ class TestCLICommandHandler:
         """Test getting details in text format."""
         mock_management.get_signature_details.return_value = sample_details
 
-        result = await handler.get_signature_details("sig-123", format="text")
+        result = await handler.get_signature_details("sig-123", output_format="text")
 
         assert result["status"] == "success"
         text = result["data"]
@@ -285,7 +285,7 @@ class TestCLICommandHandler:
         """Test getting details with invalid format."""
         mock_management.get_signature_details.return_value = sample_details
 
-        result = await handler.get_signature_details("sig-123", format="invalid")
+        result = await handler.get_signature_details("sig-123", output_format="invalid")
 
         assert result["status"] == "error"
         assert "Unsupported format" in result["message"]
