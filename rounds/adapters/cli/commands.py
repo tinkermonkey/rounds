@@ -208,7 +208,7 @@ class CLICommandHandler:
                 return {
                     "status": "error",
                     "operation": "get_details",
-                    "message": f"Unsupported format: {format}",
+                    "message": f"Unsupported format: {output_format}",
                 }
 
         except ValueError as e:
