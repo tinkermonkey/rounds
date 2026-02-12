@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from rounds.core.models import Signature
+from rounds.core.models import Signature, SignatureStatus
 from rounds.core.ports import SignatureStorePort
 
 
@@ -66,6 +66,16 @@ class FakeSignatureStorePort(SignatureStorePort):
         """
         self.get_pending_investigation_call_count += 1
         return self.pending_signatures
+
+    async def get_all(self, status: SignatureStatus | None = None) -> list[Signature]:
+        """Get all signatures, optionally filtered by status.
+
+        Returns all stored signatures or only those matching the given status.
+        """
+        if status is None:
+            return list(self.signatures.values())
+
+        return [sig for sig in self.signatures.values() if sig.status == status]
 
     async def get_similar(
         self, signature: Signature, limit: int = 5
