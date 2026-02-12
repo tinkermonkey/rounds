@@ -793,7 +793,7 @@ class TestPollService:
             message_template=fingerprinter.templatize_message(
                 error_event.error_message
             ),
-            stack_hash=fingerprinter._hash_stack(
+            stack_hash=fingerprinter.hash_stack(
                 fingerprinter.normalize_stack(error_event.stack_frames)
             ),
             first_seen=error_event.timestamp,
@@ -960,8 +960,8 @@ class TestPollCycleErrorHandling:
             def templatize_message(self, msg):
                 return self.base.templatize_message(msg)
 
-            def _hash_stack(self, frames):
-                return self.base._hash_stack(frames)
+            def hash_stack(self, frames):
+                return self.base.hash_stack(frames)
 
         error1 = ErrorEvent(
             trace_id="trace-1",
@@ -994,7 +994,7 @@ class TestPollCycleErrorHandling:
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
 
-        fingerprinter = PartiallyBrokenFingerprinter(broken_on_count=1)
+        fingerprinter = PartiallyBrokenFingerprinter(broken_on_count=2)
         poll_service = PollService(
             telemetry, store, fingerprinter, triage_engine, investigator
         )
@@ -1002,7 +1002,7 @@ class TestPollCycleErrorHandling:
         # Should process 2 errors but skip 1 due to fingerprinter failure
         result = await poll_service.execute_poll_cycle()
         assert result.errors_found == 2
-        # Only 1 should be successfully processed (the second one)
+        # Only 1 should be successfully processed (the first one, second will fail)
         assert (result.new_signatures + result.updated_signatures) >= 1
 
 

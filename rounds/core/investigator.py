@@ -130,13 +130,14 @@ class Investigator:
             signature.status = original_status
             if self.triage.should_notify(signature, diagnosis):
                 await self.notification.report(signature, diagnosis)
-            # Restore DIAGNOSED status (it was already persisted)
-            signature.status = SignatureStatus.DIAGNOSED
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis
             logger.error(
                 f"Failed to notify about diagnosis for signature {signature.fingerprint}: {e}",
                 exc_info=True,
             )
+        finally:
+            # Always restore DIAGNOSED status (it was already persisted)
+            signature.status = SignatureStatus.DIAGNOSED
 
         return diagnosis
