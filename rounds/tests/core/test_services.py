@@ -208,6 +208,14 @@ class MockSignatureStorePort(SignatureStorePort):
         """Mock implementation."""
         return self.pending_signatures
 
+    async def get_all(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """Mock implementation."""
+        if status is None:
+            return list(self.signatures.values())
+        return [sig for sig in self.signatures.values() if sig.status == status]
+
     async def get_similar(
         self, signature: Signature, limit: int = 5
     ) -> list[Signature]:
@@ -1264,6 +1272,12 @@ class TestNotificationFailureHandling:
                     if sig.id == signature_id:
                         return sig
                 return None
+
+            async def get_all(
+                self, status: SignatureStatus | None = None
+            ) -> list[Signature]:
+                """Mock implementation."""
+                return await super().get_all(status)
 
             async def update(self, sig):
                 self.update_calls.append((sig.fingerprint, sig.status, sig.diagnosis))

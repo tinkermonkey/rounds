@@ -261,6 +261,12 @@ class MockSignatureStorePort(SignatureStorePort):
         """Mock implementation."""
         return []
 
+    async def get_all(
+        self, status: SignatureStatus | None = None
+    ) -> list[Signature]:
+        """Mock implementation."""
+        return []
+
     async def get_similar(
         self, signature: Signature, limit: int = 5
     ) -> list[Signature]:
