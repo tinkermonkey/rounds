@@ -322,10 +322,12 @@ class TestInvestigationWorkflow:
         )
 
         # Execute: investigation cycle
-        diagnoses = await poll_service.execute_investigation_cycle()
+        result = await poll_service.execute_investigation_cycle()
 
         # Assert: signature was diagnosed and reported
-        assert len(diagnoses) == 1
+        assert len(result.diagnoses_produced) == 1
+        assert result.investigations_attempted == 1
+        assert result.investigations_failed == 0
         assert len(notification_port.reported_diagnoses) == 1
 
     async def test_investigation_respects_triage_rules(
@@ -379,10 +381,11 @@ class TestInvestigationWorkflow:
         )
 
         # Execute: investigation cycle
-        diagnoses = await poll_service.execute_investigation_cycle()
+        result = await poll_service.execute_investigation_cycle()
 
         # Assert: muted signature was not investigated
-        assert len(diagnoses) == 0
+        assert len(result.diagnoses_produced) == 0
+        assert result.investigations_attempted == 0
         assert len(notification_port.reported_diagnoses) == 0
 
 
@@ -490,10 +493,12 @@ class TestErrorRecovery:
         )
 
         # Execute: investigation cycle should handle notification failure
-        diagnoses = await poll_service.execute_investigation_cycle()
+        result = await poll_service.execute_investigation_cycle()
 
         # Assert: diagnosis was generated even though notification failed
-        assert len(diagnoses) == 1
-        diagnosis = diagnoses[0]
+        assert len(result.diagnoses_produced) == 1
+        assert result.investigations_attempted == 1
+        assert result.investigations_failed == 0
+        diagnosis = result.diagnoses_produced[0]
         assert diagnosis.root_cause is not None
         assert diagnosis.confidence == "medium"

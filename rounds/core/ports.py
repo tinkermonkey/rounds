@@ -25,6 +25,7 @@ from .models import (
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
+    InvestigationResult,
     LogEntry,
     PollResult,
     SignatureDetails,
@@ -438,13 +439,13 @@ class PollPort(ABC):
         """
 
     @abstractmethod
-    async def execute_investigation_cycle(self) -> list[Diagnosis]:
+    async def execute_investigation_cycle(self) -> InvestigationResult:
         """Investigate pending signatures.
 
-        Returns diagnoses produced.
+        Returns result with diagnoses produced and failure count.
 
         Returns:
-            List of Diagnosis objects for investigated signatures.
+            InvestigationResult containing diagnoses, attempt count, and failure count.
 
         Raises:
             Exception: Only for fatal errors.

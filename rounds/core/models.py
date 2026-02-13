@@ -198,15 +198,22 @@ class SpanNode:
     duration_ms: float
     status: str
     attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
-    events: tuple[dict[str, Any], ...]  # immutable for frozen dataclass
+    events: tuple[MappingProxyType[str, Any], ...]  # read-only event dicts
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
     def __post_init__(self) -> None:
-        """Convert attributes dict to read-only proxy."""
+        """Convert attributes and event dicts to read-only proxies."""
         if isinstance(self.attributes, dict):
             object.__setattr__(
                 self, "attributes", MappingProxyType(self.attributes)
             )
+        # Convert mutable dicts in events tuple to immutable proxies
+        if self.events and isinstance(self.events[0], dict):
+            events_proxies = tuple(
+                MappingProxyType(event) if isinstance(event, dict) else event
+                for event in self.events
+            )
+            object.__setattr__(self, "events", events_proxies)
 
 
 @dataclass(frozen=True)
@@ -261,6 +268,16 @@ class PollResult:
     updated_signatures: int
     investigations_queued: int
     timestamp: datetime
+    errors_failed_to_process: int = 0  # Number of errors that failed during processing
+
+
+@dataclass(frozen=True)
+class InvestigationResult:
+    """Summary of an investigation cycle execution."""
+
+    diagnoses_produced: tuple[Diagnosis, ...]  # Successfully completed diagnoses
+    investigations_attempted: int  # Number of signatures attempted
+    investigations_failed: int = 0  # Number of investigations that failed
 
 
 @dataclass(frozen=True)
@@ -268,10 +285,17 @@ class StoreStats:
     """Statistics about the signature store."""
 
     total_signatures: int
-    by_status: dict[str, int]  # status -> count
-    by_service: dict[str, int]  # service -> count
+    by_status: MappingProxyType[str, int]  # status -> count (read-only)
+    by_service: MappingProxyType[str, int]  # service -> count (read-only)
     oldest_signature_age_hours: float | None  # None if no signatures
     avg_occurrence_count: float
+
+    def __post_init__(self) -> None:
+        """Convert dicts to read-only proxies."""
+        if isinstance(self.by_status, dict):
+            object.__setattr__(self, "by_status", MappingProxyType(self.by_status))
+        if isinstance(self.by_service, dict):
+            object.__setattr__(self, "by_service", MappingProxyType(self.by_service))
 
 
 @dataclass(frozen=True)

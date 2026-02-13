@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from .fingerprint import Fingerprinter
 from .investigator import Investigator
-from .models import Diagnosis, ErrorEvent, PollResult, Signature, SignatureStatus
+from .models import Diagnosis, ErrorEvent, InvestigationResult, PollResult, Signature, SignatureStatus
 from .ports import PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
@@ -76,6 +76,7 @@ class PollService(PollPort):
         new_signatures = 0
         updated_signatures = 0
         investigations_queued = 0
+        errors_failed_to_process = 0
 
         for error in errors:
             try:
@@ -123,7 +124,7 @@ class PollService(PollPort):
                     f"Failed to process error event {error.trace_id}: {e}",
                     exc_info=True,
                 )
-                # Continue processing remaining errors
+                errors_failed_to_process += 1
 
         return PollResult(
             errors_found=len(errors),
@@ -131,10 +132,11 @@ class PollService(PollPort):
             updated_signatures=updated_signatures,
             investigations_queued=investigations_queued,
             timestamp=now,
+            errors_failed_to_process=errors_failed_to_process,
         )
 
-    async def execute_investigation_cycle(self) -> list[Diagnosis]:
-        """Investigate pending signatures. Returns diagnoses produced.
+    async def execute_investigation_cycle(self) -> InvestigationResult:
+        """Investigate pending signatures. Returns result with diagnoses and failure count.
 
         Raises:
             Exception: If signature store fetch fails. Errors are not silenced.
@@ -151,16 +153,24 @@ class PollService(PollPort):
         )
 
         diagnoses = []
+        investigations_attempted = 0
+        investigations_failed = 0
+
         for signature in pending:
-            try:
-                if self.triage.should_investigate(signature):
+            if self.triage.should_investigate(signature):
+                investigations_attempted += 1
+                try:
                     diagnosis = await self.investigator.investigate(signature)
                     diagnoses.append(diagnosis)
-            except Exception as e:
-                logger.error(
-                    f"Failed to investigate signature {signature.fingerprint}: {e}",
-                    exc_info=True,
-                )
-                # Continue with next signature
+                except Exception as e:
+                    logger.error(
+                        f"Failed to investigate signature {signature.fingerprint}: {e}",
+                        exc_info=True,
+                    )
+                    investigations_failed += 1
 
-        return diagnoses
+        return InvestigationResult(
+            diagnoses_produced=tuple(diagnoses),
+            investigations_attempted=investigations_attempted,
+            investigations_failed=investigations_failed,
+        )

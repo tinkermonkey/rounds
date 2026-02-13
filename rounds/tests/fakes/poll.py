@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from rounds.core.models import Diagnosis, PollResult
+from rounds.core.models import Diagnosis, InvestigationResult, PollResult
 from rounds.core.ports import PollPort
 
 
@@ -15,11 +15,11 @@ class FakePollPort(PollPort):
     def __init__(self):
         """Initialize with default values."""
         self.poll_results: list[PollResult] = []
-        self.investigation_results: list[list[Diagnosis]] = []
+        self.investigation_results: list[InvestigationResult] = []
         self.execute_poll_cycle_call_count = 0
         self.execute_investigation_cycle_call_count = 0
         self.default_poll_result: PollResult | None = None
-        self.default_investigation_result: list[Diagnosis] | None = None
+        self.default_investigation_result: InvestigationResult | None = None
         self.should_fail: bool = False
         self.fail_message: str = "Poll failed"
 
@@ -27,7 +27,7 @@ class FakePollPort(PollPort):
         """Set the default poll result to return."""
         self.default_poll_result = result
 
-    def set_default_investigation_result(self, result: list[Diagnosis]) -> None:
+    def set_default_investigation_result(self, result: InvestigationResult) -> None:
         """Set the default investigation result to return."""
         self.default_investigation_result = result
 
@@ -35,7 +35,7 @@ class FakePollPort(PollPort):
         """Queue a poll result to be returned on next call."""
         self.poll_results.append(result)
 
-    def add_investigation_result(self, result: list[Diagnosis]) -> None:
+    def add_investigation_result(self, result: InvestigationResult) -> None:
         """Queue an investigation result to be returned on next call."""
         self.investigation_results.append(result)
 
@@ -64,7 +64,7 @@ class FakePollPort(PollPort):
             timestamp=datetime.now(timezone.utc),
         )
 
-    async def execute_investigation_cycle(self) -> list[Diagnosis]:
+    async def execute_investigation_cycle(self) -> InvestigationResult:
         """Execute an investigation cycle.
 
         Returns queued results or the default result.
@@ -80,7 +80,12 @@ class FakePollPort(PollPort):
         if self.default_investigation_result is not None:
             return self.default_investigation_result
 
-        return []
+        # Return empty result
+        return InvestigationResult(
+            diagnoses_produced=(),
+            investigations_attempted=0,
+            investigations_failed=0,
+        )
 
     def set_should_fail(self, should_fail: bool, message: str = "Poll failed") -> None:
         """Configure the adapter to fail on the next operation."""

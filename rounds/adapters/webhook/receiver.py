@@ -81,16 +81,21 @@ class WebhookReceiver:
         Raises:
             Exception: If investigation cycle fails.
         """
-        diagnoses = await self.poll_port.execute_investigation_cycle()
+        result = await self.poll_port.execute_investigation_cycle()
         logger.info(
             f"Investigation cycle triggered via webhook",
-            extra={"diagnoses_count": len(diagnoses)},
+            extra={
+                "diagnoses_count": len(result.diagnoses_produced),
+                "investigations_failed": result.investigations_failed,
+            },
         )
         return {
             "status": "success",
             "operation": "investigation",
             "result": {
-                "diagnoses_count": len(diagnoses),
+                "diagnoses_count": len(result.diagnoses_produced),
+                "investigations_attempted": result.investigations_attempted,
+                "investigations_failed": result.investigations_failed,
             },
         }
 

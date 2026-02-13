@@ -366,9 +366,11 @@ class SQLiteSignatureStore(SignatureStorePort):
                 try:
                     diagnosis = self._deserialize_diagnosis(diagnosis_json)
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    # Log with full traceback to help debug schema/data corruption issues
                     logger.error(
-                        f"Failed to parse diagnosis for signature {sig_id}: {e}. "
-                        f"Diagnosis will be discarded.",
+                        f"Data corruption detected: Failed to deserialize diagnosis JSON "
+                        f"for signature {sig_id}. The diagnosis record will be lost. "
+                        f"Root cause: {type(e).__name__}: {e}",
                         exc_info=True,
                     )
                     diagnosis = None

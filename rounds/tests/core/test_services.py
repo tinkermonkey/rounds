@@ -661,9 +661,11 @@ class TestPollService:
         signature.status = SignatureStatus.NEW
         store.pending_signatures = [signature]
 
-        diagnoses = await poll_service.execute_investigation_cycle()
+        result = await poll_service.execute_investigation_cycle()
 
-        assert len(diagnoses) == 1
+        assert len(result.diagnoses_produced) == 1
+        assert result.investigations_attempted == 1
+        assert result.investigations_failed == 0
         assert signature.status == SignatureStatus.DIAGNOSED
         assert signature.diagnosis is not None
 
@@ -725,15 +727,17 @@ class TestPollService:
         store.pending_signatures = [sig1, sig2]
 
         # Execute investigation cycle
-        diagnoses = await poll_service.execute_investigation_cycle()
+        result = await poll_service.execute_investigation_cycle()
 
         # Should have processed both signatures despite first failure
         # First signature should fail and revert to NEW
         # Second signature should succeed and be DIAGNOSED
         assert sig1.status == SignatureStatus.NEW  # Reverted due to diagnosis failure
         assert sig2.status == SignatureStatus.DIAGNOSED  # Successfully diagnosed
-        assert len(diagnoses) == 1  # Only successful diagnosis returned
-        assert diagnoses[0].root_cause == "Root cause for Error"
+        assert len(result.diagnoses_produced) == 1  # Only successful diagnosis returned
+        assert result.diagnoses_produced[0].root_cause == "Root cause for Error"
+        assert result.investigations_attempted == 2
+        assert result.investigations_failed == 1
         # Verify both signatures were attempted
         assert len(investigator_calls) == 2
         assert investigator_calls[0] == "failed"

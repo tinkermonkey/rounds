@@ -18,6 +18,7 @@ from core.models import (
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
+    InvestigationResult,
     LogEntry,
     PollResult,
     Severity,
@@ -331,9 +332,13 @@ class MockPollPort(PollPort):
             timestamp=datetime.now(),
         )
 
-    async def execute_investigation_cycle(self) -> list[Diagnosis]:
+    async def execute_investigation_cycle(self) -> InvestigationResult:
         """Mock implementation."""
-        return []
+        return InvestigationResult(
+            diagnoses_produced=(),
+            investigations_attempted=0,
+            investigations_failed=0,
+        )
 
 
 class MockManagementPort(ManagementPort):
@@ -611,12 +616,15 @@ class TestPollPort:
         assert isinstance(result.timestamp, datetime)
 
     @pytest.mark.asyncio
-    async def test_execute_investigation_cycle_returns_list(self) -> None:
-        """execute_investigation_cycle must return a list of Diagnosis."""
+    async def test_execute_investigation_cycle_returns_investigation_result(self) -> None:
+        """execute_investigation_cycle must return an InvestigationResult."""
         port = MockPollPort()
         result = await port.execute_investigation_cycle()
-        assert isinstance(result, list)
-        assert all(isinstance(d, Diagnosis) for d in result)
+        assert isinstance(result, InvestigationResult)
+        assert isinstance(result.diagnoses_produced, tuple)
+        assert isinstance(result.investigations_attempted, int)
+        assert isinstance(result.investigations_failed, int)
+        assert all(isinstance(d, Diagnosis) for d in result.diagnoses_produced)
 
 
 # ============================================================================

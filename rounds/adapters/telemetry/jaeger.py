@@ -398,7 +398,14 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 children = tuple(build_span_node(child_id) for child_id in child_ids)
 
                 # Merge tags and logs into attributes
-                attributes = span_data.get("tags", {}).copy()
+                # Jaeger returns tags as a list of {key, value, type} objects
+                attributes: dict[str, Any] = {}
+                tags = span_data.get("tags", [])
+                if isinstance(tags, list):
+                    for tag in tags:
+                        if isinstance(tag, dict) and "key" in tag and "value" in tag:
+                            attributes[tag["key"]] = tag["value"]
+
                 process = trace.get("processes", {}).get(span_data.get("processID", ""), {})
                 attributes["serviceName"] = process.get("serviceName", "")
 

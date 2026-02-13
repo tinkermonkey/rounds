@@ -144,10 +144,12 @@ class DaemonScheduler:
                     if result.investigations_queued > 0:
                         logger.debug(f"Starting investigation cycle #{cycle_number}")
                         try:
-                            diagnoses = await self.poll_port.execute_investigation_cycle()
+                            inv_result = await self.poll_port.execute_investigation_cycle()
                             logger.info(
                                 f"Investigation cycle #{cycle_number} completed: "
-                                f"{len(diagnoses)} diagnoses produced"
+                                f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
+                                f"{inv_result.investigations_failed} failed "
+                                f"(out of {inv_result.investigations_attempted} attempted)"
                             )
                         except Exception as e:
                             logger.error(
@@ -211,8 +213,12 @@ class DaemonScheduler:
         """Run a single investigation cycle (on-demand)."""
         try:
             logger.info("Starting on-demand investigation cycle")
-            diagnoses = await self.poll_port.execute_investigation_cycle()
-            logger.info(f"Investigation cycle completed: {len(diagnoses)} diagnoses")
+            result = await self.poll_port.execute_investigation_cycle()
+            logger.info(
+                f"Investigation cycle completed: "
+                f"{len(result.diagnoses_produced)} diagnoses, "
+                f"{result.investigations_failed} failed"
+            )
         except Exception as e:
             logger.error(f"Error in investigation cycle: {e}", exc_info=True)
             raise

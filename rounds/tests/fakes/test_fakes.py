@@ -647,17 +647,25 @@ class TestFakePollPort:
 
     @pytest.mark.asyncio
     async def test_execute_investigation_cycle(self) -> None:
-        """Should execute investigation cycles and return diagnoses."""
+        """Should execute investigation cycles and return InvestigationResult."""
         port = FakePollPort()
         diagnosis = Diagnosis(
             root_cause="Test", evidence=(), suggested_fix="fix",
             confidence="high", diagnosed_at=datetime.now(),
             model="model", cost_usd=0.0,
         )
-        port.set_default_investigation_result([diagnosis])
+        from rounds.core.models import InvestigationResult
+        inv_result = InvestigationResult(
+            diagnoses_produced=(diagnosis,),
+            investigations_attempted=1,
+            investigations_failed=0,
+        )
+        port.set_default_investigation_result(inv_result)
 
         result = await port.execute_investigation_cycle()
-        assert len(result) == 1
+        assert len(result.diagnoses_produced) == 1
+        assert result.investigations_attempted == 1
+        assert result.investigations_failed == 0
 
     @pytest.mark.asyncio
     async def test_queued_results(self) -> None:
