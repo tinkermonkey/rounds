@@ -178,12 +178,21 @@ class Signature:
     def revert_to_new(self) -> None:
         """Revert signature from INVESTIGATING back to NEW status.
 
-        Used for error recovery when diagnosis fails.
+        Used for error recovery when diagnosis fails. Only works from INVESTIGATING status.
         """
         if self.status != SignatureStatus.INVESTIGATING:
             raise ValueError(
                 f"Can only revert from INVESTIGATING status, current status: {self.status}"
             )
+        self.status = SignatureStatus.NEW
+
+    def reset_to_new(self) -> None:
+        """Reset signature to NEW status from any current status.
+
+        Used for management operations (e.g., retriage, reinvestigation) where
+        a signature needs to be returned to NEW for reprocessing regardless of
+        its current status.
+        """
         self.status = SignatureStatus.NEW
 
 

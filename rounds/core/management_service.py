@@ -128,13 +128,8 @@ class ManagementService(ManagementPort):
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
 
-        # Reset signature for re-investigation
-        # Allow retriage from any status since this is a human management operation
-        if signature.status == SignatureStatus.INVESTIGATING:
-            signature.revert_to_new()
-        else:
-            # For other statuses, set directly
-            signature.status = SignatureStatus.NEW
+        # Reset signature for re-investigation from any status using domain method
+        signature.reset_to_new()
         signature.diagnosis = None
 
         await self.store.update(signature)
@@ -239,17 +234,9 @@ class ManagementService(ManagementPort):
         original_diagnosis = signature.diagnosis
         original_status = signature.status
 
-        # Reset to NEW status using domain state transition guard
-        try:
-            # If signature is investigating, revert to new
-            if signature.status == SignatureStatus.INVESTIGATING:
-                signature.revert_to_new()
-            elif signature.status != SignatureStatus.NEW:
-                # For other statuses, set directly since reinvestigate can happen from any state
-                signature.status = SignatureStatus.NEW
-            signature.diagnosis = None
-        except ValueError as e:
-            raise ValueError(f"Cannot reinvestigate signature in current state: {e}") from e
+        # Reset to NEW status using domain method for management operations
+        signature.reset_to_new()
+        signature.diagnosis = None
 
         await self.store.update(signature)
 
@@ -300,9 +287,8 @@ class ManagementService(ManagementPort):
             )
             raise
 
-        # Update signature with diagnosis and mark as DIAGNOSED
-        signature.diagnosis = diagnosis
-        signature.status = SignatureStatus.DIAGNOSED
+        # Update signature with diagnosis and mark as DIAGNOSED using domain method
+        signature.mark_diagnosed(diagnosis)
         await self.store.update(signature)
 
         logger.info(
