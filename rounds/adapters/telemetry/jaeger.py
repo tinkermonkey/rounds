@@ -201,7 +201,13 @@ class JaegerTelemetryAdapter(TelemetryPort):
             # Get error information - convert tags list to dict
             tags = {t["key"]: t["value"] for t in span.get("tags", [])} if isinstance(span.get("tags", []), list) else span.get("tags", {})
             error_type = tags.get("error.kind", "Exception")
-            error_message = span.get("logs", [{}])[0].get("message", "")
+
+            # Safely extract error message from first log entry
+            logs = span.get("logs")
+            if logs and isinstance(logs, list) and len(logs) > 0:
+                error_message = logs[0].get("message", "")
+            else:
+                error_message = ""
 
             # Parse error message if it's JSON
             try:

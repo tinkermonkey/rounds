@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class BudgetTracker(Protocol):
     """Protocol for budget tracking (used by DaemonScheduler)."""
 
-    def record_diagnosis_cost(self, cost_usd: float) -> None:
+    async def record_diagnosis_cost(self, cost_usd: float) -> None:
         """Record a diagnosis cost towards the daily budget."""
         ...
 
@@ -122,7 +122,7 @@ class Investigator:
 
         # 4. Record cost if budget tracker available
         if self.budget_tracker:
-            self.budget_tracker.record_diagnosis_cost(diagnosis.cost_usd)
+            await self.budget_tracker.record_diagnosis_cost(diagnosis.cost_usd)
 
         # 5. Persist diagnosis before notification
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED

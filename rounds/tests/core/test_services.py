@@ -267,6 +267,43 @@ class TestFingerprinter:
 class TestTriageEngine:
     """Tests for the TriageEngine service."""
 
+    def test_constructor_validates_min_occurrence(self) -> None:
+        """Test that TriageEngine rejects min_occurrence_for_investigation <= 0."""
+        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+            TriageEngine(
+                min_occurrence_for_investigation=0,
+                investigation_cooldown_hours=1,
+            )
+
+        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+            TriageEngine(
+                min_occurrence_for_investigation=-1,
+                investigation_cooldown_hours=1,
+            )
+
+    def test_constructor_validates_cooldown(self) -> None:
+        """Test that TriageEngine rejects investigation_cooldown_hours <= 0."""
+        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+            TriageEngine(
+                min_occurrence_for_investigation=1,
+                investigation_cooldown_hours=0,
+            )
+
+        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+            TriageEngine(
+                min_occurrence_for_investigation=1,
+                investigation_cooldown_hours=-1,
+            )
+
+    def test_constructor_accepts_valid_parameters(self) -> None:
+        """Test that TriageEngine accepts valid parameters."""
+        engine = TriageEngine(
+            min_occurrence_for_investigation=2,
+            investigation_cooldown_hours=4,
+        )
+        assert engine.min_occurrence_for_investigation == 2
+        assert engine.investigation_cooldown_hours == 4
+
     def test_should_investigate_new_signature_below_threshold(
         self, triage_engine: TriageEngine
     ) -> None:
@@ -1096,3 +1133,34 @@ class TestNotificationFailureHandling:
         last_fingerprint, last_status, last_diagnosis = store.update_calls[-1]
         assert last_status == SignatureStatus.DIAGNOSED
         assert last_diagnosis is not None
+
+    @pytest.mark.asyncio
+    async def test_investigator_raises_on_store_update_failure_during_diagnosis_persistence(
+        self, signature: Signature, triage_engine: TriageEngine
+    ) -> None:
+        """Test that investigator raises when store update fails after diagnosis."""
+        # Custom store that fails on the second update (diagnosis persistence)
+        class FailingStoreOnDiagnosisPersistence(FakeSignatureStorePort):
+            def __init__(self) -> None:
+                super().__init__()
+                self.update_count = 0
+
+            async def update(self, sig: Signature) -> None:
+                self.update_count += 1
+                # Fail on second update (diagnosis persistence)
+                if self.update_count == 2:
+                    raise Exception("Database connection failed during diagnosis persistence")
+                await super().update(sig)
+
+        telemetry = FakeTelemetryPort()
+        store = FailingStoreOnDiagnosisPersistence()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        # Investigation should raise the store error
+        with pytest.raises(Exception, match="Database connection failed"):
+            await investigator.investigate(signature)

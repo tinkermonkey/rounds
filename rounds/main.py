@@ -493,6 +493,9 @@ async def bootstrap() -> None:
         # Clean up resources
         await telemetry.close()
         await store.close_pool()
+        # Close notification adapter if it has a close method
+        if hasattr(notification, 'close'):
+            await notification.close()
 
 
 def main() -> None:

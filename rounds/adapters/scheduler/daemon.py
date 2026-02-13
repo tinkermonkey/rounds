@@ -37,6 +37,7 @@ class DaemonScheduler:
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
         self._budget_date = datetime.now(timezone.utc).date()
+        self._budget_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -189,25 +190,28 @@ class DaemonScheduler:
 
         return self._daily_cost_usd >= self.budget_limit
 
-    def record_diagnosis_cost(self, cost_usd: float) -> None:
+    async def record_diagnosis_cost(self, cost_usd: float) -> None:
         """Record a diagnosis cost towards the daily budget.
+
+        Thread-safe: uses asyncio.Lock to protect budget state mutations.
 
         Args:
             cost_usd: Cost of the diagnosis in USD.
         """
-        # Reset daily cost if date has changed
-        today = datetime.now(timezone.utc).date()
-        if today != self._budget_date:
-            self._daily_cost_usd = 0.0
-            self._budget_date = today
+        async with self._budget_lock:
+            # Reset daily cost if date has changed
+            today = datetime.now(timezone.utc).date()
+            if today != self._budget_date:
+                self._daily_cost_usd = 0.0
+                self._budget_date = today
 
-        self._daily_cost_usd += cost_usd
+            self._daily_cost_usd += cost_usd
 
-        if self.budget_limit and self._daily_cost_usd >= self.budget_limit:
-            logger.warning(
-                f"Daily budget limit reached (${self._daily_cost_usd:.2f}/"
-                f"${self.budget_limit:.2f})"
-            )
+            if self.budget_limit and self._daily_cost_usd >= self.budget_limit:
+                logger.warning(
+                    f"Daily budget limit reached (${self._daily_cost_usd:.2f}/"
+                    f"${self.budget_limit:.2f})"
+                )
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""

@@ -195,6 +195,26 @@ class Signature:
         """
         self.status = SignatureStatus.NEW
 
+    def clear_diagnosis(self) -> None:
+        """Clear the diagnosis from this signature.
+
+        Used during retriage or reinvestigation to reset the signature
+        for a fresh diagnosis attempt.
+        """
+        self.diagnosis = None
+
+    def restore_state(self, status: SignatureStatus, diagnosis: Diagnosis | None = None) -> None:
+        """Restore signature to a previous state.
+
+        Used for error recovery when a failed operation needs to be reverted.
+
+        Args:
+            status: The status to restore to.
+            diagnosis: The diagnosis to restore (if any).
+        """
+        self.status = status
+        self.diagnosis = diagnosis
+
 
 @dataclass(frozen=True)
 class SpanNode:
