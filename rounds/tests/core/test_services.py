@@ -12,6 +12,7 @@ from rounds.core.fingerprint import Fingerprinter
 from rounds.core.triage import TriageEngine
 from rounds.core.investigator import Investigator
 from rounds.core.poll_service import PollService
+from rounds.core.management_service import ManagementService
 from rounds.core.models import (
     Confidence,
     Diagnosis,
@@ -842,6 +843,53 @@ class TestDatetimeAwareness:
         result = await poll_service.execute_poll_cycle()
         assert isinstance(result, PollResult)
 
+    @pytest.mark.asyncio
+    async def test_poll_batch_size_limiting(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Test that poll service respects batch_size limit."""
+        # Create 10 errors
+        errors = [
+            ErrorEvent(
+                trace_id=f"trace-{i}",
+                span_id=f"span-{i}",
+                service="service",
+                error_type="TestError",
+                error_message=f"Error {i}",
+                stack_frames=(),
+                timestamp=datetime.now(timezone.utc),
+                attributes={},
+                severity=Severity.ERROR,
+            )
+            for i in range(10)
+        ]
+
+        telemetry = FakeTelemetryPort()
+        telemetry.add_errors(errors)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        # Create poll service with batch_size of 5
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            batch_size=5,
+        )
+
+        # Execute poll cycle - should only process first 5 errors due to batch size limit
+        result = await poll_service.execute_poll_cycle()
+        assert result.errors_found == 5  # Only 5 errors processed due to batch size limit
+        assert (result.new_signatures + result.updated_signatures) == 5  # All processed are new
+
 
 @pytest.mark.asyncio
 class TestPollCycleErrorHandling:
@@ -1164,3 +1212,68 @@ class TestNotificationFailureHandling:
         # Investigation should raise the store error
         with pytest.raises(Exception, match="Database connection failed"):
             await investigator.investigate(signature)
+
+
+@pytest.mark.asyncio
+class TestManagementService:
+    """Tests for ManagementService operations."""
+
+    @pytest.mark.asyncio
+    async def test_retriage_signature_from_diagnosed_status(
+        self,
+        diagnosis: Diagnosis,
+    ) -> None:
+        """Test that retriage_signature resets a DIAGNOSED signature to NEW status."""
+        # Create a diagnosed signature
+        signature = Signature(
+            id="sig-001",
+            fingerprint="fp-001",
+            error_type="ConnectionTimeout",
+            service="api",
+            message_template="Connection timeout",
+            stack_hash="stack-hash-001",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+            diagnosis=diagnosis,
+        )
+
+        # Create management service with fakes
+        store = FakeSignatureStorePort()
+        await store.save(signature)
+
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+
+        management_service = ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+        )
+
+        # Retriage the signature
+        await management_service.retriage_signature(signature.id)
+
+        # Verify the signature is now NEW and diagnosis is cleared
+        updated_signature = await store.get_by_id(signature.id)
+        assert updated_signature is not None
+        assert updated_signature.status == SignatureStatus.NEW
+        assert updated_signature.diagnosis is None
+
+    @pytest.mark.asyncio
+    async def test_retriage_signature_not_found(self) -> None:
+        """Test that retriage_signature raises ValueError for non-existent signature."""
+        store = FakeSignatureStorePort()
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+
+        management_service = ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+        )
+
+        # Attempt to retriage non-existent signature
+        with pytest.raises(ValueError, match="not found"):
+            await management_service.retriage_signature("nonexistent-id")

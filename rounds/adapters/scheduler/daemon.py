@@ -38,6 +38,7 @@ class DaemonScheduler:
         self._daily_cost_usd = 0.0
         self._budget_date = datetime.now(timezone.utc).date()
         self._budget_lock = asyncio.Lock()
+        self._investigation_failure_count = 0  # Track consecutive investigation cycle failures
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -118,7 +119,7 @@ class DaemonScheduler:
                 logger.debug(f"Starting poll cycle #{cycle_number}")
 
                 # Check if budget is exceeded
-                if self._is_budget_exceeded():
+                if await self._is_budget_exceeded():
                     logger.warning(
                         f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
                         f"${self.budget_limit:.2f}), skipping investigation cycles"
@@ -146,6 +147,8 @@ class DaemonScheduler:
                         logger.debug(f"Starting investigation cycle #{cycle_number}")
                         try:
                             inv_result = await self.poll_port.execute_investigation_cycle()
+                            # Reset failure counter on successful cycle
+                            self._investigation_failure_count = 0
                             logger.info(
                                 f"Investigation cycle #{cycle_number} completed: "
                                 f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
@@ -153,10 +156,19 @@ class DaemonScheduler:
                                 f"(out of {inv_result.investigations_attempted} attempted)"
                             )
                         except Exception as e:
+                            self._investigation_failure_count += 1
                             logger.error(
-                                f"Error in investigation cycle #{cycle_number}: {e}",
+                                f"Error in investigation cycle #{cycle_number}: {e} "
+                                f"(consecutive failures: {self._investigation_failure_count})",
                                 exc_info=True
                             )
+                            # Log alert if too many consecutive failures
+                            if self._investigation_failure_count >= 5:
+                                logger.critical(
+                                    f"Investigation cycle has failed {self._investigation_failure_count} "
+                                    f"consecutive times. This may indicate a persistent issue. "
+                                    f"Manual intervention may be required."
+                                )
 
             except asyncio.CancelledError:
                 raise
@@ -172,8 +184,11 @@ class DaemonScheduler:
                 except asyncio.CancelledError:
                     raise
 
-    def _is_budget_exceeded(self) -> bool:
+    async def _is_budget_exceeded(self) -> bool:
         """Check if daily budget limit has been exceeded.
+
+        Thread-safe: Uses the same asyncio.Lock as record_diagnosis_cost to protect
+        budget state mutations and prevent TOCTOU races.
 
         Returns:
             True if budget_limit is set and daily cost exceeds it.
@@ -181,14 +196,15 @@ class DaemonScheduler:
         if self.budget_limit is None:
             return False
 
-        # Reset daily cost if date has changed
-        today = datetime.now(timezone.utc).date()
-        if today != self._budget_date:
-            self._daily_cost_usd = 0.0
-            self._budget_date = today
-            return False
+        async with self._budget_lock:
+            # Reset daily cost if date has changed
+            today = datetime.now(timezone.utc).date()
+            if today != self._budget_date:
+                self._daily_cost_usd = 0.0
+                self._budget_date = today
+                return False
 
-        return self._daily_cost_usd >= self.budget_limit
+            return self._daily_cost_usd >= self.budget_limit
 
     async def record_diagnosis_cost(self, cost_usd: float) -> None:
         """Record a diagnosis cost towards the daily budget.

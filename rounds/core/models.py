@@ -278,6 +278,11 @@ class InvestigationContext:
     """Everything the diagnosis engine needs to analyze a signature.
 
     Assembled by the core, passed to the diagnosis port.
+
+    WARNING: While this dataclass is frozen (immutable), the contained Signature
+    object is mutable. The Signature may be modified externally (e.g., by the
+    investigator after context assembly for status transitions). Callers should
+    not rely on the Signature state remaining constant after context creation.
     """
 
     signature: Signature
@@ -329,7 +334,12 @@ class StoreStats:
 
 @dataclass(frozen=True)
 class SignatureDetails:
-    """Detailed information about a signature."""
+    """Detailed information about a signature.
+
+    WARNING: While this dataclass is frozen (immutable), the contained Signature
+    object is mutable. The Signature may be modified externally after this object
+    is created. Callers should not rely on the Signature state remaining constant.
+    """
 
     signature: Signature
     recent_events: tuple[ErrorEvent, ...]  # Recent occurrences

@@ -30,7 +30,7 @@ async def test_budget_exceeded_blocks_diagnosis(
     await scheduler.record_diagnosis_cost(2.50)
 
     # Budget should be exceeded
-    assert scheduler._is_budget_exceeded() is True
+    assert await scheduler._is_budget_exceeded() is True
     assert scheduler._daily_cost_usd == 5.50
 
 
@@ -95,7 +95,7 @@ async def test_no_budget_limit_allows_unlimited_costs(
     )
 
     await scheduler.record_diagnosis_cost(1000.00)
-    assert scheduler._is_budget_exceeded() is False
+    assert await scheduler._is_budget_exceeded() is False
 
 
 @pytest.mark.asyncio

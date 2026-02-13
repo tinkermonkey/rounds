@@ -102,11 +102,13 @@ class TelemetryPort(ABC):
             trace_ids: List of OpenTelemetry trace IDs.
 
         Returns:
-            List of TraceTree objects. Failed fetches are silently omitted
-            from results, so order may not match trace_ids. The caller can detect
-            partial results by comparing len(result) < len(trace_ids).
+            List of TraceTree objects. Network failures and individual trace fetch
+            failures are silently omitted from results, so order may not match
+            trace_ids. The caller can detect partial results by comparing
+            len(result) < len(trace_ids).
 
         Raises:
+            ValueError: If trace ID format validation fails (adapter-specific).
             Exception: If telemetry backend is unreachable.
         """
 

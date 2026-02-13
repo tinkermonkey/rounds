@@ -89,6 +89,8 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
         Note: Returns the true estimated cost, not capped at budget.
         The caller is responsible for budget enforcement.
         """
+        # Base cost $0.30: derived from Claude API pricing (~$3 per 1M input tokens,
+        # estimated ~100K tokens for baseline diagnosis prompt at current model)
         base_cost = 0.30
 
         # Add cost for context size
@@ -98,7 +100,9 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
             + len(context.related_logs)
         )
 
-        # Rough estimate: $0.01 per 10 context items
+        # Additional cost calculation: $0.01 per 10 context items
+        # Rationale: Each context item (event/trace/log) adds ~1K tokens to the prompt,
+        # 10 items = ~10K tokens = ~$0.01 at current Claude pricing
         additional_cost = (context_size / 10) * 0.01
 
         total_cost = base_cost + additional_cost
@@ -106,7 +110,21 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
         return total_cost
 
     def _build_investigation_prompt(self, context: InvestigationContext) -> str:
-        """Build a comprehensive investigation prompt for Claude Code."""
+        """Build a comprehensive investigation prompt for Claude Code.
+
+        Constructs a detailed markdown prompt from an investigation context,
+        formatting all available telemetry data (error events, traces, logs)
+        and historical context into a format suitable for LLM analysis.
+
+        Args:
+            context: InvestigationContext containing signature, events, traces,
+                    logs, codebase path, and historical signatures.
+
+        Returns:
+            A formatted markdown prompt string ready for Claude Code invocation.
+            Includes signature details, recent error events, trace data, logs,
+            codebase context, and historical patterns, followed by analysis task.
+        """
         prompt = f"""You are a expert software engineer analyzing a failure pattern in production code.
 
 ## Signature Details

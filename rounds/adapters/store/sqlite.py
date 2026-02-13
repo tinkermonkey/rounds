@@ -379,9 +379,13 @@ class SQLiteSignatureStore(SignatureStorePort):
             try:
                 tags = frozenset(json.loads(tags_json))
             except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(
-                    f"Failed to parse tags for signature {sig_id}: {e}. "
-                    f"Using empty tags."
+                # Tags are user-assigned data; corruption means data loss
+                # Log at ERROR level (not warning) since this indicates data integrity issue
+                logger.error(
+                    f"Data corruption detected: Failed to parse tags for signature {sig_id}: {e}. "
+                    f"User-assigned tags will be lost. Manual retriage may be needed. "
+                    f"Tags JSON: {tags_json!r}",
+                    exc_info=True,
                 )
                 tags = frozenset()
 

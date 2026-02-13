@@ -216,6 +216,14 @@ class Settings(BaseSettings):
             raise ValueError("claude_code_budget_usd must be non-negative")
         return v
 
+    @field_validator("openai_budget_usd")
+    @classmethod
+    def validate_openai_budget(cls, v: float) -> float:
+        """Ensure per-diagnosis budget is non-negative."""
+        if v < 0:
+            raise ValueError("openai_budget_usd must be non-negative")
+        return v
+
     @field_validator("daily_budget_limit")
     @classmethod
     def validate_budget_limit(cls, v: float) -> float:
