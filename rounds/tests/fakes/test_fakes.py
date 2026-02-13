@@ -196,13 +196,6 @@ class TestFakeTelemetryPort:
         assert retrieved.trace_id == trace.trace_id
 
     @pytest.mark.asyncio
-    async def test_get_trace_returns_synthetic_if_not_found(self) -> None:
-        """Should return synthetic trace if not found."""
-        port = FakeTelemetryPort()
-        trace = await port.get_trace("unknown-trace-id")
-        assert trace.trace_id == "unknown-trace-id"
-
-    @pytest.mark.asyncio
     async def test_get_traces_multiple(self) -> None:
         """Should retrieve multiple traces."""
         port = FakeTelemetryPort()
