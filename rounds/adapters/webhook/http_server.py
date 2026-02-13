@@ -309,9 +309,8 @@ class WebhookHTTPServer:
             return
 
         try:
-            loop = asyncio.get_running_loop()
             # Run the blocking server loop in a thread pool to avoid blocking the event loop
-            await loop.run_in_executor(None, self.server.serve_forever)
+            await asyncio.to_thread(self.server.serve_forever)
         except asyncio.CancelledError:
             # Normal shutdown
             pass

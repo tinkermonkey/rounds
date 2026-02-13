@@ -223,7 +223,7 @@ Respond with a JSON object in exactly this format:
                     raise TimeoutError("Claude Code CLI timed out after 60 seconds")
 
             # Run in executor to avoid blocking
-            output = await loop.run_in_executor(None, _run_claude_code)
+            output = await asyncio.to_thread(_run_claude_code)
 
             # Parse the JSON output
             # Claude Code returns json format, so we need to extract the content

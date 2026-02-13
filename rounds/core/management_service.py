@@ -184,7 +184,7 @@ class ManagementService(ManagementPort):
 
     async def list_signatures(
         self, status: SignatureStatus | None = None
-    ) -> list[Signature]:
+    ) -> Sequence[Signature]:
         """List all signatures, optionally filtered by status.
 
         Args:

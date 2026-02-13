@@ -415,9 +415,10 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 try:
                     diagnosis = self._deserialize_diagnosis(diagnosis_json)
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                    logger.warning(
+                    logger.error(
                         f"Failed to parse diagnosis for signature {sig_id}: {e}. "
-                        f"Diagnosis will be discarded."
+                        f"Diagnosis will be discarded.",
+                        exc_info=True
                     )
                     diagnosis = None
 

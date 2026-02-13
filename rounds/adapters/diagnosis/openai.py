@@ -242,7 +242,7 @@ Respond with a JSON object in exactly this format:
                     raise RuntimeError("OpenAI API returned empty response")
 
             # Run in executor to avoid blocking
-            output = await loop.run_in_executor(None, _call_openai)
+            output = await asyncio.to_thread(_call_openai)
 
             # Parse the JSON output
             lines = output.split("\n")
