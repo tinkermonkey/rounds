@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from rounds.core.models import Diagnosis, Signature, SignatureStatus
+from rounds.core.models import Diagnosis, Signature, SignatureDetails, SignatureStatus
 from rounds.core.ports import ManagementPort
 
 
@@ -18,7 +18,7 @@ class FakeManagementPort(ManagementPort):
         self.muted_signatures: dict[str, str | None] = {}
         self.resolved_signatures: dict[str, str | None] = {}
         self.retriaged_signatures: list[str] = []
-        self.signature_details: dict[str, dict[str, Any]] = {}
+        self.signature_details: dict[str, SignatureDetails] = {}
         self.reinvestigated_signatures: list[str] = []
         self.stored_signatures: list[Signature] = []
         self.should_fail: bool = False
@@ -59,15 +59,34 @@ class FakeManagementPort(ManagementPort):
         if signature_id not in self.retriaged_signatures:
             self.retriaged_signatures.append(signature_id)
 
-    async def get_signature_details(self, signature_id: str) -> dict[str, Any]:
+    async def get_signature_details(self, signature_id: str) -> SignatureDetails:
         """Get details for a signature.
 
-        Returns pre-configured details or an empty dict.
+        Returns pre-configured details or a default SignatureDetails.
         """
         if self.should_fail:
             raise RuntimeError(self.fail_message)
 
-        return self.signature_details.get(signature_id, {})
+        details = self.signature_details.get(signature_id)
+        if details:
+            return details
+        # Return default empty SignatureDetails
+        return SignatureDetails(
+            signature=Signature(
+                id=signature_id,
+                fingerprint="",
+                error_type="",
+                service="",
+                message_template="",
+                stack_hash="",
+                first_seen=datetime.now(timezone.utc),
+                last_seen=datetime.now(timezone.utc),
+                occurrence_count=1,
+                status=SignatureStatus.NEW,
+            ),
+            recent_events=(),
+            related_signatures=(),
+        )
 
     async def list_signatures(
         self, status: SignatureStatus | None = None
@@ -103,7 +122,7 @@ class FakeManagementPort(ManagementPort):
         )
 
     def set_signature_details(
-        self, signature_id: str, details: dict[str, Any]
+        self, signature_id: str, details: SignatureDetails
     ) -> None:
         """Set details for a specific signature."""
         self.signature_details[signature_id] = details

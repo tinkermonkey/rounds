@@ -22,6 +22,7 @@ from core.models import (
     PollResult,
     Severity,
     Signature,
+    SignatureDetails,
     SignatureStatus,
     StackFrame,
     TraceTree,
@@ -354,9 +355,24 @@ class MockManagementPort(ManagementPort):
         """Mock implementation."""
         pass
 
-    async def get_signature_details(self, signature_id: str) -> dict[str, Any]:
+    async def get_signature_details(self, signature_id: str) -> SignatureDetails:
         """Mock implementation."""
-        return {}
+        return SignatureDetails(
+            signature=Signature(
+                id=signature_id,
+                fingerprint="",
+                error_type="",
+                service="",
+                message_template="",
+                stack_hash="",
+                first_seen=datetime.now(timezone.utc),
+                last_seen=datetime.now(timezone.utc),
+                occurrence_count=1,
+                status=SignatureStatus.NEW,
+            ),
+            recent_events=(),
+            related_signatures=(),
+        )
 
     async def list_signatures(
         self, status: SignatureStatus | None = None
