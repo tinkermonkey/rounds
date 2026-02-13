@@ -648,8 +648,8 @@ class TestManagementPort:
         await port.retriage_signature("sig-001")
 
     @pytest.mark.asyncio
-    async def test_get_signature_details_returns_dict(self) -> None:
-        """get_signature_details must return a dictionary."""
+    async def test_get_signature_details_returns_signature_details(self) -> None:
+        """get_signature_details must return a SignatureDetails object."""
         port = MockManagementPort()
         result = await port.get_signature_details("sig-001")
-        assert isinstance(result, dict)
+        assert isinstance(result, SignatureDetails)
