@@ -20,13 +20,11 @@ from typing import Any
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
-from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
@@ -327,6 +325,9 @@ async def bootstrap() -> None:
         )
         logger.info(f"Signature store initialized: {settings.store_sqlite_path}")
     elif settings.store_backend == "postgresql":
+        # Lazy import for optional PostgreSQL dependency
+        from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
+
         # Parse PostgreSQL connection URL or use individual parameters
         if settings.database_url:
             # Parse connection URL (postgresql://user:password@host:port/database)
@@ -354,6 +355,9 @@ async def bootstrap() -> None:
         )
         logger.info("Diagnosis adapter: Claude Code")
     elif settings.diagnosis_backend == "openai":
+        # Lazy import for optional OpenAI dependency
+        from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
+
         if not settings.openai_api_key:
             logger.error("OpenAI backend selected but OPENAI_API_KEY not set")
             sys.exit(1)
