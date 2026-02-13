@@ -16,7 +16,7 @@ view of errors, traces, and logs.
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -70,6 +70,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         tempo_url: str,
         loki_url: str,
         prometheus_url: str = "",
+        fingerprinter: Callable[[ErrorEvent], str] | None = None,
     ):
         """Initialize Grafana Stack adapter.
 
@@ -77,10 +78,13 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             tempo_url: Base URL for Tempo API (e.g., http://localhost:3200)
             loki_url: Base URL for Loki API (e.g., http://localhost:3100)
             prometheus_url: Optional base URL for Prometheus (e.g., http://localhost:9090)
+            fingerprinter: Function to compute fingerprints from ErrorEvent.
+                If None, imported from core.fingerprint at runtime.
         """
         self.tempo_url = tempo_url.rstrip("/")
         self.loki_url = loki_url.rstrip("/")
         self.prometheus_url = prometheus_url.rstrip("/") if prometheus_url else ""
+        self._fingerprinter = fingerprinter
 
         self.tempo_client = httpx.AsyncClient(base_url=self.tempo_url, timeout=30.0)
         self.loki_client = httpx.AsyncClient(base_url=self.loki_url, timeout=30.0)
@@ -90,6 +94,18 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             self.prometheus_client = httpx.AsyncClient(
                 base_url=self.prometheus_url, timeout=30.0
             )
+
+    def _get_fingerprinter(self) -> Callable[[ErrorEvent], str]:
+        """Lazy-load fingerprinter to avoid circular imports.
+
+        Returns:
+            Fingerprinter callable or injected function.
+        """
+        if self._fingerprinter:
+            return self._fingerprinter
+        # Lazy import to avoid circular dependency
+        from rounds.core.fingerprint import Fingerprinter
+        return Fingerprinter().fingerprint
 
     async def __aenter__(self) -> "GrafanaStackTelemetryAdapter":
         """Async context manager entry."""
@@ -522,18 +538,16 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         Raises:
             Exception: If telemetry backend is unreachable.
         """
-        from rounds.core.fingerprint import Fingerprinter
-
         # Fetch recent errors from last 24 hours
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
-        # Filter by fingerprint using local computation
+        # Filter by fingerprint using injected fingerprinter
         matching_errors = []
-        fingerprinter = Fingerprinter()
+        fingerprinter = self._get_fingerprinter()
 
         for error in all_errors:
-            if fingerprinter.fingerprint(error) == fingerprint:
+            if fingerprinter(error) == fingerprint:
                 matching_errors.append(error)
                 if len(matching_errors) >= limit:
                     break

@@ -59,7 +59,21 @@ class ErrorEvent:
 
 
 class SignatureStatus(Enum):
-    """Lifecycle states for a failure signature."""
+    """Lifecycle states for a failure signature.
+
+    State transitions follow a directed workflow:
+    - NEW: Initial state when signature is first discovered
+    - INVESTIGATING: Signature is actively being analyzed
+    - DIAGNOSED: Root cause analysis has been completed
+    - RESOLVED: Issue has been fixed (applies to resolved errors)
+    - MUTED: Signature is suppressed from notifications
+
+    Note: The DIAGNOSED state represents post-diagnosis classification
+    (after root cause analysis), rather than post-triage. This differs
+    from traditional triage workflows where TRIAGED would mark pre-diagnosis
+    classification. The current design uses DIAGNOSED to indicate that the
+    root cause investigation has been completed.
+    """
 
     NEW = "new"
     INVESTIGATING = "investigating"

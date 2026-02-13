@@ -8,9 +8,7 @@ and auditable.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
-
-from .models import Diagnosis, InvestigationContext, Signature, SignatureStatus
+from .models import Diagnosis, InvestigationContext, Signature, SignatureDetails, SignatureStatus, ErrorEvent
 from .ports import (
     DiagnosisPort,
     ManagementPort,
@@ -63,8 +61,11 @@ class ManagementService(ManagementPort):
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
 
-        # Update signature status
-        signature.status = SignatureStatus.MUTED
+        # Update signature status using domain guard clause
+        try:
+            signature.mark_muted()
+        except ValueError as e:
+            raise ValueError(f"Cannot mute signature: {e}") from e
 
         await self.store.update(signature)
 
@@ -94,8 +95,11 @@ class ManagementService(ManagementPort):
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
 
-        # Update signature status
-        signature.status = SignatureStatus.RESOLVED
+        # Update signature status using domain guard clause
+        try:
+            signature.mark_resolved()
+        except ValueError as e:
+            raise ValueError(f"Cannot resolve signature: {e}") from e
 
         await self.store.update(signature)
 
@@ -124,8 +128,11 @@ class ManagementService(ManagementPort):
         if signature is None:
             raise ValueError(f"Signature {signature_id} not found")
 
-        # Reset status and clear diagnosis
-        signature.status = SignatureStatus.NEW
+        # Reset signature for re-investigation using domain guard clause
+        try:
+            signature.revert_to_new()
+        except ValueError as e:
+            raise ValueError(f"Cannot retriage signature: {e}") from e
         signature.diagnosis = None
 
         await self.store.update(signature)
@@ -135,7 +142,7 @@ class ManagementService(ManagementPort):
             extra={"signature_id": signature_id, "fingerprint": signature.fingerprint},
         )
 
-    async def get_signature_details(self, signature_id: str) -> dict[str, Any]:
+    async def get_signature_details(self, signature_id: str) -> SignatureDetails:
         """Retrieve detailed information about a signature.
 
         Returns all signature fields plus derived information:
@@ -149,7 +156,7 @@ class ManagementService(ManagementPort):
             signature_id: UUID of the signature.
 
         Returns:
-            Dictionary with all signature details.
+            SignatureDetails with signature, recent events, and related signatures.
 
         Raises:
             ValueError: If signature doesn't exist.
@@ -167,66 +174,16 @@ class ManagementService(ManagementPort):
         # Get related/similar signatures
         related = await self.store.get_similar(signature, limit=5)
 
-        # Build details dictionary
-        details: dict[str, Any] = {
-            # Basic fields
-            "id": signature.id,
-            "fingerprint": signature.fingerprint,
-            "error_type": signature.error_type,
-            "service": signature.service,
-            "message_template": signature.message_template,
-            "stack_hash": signature.stack_hash,
-            # Timestamps and counts
-            "first_seen": signature.first_seen.isoformat(),
-            "last_seen": signature.last_seen.isoformat(),
-            "occurrence_count": signature.occurrence_count,
-            # Status
-            "status": signature.status.value,
-            "tags": sorted(signature.tags),
-            # Recent error events
-            "recent_error_events": [
-                {
-                    "trace_id": event.trace_id,
-                    "span_id": event.span_id,
-                    "timestamp": event.timestamp.isoformat(),
-                    "error_message": event.error_message,
-                    "severity": event.severity.value,
-                }
-                for event in recent_events
-            ],
-            # Diagnosis information
-            "diagnosis": None,
-            # Related signatures
-            "related_signatures": [
-                {
-                    "id": s.id,
-                    "error_type": s.error_type,
-                    "service": s.service,
-                    "occurrence_count": s.occurrence_count,
-                    "status": s.status.value,
-                }
-                for s in related
-            ],
-        }
-
-        # Add diagnosis if available
-        if signature.diagnosis is not None:
-            details["diagnosis"] = {
-                "root_cause": signature.diagnosis.root_cause,
-                "evidence": signature.diagnosis.evidence,
-                "suggested_fix": signature.diagnosis.suggested_fix,
-                "confidence": signature.diagnosis.confidence,
-                "diagnosed_at": signature.diagnosis.diagnosed_at.isoformat(),
-                "model": signature.diagnosis.model,
-                "cost_usd": signature.diagnosis.cost_usd,
-            }
-
         logger.debug(
             f"Retrieved signature details for {signature_id}",
             extra={"signature_id": signature_id},
         )
 
-        return details
+        return SignatureDetails(
+            signature=signature,
+            recent_events=tuple(recent_events),
+            related_signatures=tuple(related),
+        )
 
     async def list_signatures(
         self, status: SignatureStatus | None = None

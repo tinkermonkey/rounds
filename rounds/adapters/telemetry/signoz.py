@@ -6,11 +6,10 @@ Normalizes SigNoz-specific data structures into core domain models.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
-from rounds.core.fingerprint import Fingerprinter
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
@@ -27,20 +26,40 @@ logger = logging.getLogger(__name__)
 class SigNozTelemetryAdapter(TelemetryPort):
     """SigNoz-backed telemetry adapter via REST API."""
 
-    def __init__(self, api_url: str, api_key: str = ""):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str = "",
+        fingerprinter: Callable[[ErrorEvent], str] | None = None,
+    ):
         """Initialize SigNoz adapter.
 
         Args:
             api_url: Base URL for SigNoz API (e.g., http://localhost:4418)
             api_key: Optional API key for authentication
+            fingerprinter: Function to compute fingerprints from ErrorEvent.
+                If None, imported from core.fingerprint at runtime.
         """
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
+        self._fingerprinter = fingerprinter
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=self._get_headers(),
             timeout=30.0,
         )
+
+    def _get_fingerprinter(self) -> Callable[[ErrorEvent], str]:
+        """Lazy-load fingerprinter to avoid circular imports.
+
+        Returns:
+            Fingerprinter callable or injected function.
+        """
+        if self._fingerprinter:
+            return self._fingerprinter
+        # Lazy import to avoid circular dependency
+        from rounds.core.fingerprint import Fingerprinter
+        return Fingerprinter().fingerprint
 
     def _get_headers(self) -> dict[str, str]:
         """Build request headers."""
@@ -341,12 +360,12 @@ class SigNozTelemetryAdapter(TelemetryPort):
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
-        # Filter by fingerprint using local computation
+        # Filter by fingerprint using injected fingerprinter
         matching_errors = []
-        fingerprinter = Fingerprinter()
+        fingerprinter = self._get_fingerprinter()
 
         for error in all_errors:
-            if fingerprinter.fingerprint(error) == fingerprint:
+            if fingerprinter(error) == fingerprint:
                 matching_errors.append(error)
                 if len(matching_errors) >= limit:
                     break

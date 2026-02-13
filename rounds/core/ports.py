@@ -149,6 +149,17 @@ class TelemetryPort(ABC):
             Exception: If telemetry backend is unreachable.
         """
 
+    async def close(self) -> None:
+        """Close connections and clean up resources.
+
+        Optional lifecycle method for adapters that manage long-lived connections.
+        Default implementation does nothing.
+
+        Raises:
+            Exception: If resource cleanup fails.
+        """
+        pass
+
 
 class SignatureStorePort(ABC):
     """Port for persisting and querying failure signatures.
@@ -269,6 +280,17 @@ class SignatureStorePort(ABC):
         Raises:
             Exception: If database is unavailable.
         """
+
+    async def close_pool(self) -> None:
+        """Close database connections and clean up resources.
+
+        Optional lifecycle method for adapters that manage connection pools.
+        Default implementation does nothing.
+
+        Raises:
+            Exception: If resource cleanup fails.
+        """
+        pass
 
 
 class DiagnosisPort(ABC):

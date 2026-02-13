@@ -608,7 +608,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
         return log_entries
 
     async def get_events_for_signature(
-        self, fingerprint: str, limit: int = 100
+        self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:
         """Retrieve recent errors matching a fingerprint.
 
