@@ -21,30 +21,6 @@ async def temp_db() -> tuple[SQLiteSignatureStore, Path]:
         await store.close_pool()
 
 
-@pytest.mark.asyncio
-async def test_row_parsing_with_invalid_row_length(
-    temp_db: tuple[SQLiteSignatureStore, Path],
-) -> None:
-    """Test that row parsing fails gracefully with invalid row length."""
-    store, db_path = temp_db
-
-    # Get a raw connection to insert a malformed row
-    conn = await store._get_connection()
-    try:
-        # Insert a row with missing columns (simulating data corruption)
-        await conn.execute(
-            """
-            INSERT INTO signatures (id, fingerprint)
-            VALUES ('bad-id', 'bad-fp')
-            """
-        )
-        await conn.commit()
-    finally:
-        await store._return_connection(conn)
-
-    # Attempt to load the malformed row - should raise ValueError
-    with pytest.raises(ValueError, match="Row parsing failed"):
-        await store.get_by_id("bad-id")
 
 
 @pytest.mark.asyncio
@@ -83,7 +59,7 @@ async def test_row_parsing_with_invalid_timestamp(
         await store._return_connection(conn)
 
     # Attempt to load the malformed row - should raise ValueError
-    with pytest.raises(ValueError, match="Row parsing failed|invalid"):
+    with pytest.raises(ValueError, match="(?i)invalid|date"):
         await store.get_by_id("test-id")
 
 

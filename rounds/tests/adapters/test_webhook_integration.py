@@ -6,7 +6,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
-from rounds.adapters.webhook.http_server import WebhookHTTPHandler, WebhookHTTPServer
+from rounds.adapters.webhook.http_server import WebhookHTTPServer
 from rounds.adapters.webhook.receiver import WebhookReceiver
 
 
