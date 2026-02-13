@@ -19,7 +19,7 @@ Port Interface Categories:
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 from .models import (
     Diagnosis,
@@ -61,7 +61,7 @@ class TelemetryPort(ABC):
     @abstractmethod
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
-    ) -> list[ErrorEvent]:
+    ) -> Sequence[ErrorEvent]:
         """Return error events since the given timestamp.
 
         The adapter translates this to backend-specific queries.
@@ -95,7 +95,7 @@ class TelemetryPort(ABC):
         """
 
     @abstractmethod
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> Sequence[TraceTree]:
         """Batch trace retrieval.
 
         Args:
@@ -115,7 +115,7 @@ class TelemetryPort(ABC):
     @abstractmethod
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
-    ) -> list[LogEntry]:
+    ) -> Sequence[LogEntry]:
         """Return logs correlated with the given traces.
 
         Includes a time window around each trace for context.
@@ -135,7 +135,7 @@ class TelemetryPort(ABC):
     @abstractmethod
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
-    ) -> list[ErrorEvent]:
+    ) -> Sequence[ErrorEvent]:
         """Return recent events matching a known fingerprint.
 
         The adapter may implement this via tag queries, or the core
@@ -230,7 +230,7 @@ class SignatureStorePort(ABC):
         """
 
     @abstractmethod
-    async def get_pending_investigation(self) -> list[Signature]:
+    async def get_pending_investigation(self) -> Sequence[Signature]:
         """Return signatures with status NEW, ordered by priority.
 
         Returns:
@@ -243,7 +243,7 @@ class SignatureStorePort(ABC):
     @abstractmethod
     async def get_all(
         self, status: SignatureStatus | None = None
-    ) -> list[Signature]:
+    ) -> Sequence[Signature]:
         """Return all signatures, optionally filtered by status.
 
         Args:
@@ -259,7 +259,7 @@ class SignatureStorePort(ABC):
     @abstractmethod
     async def get_similar(
         self, signature: Signature, limit: int = 5
-    ) -> list[Signature]:
+    ) -> Sequence[Signature]:
         """Return signatures with similar characteristics.
 
         Args:
@@ -529,7 +529,7 @@ class ManagementPort(ABC):
     @abstractmethod
     async def list_signatures(
         self, status: SignatureStatus | None = None
-    ) -> list[Signature]:
+    ) -> Sequence[Signature]:
         """List all signatures, optionally filtered by status.
 
         Args:

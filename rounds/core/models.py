@@ -20,6 +20,15 @@ class StackFrame:
     filename: str
     lineno: int | None
 
+    def __post_init__(self) -> None:
+        """Validate stack frame invariants on creation."""
+        if not self.module or not self.module.strip():
+            raise ValueError("module must be a non-empty string")
+        if not self.function or not self.function.strip():
+            raise ValueError("function must be a non-empty string")
+        if not self.filename or not self.filename.strip():
+            raise ValueError("filename must be a non-empty string")
+
 
 class Severity(Enum):
     """Log severity levels from OpenTelemetry."""
@@ -111,6 +120,16 @@ class Signature:
 
     Represents a class of errors, not a single occurrence.
     Tracks lifecycle, occurrence count, and optional diagnosis.
+
+    State Transitions:
+        Valid state transitions are:
+        - NEW → INVESTIGATING (mark_investigating)
+        - INVESTIGATING → DIAGNOSED (mark_diagnosed)
+        - INVESTIGATING → NEW (revert_to_new, for error recovery)
+        - NEW → DIAGNOSED (mark_diagnosed, direct transition)
+        - ANY → RESOLVED (mark_resolved)
+        - ANY → MUTED (mark_muted)
+        - ANY → NEW (reset_to_new, for management operations)
 
     Note: This dataclass is intentionally mutable to allow updating
     signature state (status, occurrence_count, last_seen) after creation.

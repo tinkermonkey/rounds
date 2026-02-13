@@ -83,30 +83,21 @@ class FakeTelemetryPort(TelemetryPort):
     async def get_trace(self, trace_id: str) -> TraceTree:
         """Get a single trace by ID.
 
-        Returns a synthetic empty trace if not found.
+        Raises KeyError if trace not found, matching real telemetry behavior.
         """
         self.get_trace_call_count += 1
 
-        if trace_id in self.traces:
-            return self.traces[trace_id]
+        if trace_id not in self.traces:
+            raise KeyError(f"Trace not found: {trace_id}")
 
-        # Return a synthetic empty trace if not found
-        root_span = SpanNode(
-            span_id=trace_id,
-            parent_id=None,
-            service="unknown-service",
-            operation="unknown-op",
-            duration_ms=0,
-            status="unknown",
-            attributes={},
-            events=(),
-        )
-        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
+        return self.traces[trace_id]
 
     async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
         """Get multiple traces by ID.
 
-        Returns synthetic empty traces for any IDs not found.
+        Returns only traces that exist. Matches real telemetry behavior where
+        missing traces are silently omitted (caller detects partial results by
+        comparing len(result) < len(trace_ids)).
         """
         self.get_traces_call_count += 1
 
@@ -114,21 +105,6 @@ class FakeTelemetryPort(TelemetryPort):
         for trace_id in trace_ids:
             if trace_id in self.traces:
                 result.append(self.traces[trace_id])
-            else:
-                # Return a synthetic empty trace
-                root_span = SpanNode(
-                    span_id=trace_id,
-                    parent_id=None,
-                    service="unknown-service",
-                    operation="unknown-op",
-                    duration_ms=0,
-                    status="unknown",
-                    attributes={},
-                    events=(),
-                )
-                result.append(
-                    TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
-                )
 
         return result
 

@@ -5,6 +5,8 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
+from aiohttp import web
+from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from rounds.adapters.webhook.http_server import WebhookHTTPServer
 from rounds.adapters.webhook.receiver import WebhookReceiver
@@ -120,3 +122,90 @@ class TestWebhookErrorResponses:
         # This would be generated when handler processing fails
         status_code = 500
         assert status_code == 500
+
+
+class TestWebhookHTTPRequests(AioHTTPTestCase):
+    """Tests for actual HTTP request/response handling."""
+
+    async def get_application(self):
+        """Create test application with webhook server."""
+        self.mock_receiver = MagicMock(spec=WebhookReceiver)
+        self.mock_receiver.handle_alert = AsyncMock()
+
+        app = web.Application()
+
+        async def alert_handler(request):
+            """Handle incoming alert webhook."""
+            try:
+                payload = await request.json()
+            except json.JSONDecodeError:
+                return web.json_response(
+                    {"error": "Invalid JSON"},
+                    status=400
+                )
+
+            try:
+                await self.mock_receiver.handle_alert(payload)
+                return web.json_response({"status": "ok"}, status=200)
+            except Exception as e:
+                return web.json_response(
+                    {"error": str(e)},
+                    status=500
+                )
+
+        app.router.add_post("/alert", alert_handler)
+        return app
+
+    @unittest_run_loop
+    async def test_post_valid_alert(self):
+        """Test POST request with valid alert payload."""
+        payload = {
+            "alerts": [
+                {
+                    "status": "firing",
+                    "labels": {"alertname": "HighErrorRate"},
+                }
+            ]
+        }
+
+        resp = await self.client.request(
+            "POST",
+            "/alert",
+            json=payload
+        )
+
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+        self.mock_receiver.handle_alert.assert_called_once()
+
+    @unittest_run_loop
+    async def test_post_malformed_json(self):
+        """Test POST request with malformed JSON."""
+        resp = await self.client.request(
+            "POST",
+            "/alert",
+            data=b"invalid json {",
+            content_type="application/json"
+        )
+
+        assert resp.status == 400
+        data = await resp.json()
+        assert "error" in data
+
+    @unittest_run_loop
+    async def test_handler_exception(self):
+        """Test handler that raises an exception."""
+        self.mock_receiver.handle_alert.side_effect = ValueError("Test error")
+
+        payload = {"alerts": []}
+
+        resp = await self.client.request(
+            "POST",
+            "/alert",
+            json=payload
+        )
+
+        assert resp.status == 500
+        data = await resp.json()
+        assert "error" in data

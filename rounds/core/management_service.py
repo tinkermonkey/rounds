@@ -259,8 +259,8 @@ class ManagementService(ManagementPort):
         context = InvestigationContext(
             signature=signature,
             recent_events=tuple(recent_events),
-            trace_data=(),  # Future: Fetch via telemetry.get_trace() for improved diagnosis
-            related_logs=(),  # Future: Fetch via telemetry.get_correlated_logs() for improved diagnosis
+            trace_data=(),
+            related_logs=(),
             codebase_path=".",
             historical_context=tuple(similar),
         )

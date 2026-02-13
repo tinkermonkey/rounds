@@ -5,6 +5,7 @@ tests can be skipped if PostgreSQL is not available using pytest.mark.skipif
 """
 
 import pytest
+import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,7 +61,7 @@ class TestPostgreSQLStoreInitialization:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    True, reason="PostgreSQL not available in test environment"
+    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
 )
 async def test_create_and_retrieve_signature(
     store: PostgreSQLSignatureStore,
@@ -91,7 +92,7 @@ async def test_create_and_retrieve_signature(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    True, reason="PostgreSQL not available in test environment"
+    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
 )
 async def test_connection_pooling(store: PostgreSQLSignatureStore) -> None:
     """Test that connection pooling works correctly."""
@@ -107,7 +108,7 @@ async def test_connection_pooling(store: PostgreSQLSignatureStore) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    True, reason="PostgreSQL not available in test environment"
+    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
 )
 async def test_schema_initialization(store: PostgreSQLSignatureStore) -> None:
     """Test that database schema is initialized on first use."""
@@ -124,7 +125,7 @@ class TestPostgreSQLTransactions:
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
-        True, reason="PostgreSQL not available in test environment"
+        not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
     )
     async def test_save_creates_transaction(
         self, store: PostgreSQLSignatureStore
@@ -152,7 +153,7 @@ class TestPostgreSQLTransactions:
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
-        True, reason="PostgreSQL not available in test environment"
+        not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
     )
     async def test_update_with_diagnosis(
         self, store: PostgreSQLSignatureStore
@@ -207,7 +208,7 @@ class TestPostgreSQLErrorHandling:
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
-        True, reason="PostgreSQL not available in test environment"
+        not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
     )
     async def test_connection_failure(self):
         """Test handling of connection failures."""

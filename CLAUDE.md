@@ -214,7 +214,3 @@ Roots causes are hypotheses from LLM analysis, not absolute truth. Confidence le
 - HTTP webhook server should be behind authentication (not yet implemented)
 - No hardcoded credentials or test data containing secrets
 - Telemetry queries validated to prevent injection
-
----
-
-Last updated: 2025
