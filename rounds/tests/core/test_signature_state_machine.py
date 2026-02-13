@@ -67,21 +67,21 @@ def test_mark_investigating_from_investigating(signature: Signature) -> None:
 def test_mark_investigating_from_diagnosed(signature: Signature) -> None:
     """mark_investigating should fail when status is DIAGNOSED."""
     signature.status = SignatureStatus.DIAGNOSED
-    with pytest.raises(ValueError, match="Cannot investigate signature in diagnosed status"):
+    with pytest.raises(ValueError, match=r"Cannot investigate signature in .*DIAGNOSED"):
         signature.mark_investigating()
 
 
 def test_mark_investigating_from_resolved(signature: Signature) -> None:
     """mark_investigating should fail when status is RESOLVED."""
     signature.status = SignatureStatus.RESOLVED
-    with pytest.raises(ValueError, match="Cannot investigate signature in resolved status"):
+    with pytest.raises(ValueError, match=r"Cannot investigate signature in .*RESOLVED"):
         signature.mark_investigating()
 
 
 def test_mark_investigating_from_muted(signature: Signature) -> None:
     """mark_investigating should fail when status is MUTED."""
     signature.status = SignatureStatus.MUTED
-    with pytest.raises(ValueError, match="Cannot investigate signature in muted status"):
+    with pytest.raises(ValueError, match=r"Cannot investigate signature in .*MUTED"):
         signature.mark_investigating()
 
 
@@ -307,6 +307,7 @@ def test_record_occurrence_invariants(signature: Signature) -> None:
 
 def test_record_occurrence_before_first_seen_fails(signature: Signature) -> None:
     """record_occurrence should fail if timestamp is before first_seen."""
-    early_timestamp = signature.first_seen
+    from datetime import timedelta
+    early_timestamp = signature.first_seen - timedelta(seconds=1)
     with pytest.raises(ValueError, match="cannot be before first_seen"):
         signature.record_occurrence(early_timestamp)

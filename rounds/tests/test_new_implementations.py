@@ -127,7 +127,7 @@ class TestManagementService:
             cost_usd=0.50,
         )
         sample_signature.diagnosis = diagnosis
-        sample_signature.status = SignatureStatus.DIAGNOSED
+        sample_signature.status = SignatureStatus.INVESTIGATING
 
         await store.save(sample_signature)
 
@@ -160,13 +160,16 @@ class TestManagementService:
 
         details = await service.get_signature_details("sig-123")
 
-        assert details["id"] == "sig-123"
-        assert details["service"] == "auth-service"
-        assert details["error_type"] == "TimeoutError"
-        assert details["status"] == "new"
-        assert details["occurrence_count"] == 5
-        assert details["diagnosis"] is not None
-        assert details["diagnosis"]["confidence"] == "high"
+        assert details.signature.id == "sig-123"
+        assert details.signature.service == "auth-service"
+        assert details.signature.error_type == "TimeoutError"
+        assert details.signature.status == SignatureStatus.NEW
+        assert details.signature.occurrence_count == 5
+        assert details.signature.diagnosis is not None
+        assert details.signature.diagnosis.confidence == "high"
+        # Verify related components are present
+        assert isinstance(details.recent_events, tuple)
+        assert isinstance(details.related_signatures, tuple)
 
     async def test_get_signature_details_without_diagnosis(
         self, service: ManagementService, store: FakeSignatureStorePort,
@@ -177,7 +180,7 @@ class TestManagementService:
 
         details = await service.get_signature_details("sig-123")
 
-        assert details["diagnosis"] is None
+        assert details.signature.diagnosis is None
 
     async def test_list_signatures_no_filter(
         self, service: ManagementService, store: FakeSignatureStorePort,
