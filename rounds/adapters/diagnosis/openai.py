@@ -214,8 +214,6 @@ Respond with a JSON object in exactly this format:
             client = await self._get_client()
 
             # Call OpenAI API in executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-
             def _call_openai() -> str:
                 """Synchronous wrapper for OpenAI API call."""
                 response = client.chat.completions.create(

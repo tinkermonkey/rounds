@@ -201,8 +201,6 @@ Respond with a JSON object in exactly this format:
         """
         try:
             # Invoke Claude Code CLI in an executor to avoid blocking the event loop
-            loop = asyncio.get_running_loop()
-
             def _run_claude_code() -> str:
                 """Synchronous wrapper for subprocess call."""
                 try:

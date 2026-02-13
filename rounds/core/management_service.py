@@ -7,6 +7,7 @@ and auditable.
 """
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from .models import Diagnosis, InvestigationContext, Signature, SignatureDetails, SignatureStatus, ErrorEvent
 from .ports import (
