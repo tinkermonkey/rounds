@@ -1,30 +1,30 @@
-I'll conduct a comprehensive architectural analysis of the rounds project. Let me start by exploring the directory structure and key files.Excellent! I already have the CLAUDE.md which provides architectural details. Let me now read key implementation files to verify the architecture and understand the actual code structure.Now let me read a few more critical files to understand the core services and an example adapter:Perfect! Now I have a comprehensive understanding of the architecture. Let me create the detailed architecture summary document.Perfect! I've completed a comprehensive architectural analysis of the **rounds** project and created a detailed summary document.
+I'll conduct a comprehensive architectural analysis of the rounds project. Let me start by exploring the directory structure and key files.Now let me explore the actual codebase structure to verify what exists and read key files:Now let me read the core architectural files:Now let me read some key service files to understand the architecture:Now let me check a couple of adapter implementations to see the concrete architecture:Perfect! Now I have enough information to create a comprehensive architecture summary. Let me write it:Let me check if the file exists first:The file exists. Let me read it first and then write:Now let me write the comprehensive architecture summary:Perfect! I've successfully created a comprehensive architecture summary for the **rounds** project. The document includes:
 
-## Summary
+## Key Sections:
 
-I've analyzed the rounds codebase and created a comprehensive architecture summary at `.claude/clauditoreum/ArchitectureSummary.md`. Here's what I discovered:
+1. **Overview** - System purpose and medical analogy
+2. **Architectural Style** - Hexagonal architecture with evidence
+3. **Directory Structure** - Complete layout with annotations
+4. **Component Boundaries** - Core, Adapters, Composition Root
+5. **Key Design Patterns** - 7 major patterns with code examples
+6. **Entry Points** - Daemon, CLI, and Webhook modes
+7. **Dependency Flow** - ASCII diagram showing relationships
+8. **Critical Files** - Top 15 files with detailed analysis
+9. **Data Flow** - Step-by-step poll cycle to diagnosis flow
+10. **Key Design Decisions** - 8 architectural choices from CLAUDE.md
+11. **Testing Strategy** - Unit, integration, fakes, and e2e
+12. **Scalability & Performance** - Optimization considerations
+13. **Security Considerations** - Security best practices
 
-### Architecture Style
-**Hexagonal Architecture (Ports and Adapters)** - This is a textbook implementation with:
-- Pure domain core with zero external dependencies
-- Explicit port interfaces defining adapter contracts
-- Single composition root wiring all dependencies
-- Clear separation between business logic and infrastructure
+## Highlights:
 
-### Key Components
-1. **Core Domain** (7 modules): Immutable models, abstract ports, and pure business logic
-2. **Adapters** (8 subsystems): Swappable implementations for telemetry, storage, diagnosis, notifications, etc.
-3. **Composition Root** (`main.py`): Single location where everything is wired together
-4. **Three Run Modes**: Daemon (continuous polling), CLI (interactive), Webhook (HTTP server)
+✅ **Evidence-based analysis** - All claims backed by specific file and line references
+✅ **Textbook hexagonal architecture** - Clear separation between domain and infrastructure
+✅ **Immutable domain models** - Frozen dataclasses with controlled mutations
+✅ **Async-first I/O** - All ports use async/await
+✅ **Single composition root** - Dependency injection in main.py
+✅ **Type safety** - Full type annotations throughout
+✅ **Testing with fakes** - Real port implementations instead of mocks
+✅ **Budget control** - LLM cost tracking and limits
 
-### Notable Design Patterns
-- State Machine for signature lifecycle (NEW → INVESTIGATING → DIAGNOSED/RESOLVED/MUTED)
-- Repository pattern for data access
-- Strategy pattern for swappable adapters
-- Async/await throughout with connection pooling
-- Budget tracking protocol for cost control
-
-### System Purpose
-An autonomous diagnostic agent that watches OpenTelemetry data, fingerprints error patterns, and uses LLM-powered analysis (Claude Code or OpenAI) to diagnose root causes—like a doctor making rounds on running software.
-
-The summary document includes directory structure, dependency flow diagrams, critical files breakdown, extensibility points, and architectural guarantees. All findings are evidence-based with specific file and line references.
+The architecture is production-ready with minimal coupling, maximum testability, and clear extension points for adding new telemetry backends, diagnosis engines, or notification channels.
