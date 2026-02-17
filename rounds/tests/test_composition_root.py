@@ -104,10 +104,10 @@ class TestAdapterInstantiation:
 
         settings = load_settings()
         adapter = ClaudeCodeDiagnosisAdapter(
-            model=settings.claude_code_model,
+            model=settings.claude_model,
             budget_usd=settings.claude_code_budget_usd,
         )
-        assert adapter.model == settings.claude_code_model
+        assert adapter.model == settings.claude_model
         assert adapter.budget_usd == settings.claude_code_budget_usd
 
     def test_notification_adapter_instantiation(self) -> None:
