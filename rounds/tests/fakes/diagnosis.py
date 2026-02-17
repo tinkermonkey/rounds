@@ -13,7 +13,7 @@ class FakeDiagnosisPort(DiagnosisPort):
     responses. Tracks all diagnosis requests for test assertions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with default values."""
         self.diagnoses: dict[str, Diagnosis] = {}
         self.default_diagnosis: Diagnosis | None = None

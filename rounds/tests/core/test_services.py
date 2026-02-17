@@ -445,6 +445,19 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine, signature: Signature
     ) -> None:
         """Should notify medium confidence for new signatures."""
+        # Create a new signature with NEW status to avoid mutating the fixture
+        new_signature = Signature(
+            id=signature.id,
+            fingerprint=signature.fingerprint,
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash=signature.stack_hash,
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=signature.occurrence_count,
+            status=SignatureStatus.NEW,
+        )
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -454,8 +467,7 @@ class TestTriageEngine:
             model="model",
             cost_usd=0.0,
         )
-        signature.status = SignatureStatus.NEW
-        assert triage_engine.should_notify(signature, diagnosis)
+        assert triage_engine.should_notify(new_signature, diagnosis)
 
     def test_should_not_notify_low_confidence(
         self, triage_engine: TriageEngine, signature: Signature
@@ -476,6 +488,20 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine, signature: Signature
     ) -> None:
         """Should notify signatures tagged as critical."""
+        # Create a new signature with critical tag to avoid mutating the fixture
+        critical_signature = Signature(
+            id=signature.id,
+            fingerprint=signature.fingerprint,
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash=signature.stack_hash,
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=signature.occurrence_count,
+            status=signature.status,
+            tags=frozenset(["critical"]),
+        )
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -485,8 +511,7 @@ class TestTriageEngine:
             model="model",
             cost_usd=0.0,
         )
-        signature.tags = frozenset(["critical"])
-        assert triage_engine.should_notify(signature, diagnosis)
+        assert triage_engine.should_notify(critical_signature, diagnosis)
 
     def test_calculate_priority_frequency_component(
         self, triage_engine: TriageEngine

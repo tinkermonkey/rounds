@@ -69,7 +69,7 @@ class Settings(BaseSettings):
         default="./data/signatures.db",
         description="SQLite database file path",
     )
-    database_url: str = Field(
+    store_postgresql_url: str = Field(
         default="",
         description="PostgreSQL connection URL",
     )
@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         default=2.0,
         description="Budget per diagnosis for Claude Code in USD",
     )
-    claude_code_model: str = Field(
+    claude_model: str = Field(
         default="claude-opus",
         description="Claude model to use for diagnosis",
     )

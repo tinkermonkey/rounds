@@ -13,7 +13,7 @@ class FakeManagementPort(ManagementPort):
     Tracks all management operations for test assertions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with empty operation tracking."""
         self.muted_signatures: dict[str, str | None] = {}
         self.resolved_signatures: dict[str, str | None] = {}

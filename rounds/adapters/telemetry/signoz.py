@@ -86,7 +86,25 @@ class SigNozTelemetryAdapter(TelemetryPort):
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
-        """Return error events since the given timestamp."""
+        """Return error events since the given timestamp.
+
+        Queries SigNoz ClickHouse backend for errors with validation-based
+        SQL construction. All service names are validated using _is_valid_identifier()
+        before string interpolation to prevent SQL injection. Only service names
+        matching the pattern [a-zA-Z0-9._-]+ are included in the query; invalid
+        names are logged and filtered out.
+
+        Args:
+            since: Query errors with timestamp >= this value
+            services: Optional list of service names to filter by. Invalid names
+                     are skipped with a warning.
+
+        Returns:
+            List of ErrorEvent objects from the telemetry backend.
+
+        Raises:
+            httpx.HTTPError: If the API request fails
+        """
         try:
             # Build ClickHouse query for errors
             service_filter = ""

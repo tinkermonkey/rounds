@@ -12,7 +12,7 @@ class FakePollPort(PollPort):
     Allows tests to configure and track poll cycle executions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with default values."""
         self.poll_results: list[PollResult] = []
         self.investigation_results: list[InvestigationResult] = []

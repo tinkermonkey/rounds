@@ -13,7 +13,7 @@ class FakeSignatureStorePort(SignatureStorePort):
     tracks all operations for test assertions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with empty signature store."""
         self.signatures: dict[str, Signature] = {}
         self.signatures_by_id: dict[str, Signature] = {}

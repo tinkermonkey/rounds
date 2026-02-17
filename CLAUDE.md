@@ -214,6 +214,19 @@ Roots causes are hypotheses from LLM analysis, not absolute truth. Confidence le
 
 **Note**: Tuple and list are operationally equivalent for read-only access; immutability is enforced at type-check time.
 
+### 8. Signature Mutability (Design Decision)
+**Specification**: CLAUDE.md section 1 states "Signature, Diagnosis, and ErrorEvent are frozen dataclasses."
+
+**Implementation Decision**: `Signature` is intentionally **mutable** (`@dataclass` without `frozen=True`), while `Diagnosis` and `ErrorEvent` remain frozen (core/models.py:117-149).
+
+**Rationale**:
+- Mutable state management: Signature lifecycle involves state transitions (NEW → INVESTIGATING → DIAGNOSED) managed through domain methods (`mark_investigating()`, `mark_diagnosed()`, `reset_to_new()`). A frozen dataclass would require reconstructing the entire object for each state change.
+- Efficient updates: Allowing in-place mutation of Signature fields (status, diagnosis_json, tags) avoids the overhead of creating new instances and garbage collecting old ones during polling loops.
+- Simplified API: Domain methods can directly update Signature state rather than requiring callers to reconstruct objects, reducing complexity and improving readability.
+- Trade-off documentation: While other domain models are frozen to prevent accidental mutations, Signature accepts the risk of accidental mutation to support the lifecycle management pattern. This is acceptable because all state transitions are controlled through well-defined service methods, not ad-hoc field assignments.
+
+**Note**: This is a deliberate design choice trading immutability guarantees for ergonomic state management. Test code should not directly assign Signature fields; instead, tests should use domain methods or create fixtures with the desired initial state.
+
 ## Common Tasks
 
 ### Adding a New Telemetry Adapter

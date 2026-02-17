@@ -13,7 +13,7 @@ class FakeTelemetryPort(TelemetryPort):
     returned when the core services query the telemetry backend.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with empty collections."""
         self.errors: dict[datetime, list[ErrorEvent]] = {}
         self.traces: dict[str, TraceTree] = {}

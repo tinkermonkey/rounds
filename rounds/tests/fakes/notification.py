@@ -12,7 +12,7 @@ class FakeNotificationPort(NotificationPort):
     Captures all notifications sent through this port for test assertions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with empty notification history."""
         self.reported_diagnoses: list[tuple[Signature, Diagnosis]] = []
         self.reported_summaries: list[dict[str, Any]] = []
