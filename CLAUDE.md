@@ -97,19 +97,21 @@ class Diagnosis:
 │   │   │   ├── jaeger.py
 │   │   │   └── grafana_stack.py
 │   │   ├── store/                     # Signature persistence
-│   │   │   └── sqlite.py
+│   │   │   ├── sqlite.py
+│   │   │   └── postgresql.py          # (planned)
 │   │   ├── diagnosis/                 # Root cause analysis
-│   │   │   └── claude_code.py
+│   │   │   ├── claude_code.py
+│   │   │   └── openai.py
 │   │   ├── notification/              # Finding reports
 │   │   │   ├── stdout.py
 │   │   │   ├── markdown.py
 │   │   │   └── github_issues.py
 │   │   ├── scheduler/                 # Polling orchestration
 │   │   │   └── daemon.py
-│   │   ├── webhook/                   # HTTP server
+│   │   ├── webhook/                   # HTTP server for external triggers
 │   │   │   ├── http_server.py
 │   │   │   └── receiver.py
-│   │   └── cli/                       # CLI commands
+│   │   └── cli/                       # Interactive CLI commands
 │   │       └── commands.py
 │   └── tests/
 │       ├── core/                      # Domain unit tests
@@ -147,22 +149,27 @@ All configuration is environment-based (see `config.py` for defaults and `Settin
 - Backend-specific URLs and API keys (e.g., SIGNOZ_API_URL, JAEGER_API_URL)
 
 ### Signature Store
-- `STORE_BACKEND`: "sqlite" (default)
-- `STORE_SQLITE_PATH`: Path to signatures.db
+- `STORE_BACKEND`: "sqlite" (default) or "postgresql"
+- `STORE_SQLITE_PATH`: Path to signatures.db (SQLite only)
+- `STORE_POSTGRESQL_URL`: PostgreSQL connection string (PostgreSQL only)
 
 ### Diagnosis Engine
-- `DIAGNOSIS_BACKEND`: "claude_code" (default)
-- `CLAUDE_CODE_BUDGET_USD`: Per-diagnosis budget
-- `DAILY_BUDGET_LIMIT`: Daily spending cap
+- `DIAGNOSIS_BACKEND`: "claude_code" (default) or "openai"
+- `CLAUDE_CODE_BUDGET_USD`: Per-diagnosis budget (Claude Code only)
+- `CLAUDE_MODEL`: LLM model selection (Claude Code only)
+- `OPENAI_API_KEY`: OpenAI authentication (OpenAI only)
+- `DAILY_BUDGET_LIMIT`: Daily spending cap across all diagnoses
 
 ### Polling
-- `POLL_INTERVAL_SECONDS`: How often to check for new errors
-- `ERROR_LOOKBACK_MINUTES`: Lookback window for error queries
-- `POLL_BATCH_SIZE`: Events per poll
+- `POLL_INTERVAL_SECONDS`: How often to check for new errors (default: 60)
+- `ERROR_LOOKBACK_MINUTES`: Lookback window for error queries (default: 15)
+- `POLL_BATCH_SIZE`: Maximum events per poll cycle (default: 100)
 
 ### Notifications
 - `NOTIFICATION_BACKEND`: "stdout", "markdown", or "github_issue"
-- Backend-specific settings (e.g., NOTIFICATION_OUTPUT_DIR, GITHUB_TOKEN)
+- `NOTIFICATION_OUTPUT_DIR`: Directory for markdown files (markdown only)
+- `GITHUB_TOKEN`: GitHub API token (github_issue only)
+- `GITHUB_REPO`: Repository for issues (github_issue only)
 
 ## Key Design Decisions
 
@@ -180,6 +187,32 @@ All I/O uses async/await. Blocking operations (file writes, subprocesses) run in
 
 ### 5. Error Diagnosis is Speculative
 Roots causes are hypotheses from LLM analysis, not absolute truth. Confidence levels (low/medium/high) reflect uncertainty.
+
+### 6. Severity as Enum, Not String (Design Decision)
+**Specification**: ErrorEvent.severity was defined as `str` type with example values "ERROR", "FATAL".
+
+**Implementation Decision**: Use `Severity` Enum (core/models.py:33-41).
+
+**Rationale**:
+- Type safety: Prevents invalid severity values at assignment time. Type checkers catch misuse before runtime.
+- Clarity: Explicit enumeration documents the valid set of values (TRACE, DEBUG, INFO, WARN, ERROR, FATAL).
+- Alignment with OpenTelemetry standard: Python OTEL libraries use Enum types for severity levels.
+- Database compatibility: Enum values serialize to strings for storage and reconstruction, preserving data format in SQLite.
+
+**Note**: This is a deliberate improvement over the specification that better serves production use.
+
+### 7. Immutability of Trace Data (Design Decision)
+**Specification**: InvestigationContext.trace_data was defined as `list[TraceTree]` (mutable collection).
+
+**Implementation Decision**: Use `tuple[TraceTree, ...]` (immutable collection) in core/models.py:309.
+
+**Rationale**:
+- Immutability guarantee: Frozen dataclass (InvestigationContext) requires immutable fields. Using a list would violate the frozen contract.
+- Safety: Prevents accidental modification of assembled diagnostic context during investigation.
+- Consistency: All collection fields in frozen models use tuples (error_spans, events, historical_context, etc.).
+- Data integrity: Ensures trace context remains consistent through diagnosis pipeline without defensive copying.
+
+**Note**: Tuple and list are operationally equivalent for read-only access; immutability is enforced at type-check time.
 
 ## Common Tasks
 
