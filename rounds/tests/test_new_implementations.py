@@ -488,29 +488,38 @@ class TestMarkdownNotificationAdapter:
             cost_usd=0.50,
         )
 
-    async def test_report_appends_to_file(
+    async def test_report_creates_individual_file(
         self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that report is appended to file in date-based directory."""
+        """Test that each report is written to an individual file in date-based directory."""
         await adapter.report(sample_signature, sample_diagnosis)
 
-        # Get today's date and check for report file in date-based directory
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date().isoformat()
-        report_file = temp_dir / today / "reports.md"
+        # Get the date from diagnosis
+        date_str = sample_diagnosis.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
 
-        assert report_file.exists(), f"Report file not found at {report_file}"
+        # Verify date directory was created
+        assert date_dir.exists(), f"Date directory not found at {date_dir}"
+
+        # Check for individual report file with HH-MM-SS_service_ErrorType.md format
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 1, f"Expected 1 report file, found {len(report_files)}"
+
+        report_file = report_files[0]
+        # Verify filename format: HH-MM-SS_service_ErrorType.md
+        assert report_file.name.endswith("_api-service_TimeoutError.md"), f"Unexpected filename: {report_file.name}"
+
         content = report_file.read_text()
         assert "Diagnosis Report" in content
         assert "TimeoutError" in content
         assert "api-service" in content
         assert "Connection pool exhausted" in content
 
-    async def test_report_summary_appends_to_file(
+    async def test_report_summary_writes_to_separate_file(
         self, adapter: MarkdownNotificationAdapter, temp_dir: Path
     ) -> None:
-        """Test that summary report is appended to file in date-based directory."""
+        """Test that summary report is written to separate summary.md file outside reports directory."""
         stats = {
             "total_signatures": 42,
             "total_errors_seen": 150,
@@ -520,34 +529,93 @@ class TestMarkdownNotificationAdapter:
 
         await adapter.report_summary(stats)
 
-        # Get today's date and check for report file in date-based directory
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date().isoformat()
-        report_file = temp_dir / today / "reports.md"
+        # Summary should be written to parent directory
+        summary_file = temp_dir.parent / "summary.md"
 
-        assert report_file.exists(), f"Report file not found at {report_file}"
-        content = report_file.read_text()
+        assert summary_file.exists(), f"Summary file not found at {summary_file}"
+        content = summary_file.read_text()
         assert "Summary Report" in content
         assert "**Total Signatures**: 42" in content
         assert "**NEW**: 10" in content
 
-    async def test_multiple_reports_appended(
+    async def test_multiple_reports_create_separate_files(
         self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that multiple reports are appended to the same date file."""
-        await adapter.report(sample_signature, sample_diagnosis)
-        await adapter.report(sample_signature, sample_diagnosis)
+        """Test that multiple reports create separate files in same date directory."""
+        # Create two diagnoses with different timestamps
+        from datetime import timedelta
 
-        # Get today's date and check for report file in date-based directory
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date().isoformat()
-        report_file = temp_dir / today / "reports.md"
+        diagnosis1 = sample_diagnosis
+        diagnosis2 = Diagnosis(
+            root_cause="Connection pool exhausted",
+            evidence=("10 concurrent requests", "Pool size 5"),
+            suggested_fix="Increase pool size to 20",
+            confidence="high",
+            diagnosed_at=diagnosis1.diagnosed_at + timedelta(seconds=5),  # Different timestamp
+            model="claude-3",
+            cost_usd=0.50,
+        )
 
-        assert report_file.exists(), f"Report file not found at {report_file}"
-        content = report_file.read_text()
-        # Should have two report headers
-        assert content.count("Diagnosis Report") == 2
+        await adapter.report(sample_signature, diagnosis1)
+        await adapter.report(sample_signature, diagnosis2)
+
+        # Get the date from diagnosis
+        date_str = diagnosis1.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
+
+        # Should have two separate report files
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 2, f"Expected 2 report files, found {len(report_files)}"
+
+        # Each file should contain exactly one "Diagnosis Report" header
+        for report_file in report_files:
+            content = report_file.read_text()
+            assert content.count("Diagnosis Report") == 1
+
+    async def test_filename_sanitization(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path
+    ) -> None:
+        """Test that service names and error types are sanitized in filenames."""
+        # Create signature with spaces and special characters in service/error type
+        sig_with_special_chars = Signature(
+            id="sig-456",
+            fingerprint="def456",
+            error_type="Invalid/Value Error",  # Contains slash
+            service="api-gateway/v2",  # Contains slash
+            message_template="Invalid input",
+            stack_hash="stack-456",
+            first_seen=datetime.now(tz=timezone.utc),
+            last_seen=datetime.now(tz=timezone.utc),
+            occurrence_count=3,
+            status=SignatureStatus.NEW,
+        )
+
+        diagnosis = Diagnosis(
+            root_cause="Bad input",
+            evidence=("Test",),
+            suggested_fix="Validate",
+            confidence="high",
+            diagnosed_at=datetime.now(tz=timezone.utc),
+            model="claude-3",
+            cost_usd=0.50,
+        )
+
+        await adapter.report(sig_with_special_chars, diagnosis)
+
+        # Get the date from diagnosis
+        date_str = diagnosis.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
+
+        # Verify that special characters were sanitized
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 1
+
+        filename = report_files[0].name
+        # Should not contain slashes or other special characters
+        assert "/" not in filename
+        assert "api-gateway_v2" in filename or "api_gateway_v2" in filename
+        assert "Invalid_Value_Error" in filename or "Invalid_Value_Error" in filename
 
 
 # --- GitHubIssueNotificationAdapter Tests ---

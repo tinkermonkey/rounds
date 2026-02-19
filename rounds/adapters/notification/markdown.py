@@ -7,6 +7,7 @@ Useful for creating audit trails and persistent diagnostic records.
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,22 +26,53 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         Args:
             report_dir: Base directory where date-based subdirectories will be created.
-                       Reports will be organized as: report_dir/YYYY-MM-DD/reports.md
+                       Reports will be organized as: report_dir/YYYY-MM-DD/HH-MM-SS_service_ErrorType.md
+                       Summary will be written to: report_dir/../summary.md
         """
         self.base_dir = Path(report_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
 
-    def _get_report_file(self) -> Path:
-        """Get the report file path for today's date.
+    @staticmethod
+    def _sanitize_filename(text: str) -> str:
+        """Sanitize a string for use in filenames.
+
+        Args:
+            text: The text to sanitize.
 
         Returns:
-            Path to the markdown report file for today (YYYY-MM-DD/reports.md).
+            Sanitized string with spaces and problematic characters replaced.
         """
-        today = datetime.now(timezone.utc).date()
-        date_dir = self.base_dir / today.isoformat()
+        # Replace any character that's not alphanumeric, underscore, or hyphen
+        sanitized = re.sub(r'[^\w\-]', '_', text)
+        return sanitized
+
+    def _get_report_file(self, signature: Signature, diagnosis: Diagnosis) -> Path:
+        """Get the report file path for a specific diagnosis.
+
+        Args:
+            signature: The signature being diagnosed.
+            diagnosis: The diagnosis results.
+
+        Returns:
+            Path to the individual markdown report file.
+        """
+        # Get timestamp from diagnosis
+        timestamp = diagnosis.diagnosed_at
+        date_str = timestamp.strftime("%Y-%m-%d")
+        time_str = timestamp.strftime("%H-%M-%S")
+
+        # Extract and sanitize service name and error type
+        service = self._sanitize_filename(signature.service or "unknown")
+        error_type = self._sanitize_filename(signature.error_type or "UnknownError")
+
+        # Create date directory
+        date_dir = self.base_dir / date_str
         date_dir.mkdir(parents=True, exist_ok=True)
-        return date_dir / "reports.md"
+
+        # Generate filename: HH-MM-SS_service_ErrorType.md
+        filename = f"{time_str}_{service}_{error_type}.md"
+        return date_dir / filename
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
@@ -49,14 +81,14 @@ class MarkdownNotificationAdapter(NotificationPort):
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
 
-        # Append to file
+        # Write to individual file
         async with self._lock:
             try:
-                report_file = self._get_report_file()
-                await asyncio.to_thread(self._write_to_file, report_file, entry)
+                report_file = self._get_report_file(signature, diagnosis)
+                await asyncio.to_thread(report_file.write_text, entry, encoding='utf-8')
 
                 logger.info(
-                    f"Appended diagnosis report to {report_file}",
+                    f"Wrote diagnosis report to {report_file}",
                     extra={
                         "signature_id": signature.id,
                         "fingerprint": signature.fingerprint,
@@ -66,43 +98,33 @@ class MarkdownNotificationAdapter(NotificationPort):
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown report: {e}",
-                    extra={"path": str(self._get_report_file())},
+                    extra={"path": str(self._get_report_file(signature, diagnosis))},
                     exc_info=True,
                 )
                 raise
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
-        """Periodic summary report appended to markdown file."""
+        """Write summary statistics to separate markdown file."""
         summary = self._format_summary(stats)
 
         async with self._lock:
             try:
-                report_file = self._get_report_file()
-                await asyncio.to_thread(self._write_to_file, report_file, summary)
+                summary_file = self.base_dir.parent / "summary.md"
+                await asyncio.to_thread(summary_file.write_text, summary, encoding='utf-8')
 
                 logger.info(
-                    f"Appended summary report to {report_file}",
+                    f"Wrote summary report to {summary_file}",
                     extra={"stats": stats},
                 )
 
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown summary: {e}",
-                    extra={"path": str(self._get_report_file())},
+                    extra={"path": str(self.base_dir.parent / "summary.md")},
                     exc_info=True,
                 )
                 raise
 
-    def _write_to_file(self, report_file: Path, content: str) -> None:
-        """Write content to file (blocking operation).
-
-        Args:
-            report_file: Path to the markdown report file.
-            content: Content to append to the file.
-        """
-        with open(report_file, "a") as f:
-            f.write(content)
-            f.write("\n")
 
     def _format_report_entry(
         self, signature: Signature, diagnosis: Diagnosis

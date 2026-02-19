@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     )
     notification_output_dir: str = Field(
         default="./notifications",
-        description="Output directory for markdown notifications",
+        description="Base directory for markdown reports. Reports written to YYYY-MM-DD subdirectories with individual diagnosis files. Summary written to parent directory.",
     )
     github_token: str = Field(
         default="",
