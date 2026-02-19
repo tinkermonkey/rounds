@@ -12,7 +12,9 @@ Module Structure:
 - Entry point selection (daemon, CLI, webhook, etc.)
 """
 
+import argparse
 import asyncio
+import json
 import logging
 import sys
 import urllib.parse
@@ -187,6 +189,115 @@ async def _execute_cli_command(
         raise ValueError(f"Unknown command: {command}. Use 'help' for available commands.")
 
 
+async def _run_scan(
+    telemetry: Any,
+    store: Any,
+    fingerprinter: Any,
+    triage: Any,
+    investigator: Any,
+    lookback_minutes: int,
+    batch_size: int,
+) -> None:
+    """Execute single poll cycle and output results as JSON.
+
+    Args:
+        telemetry: TelemetryPort implementation.
+        store: SignatureStorePort implementation.
+        fingerprinter: Fingerprinter instance.
+        triage: TriageEngine instance.
+        investigator: Investigator instance.
+        lookback_minutes: How far back to look for errors.
+        batch_size: Maximum errors to process.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        # Create poll service for this execution
+        poll_service = PollService(
+            telemetry=telemetry,
+            store=store,
+            fingerprinter=fingerprinter,
+            triage=triage,
+            investigator=investigator,
+            lookback_minutes=lookback_minutes,
+            batch_size=batch_size,
+        )
+
+        # Execute single poll cycle
+        result = await poll_service.execute_poll_cycle()
+
+        # Output JSON to stdout
+        output = {
+            "status": "success",
+            "new_signatures": result.new_signatures,
+            "updated_signatures": result.updated_signatures,
+            "errors_processed": result.errors_found,
+            "errors_failed": result.errors_failed_to_process,
+            "investigations_queued": result.investigations_queued,
+            "timestamp": result.timestamp.isoformat(),
+        }
+        print(json.dumps(output, indent=2))
+
+    except Exception as e:
+        logger.error(f"Scan command failed: {e}", exc_info=True)
+        output = {"status": "error", "message": str(e)}
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+
+async def _run_diagnose(
+    signature_id: str,
+    telemetry: Any,
+    store: Any,
+    diagnosis_engine: Any,
+    notification: Any,
+    triage: Any,
+    investigator: Any,
+) -> None:
+    """Diagnose a specific signature and output results as JSON.
+
+    Args:
+        signature_id: UUID of the signature to diagnose.
+        telemetry: TelemetryPort implementation.
+        store: SignatureStorePort implementation.
+        diagnosis_engine: DiagnosisPort implementation.
+        notification: NotificationPort implementation.
+        triage: TriageEngine instance.
+        investigator: Investigator instance.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        # Retrieve signature
+        signature = await store.get_by_id(signature_id)
+        if not signature:
+            raise ValueError(f"Signature not found: {signature_id}")
+
+        # Investigate
+        diagnosis = await investigator.investigate(signature)
+
+        # Output JSON to stdout
+        output = {
+            "status": "success",
+            "signature_id": signature_id,
+            "root_cause": diagnosis.root_cause,
+            "confidence": diagnosis.confidence,
+            "cost_usd": diagnosis.cost_usd,
+            "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
+            "model": diagnosis.model,
+        }
+        print(json.dumps(output, indent=2))
+
+    except ValueError as e:
+        logger.error(f"Diagnose command failed: {e}")
+        output = {"status": "error", "message": str(e)}
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Diagnose command failed: {e}", exc_info=True)
+        output = {"status": "error", "message": str(e)}
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+
 def _print_cli_help() -> None:
     """Print CLI help message."""
     help_text = """
@@ -267,7 +378,37 @@ def configure_logging(log_level: str, log_format: str) -> None:
     )
 
 
-async def bootstrap() -> None:
+def _parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments containing command and optional signature_id.
+    """
+    parser = argparse.ArgumentParser(
+        description="Rounds continuous error diagnosis system",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m rounds.main                      # Start interactive CLI
+  python -m rounds.main scan                 # Execute single poll cycle
+  python -m rounds.main diagnose sig_12345   # Diagnose specific signature
+        """,
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["scan", "diagnose"],
+        help="Non-interactive command to execute",
+    )
+    parser.add_argument(
+        "signature_id",
+        nargs="?",
+        help="Signature ID for diagnose command (required if command=diagnose)",
+    )
+    return parser.parse_args()
+
+
+async def bootstrap(command: str | None = None, signature_id: str | None = None) -> None:
     """Load configuration, wire adapters, and start the application.
 
     This is the composition root: the single place where all components
@@ -279,6 +420,10 @@ async def bootstrap() -> None:
     3. Instantiate adapters with configuration
     4. Initialize core services
     5. Select and start run mode
+
+    Args:
+        command: Optional command to execute (scan or diagnose).
+        signature_id: Optional signature ID for diagnose command.
 
     Raises:
         SystemExit: On fatal errors (configuration, adapter initialization)
@@ -439,55 +584,90 @@ async def bootstrap() -> None:
         diagnosis_engine=diagnosis_engine,
     )
 
-    # Step 5: Select run mode and start
-    logger.info(f"Starting in {settings.run_mode} mode...")
-
+    # Step 5: Handle non-interactive commands or select run mode
     try:
-        if settings.run_mode == "daemon":
-            # Start daemon polling loop
-            assert scheduler is not None
-            await scheduler.start()
-
-        elif settings.run_mode == "cli":
-            # CLI mode handles interactive commands via CLICommandHandler
-            logger.info("CLI mode - Ready for interactive commands")
-            # Create CLI command handler with the management service
-            cli_handler = CLICommandHandler(management_service)
-            # Run interactive CLI loop
-            await _run_cli_interactive(cli_handler)
-
-        elif settings.run_mode == "webhook":
-            # Webhook mode starts an HTTP server for external triggers
-            logger.info("Starting in webhook mode")
-
-            # Create webhook receiver
-            webhook_receiver = WebhookReceiver(
-                poll_port=poll_service,
-                management_port=management_service,
-                host=settings.webhook_host,
-                port=settings.webhook_port,
+        # Check for non-interactive commands first
+        if command == "scan":
+            logger.info("Executing scan command...")
+            await _run_scan(
+                telemetry=telemetry,
+                store=store,
+                fingerprinter=fingerprinter,
+                triage=triage,
+                investigator=investigator,
+                lookback_minutes=settings.error_lookback_minutes,
+                batch_size=settings.poll_batch_size,
             )
 
-            # Start HTTP server
-            http_server = WebhookHTTPServer(
-                webhook_receiver=webhook_receiver,
-                host=settings.webhook_host,
-                port=settings.webhook_port,
-                api_key=settings.webhook_api_key if settings.webhook_api_key else None,
-                require_auth=settings.webhook_require_auth,
+        elif command == "diagnose":
+            if not signature_id:
+                logger.error("diagnose command requires signature_id argument")
+                output = {
+                    "status": "error",
+                    "message": "diagnose command requires signature_id argument",
+                }
+                print(json.dumps(output, indent=2), file=sys.stderr)
+                sys.exit(1)
+            logger.info(f"Executing diagnose command for signature {signature_id}...")
+            await _run_diagnose(
+                signature_id=signature_id,
+                telemetry=telemetry,
+                store=store,
+                diagnosis_engine=diagnosis_engine,
+                notification=notification,
+                triage=triage,
+                investigator=investigator,
             )
-            await http_server.start()
-
-            # Keep the server running
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                await http_server.stop()
 
         else:
-            logger.error(f"Unknown run mode: {settings.run_mode}")
-            sys.exit(1)
+            # No non-interactive command, use run_mode
+            logger.info(f"Starting in {settings.run_mode} mode...")
+
+            if settings.run_mode == "daemon":
+                # Start daemon polling loop
+                assert scheduler is not None
+                await scheduler.start()
+
+            elif settings.run_mode == "cli":
+                # CLI mode handles interactive commands via CLICommandHandler
+                logger.info("CLI mode - Ready for interactive commands")
+                # Create CLI command handler with the management service
+                cli_handler = CLICommandHandler(management_service)
+                # Run interactive CLI loop
+                await _run_cli_interactive(cli_handler)
+
+            elif settings.run_mode == "webhook":
+                # Webhook mode starts an HTTP server for external triggers
+                logger.info("Starting in webhook mode")
+
+                # Create webhook receiver
+                webhook_receiver = WebhookReceiver(
+                    poll_port=poll_service,
+                    management_port=management_service,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                )
+
+                # Start HTTP server
+                http_server = WebhookHTTPServer(
+                    webhook_receiver=webhook_receiver,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                    api_key=settings.webhook_api_key if settings.webhook_api_key else None,
+                    require_auth=settings.webhook_require_auth,
+                )
+                await http_server.start()
+
+                # Keep the server running
+                try:
+                    while True:
+                        await asyncio.sleep(1)
+                except KeyboardInterrupt:
+                    await http_server.stop()
+
+            else:
+                logger.error(f"Unknown run mode: {settings.run_mode}")
+                sys.exit(1)
 
     finally:
         # Clean up resources
@@ -503,6 +683,7 @@ def main() -> None:
 
     Loads configuration, wires adapters, initializes core services,
     and starts the appropriate run mode (daemon, CLI, or webhook).
+    Alternatively executes non-interactive commands (scan, diagnose).
 
     Exit codes:
         0: Successful shutdown
@@ -511,7 +692,10 @@ def main() -> None:
     """
     logger = logging.getLogger(__name__)
     try:
-        asyncio.run(bootstrap())
+        # Parse command-line arguments
+        args = _parse_arguments()
+        # Run bootstrap with optional command and signature_id
+        asyncio.run(bootstrap(command=args.command, signature_id=args.signature_id))
     except KeyboardInterrupt:
         logger.warning("Shutdown requested by user (SIGINT)")
         sys.exit(130)
