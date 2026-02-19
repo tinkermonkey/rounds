@@ -1,0 +1,63 @@
+# ============================================================================
+# Docker Compose Override for Rounds (Development)
+# ============================================================================
+# Development configuration extending docker-compose.rounds.yml
+# Enables live code editing, interactive shell, and debugging features.
+#
+# Usage:
+#   docker-compose -f docker-compose.rounds.yml -f docker-compose.rounds.dev.yml up -d rounds
+#
+# Or with interactive bash:
+#   docker-compose -f docker-compose.rounds.yml -f docker-compose.rounds.dev.yml run --rm rounds bash
+#
+# Features:
+#   - Live code editing via host-mounted source directory
+#   - Interactive bash shell (no auto-restart)
+#   - Additional debug tooling
+#   - Test and type-checking tools available
+# ============================================================================
+
+services:
+  rounds:
+    image: rounds:dev
+    container_name: rounds-dev
+
+    # Override: Disable auto-restart for development
+    restart: "no"
+
+    # Interactive and TTY for bash shell
+    stdin_open: true
+    tty: true
+
+    # Override working directory and entrypoint
+    working_dir: /workspace/rounds
+    entrypoint: /bin/bash
+
+    # Additional volume mounts for development
+    volumes:
+      # Mount Rounds source code for live editing
+      - ./rounds:/workspace/rounds:rw
+
+      # Target codebase (read-only)
+      - /path/to/target/codebase:/workspace/target:ro
+
+      # Reports output directory
+      - ./.rounds/reports:/app/reports:rw
+
+      # Persistent data storage
+      - rounds-data:/app/data:rw
+
+      # Claude Code CLI credentials (read-only)
+      # Uncomment to share host Claude credentials with container
+      # - ~/.config/claude-code:/home/nurse/.config/claude-code:ro
+
+    # Expose ports for debugging (if webhook mode is used)
+    ports:
+      - "8080:8080"
+
+    # Disable health check in development
+    healthcheck:
+      disable: true
+
+    # Keep container running
+    command: sleep infinity

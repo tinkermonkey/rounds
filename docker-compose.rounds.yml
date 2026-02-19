@@ -1,0 +1,77 @@
+# ============================================================================
+# Docker Compose Configuration for Rounds (Production)
+# ============================================================================
+# Base configuration for running the Rounds continuous error diagnosis system
+# in production mode with persistent storage and proper networking.
+#
+# Usage:
+#   docker-compose -f docker-compose.rounds.yml up -d
+#
+# Environment Configuration:
+#   Copy .env.rounds.template to .env.rounds and customize values
+#   See .env.rounds.template for all available configuration options
+#
+# Volumes:
+#   - rounds-data: Persistent SQLite database storage
+#   - ./path/to/target: Target codebase (bind mount, read-only)
+#   - ./.rounds/reports: Markdown report output (bind mount, read-write)
+# ============================================================================
+
+services:
+  rounds:
+    image: rounds:dist
+    container_name: rounds
+    restart: unless-stopped
+
+    # Environment configuration from file
+    env_file:
+      - .env.rounds
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Volume mounts
+    volumes:
+      # Target codebase (read-only) - required
+      # Edit the path below to match your target project location
+      - /path/to/target/codebase:/workspace/target:ro
+
+      # Reports output directory
+      - ./.rounds/reports:/app/reports:rw
+
+      # Persistent data storage (SQLite database)
+      - rounds-data:/app/data:rw
+
+      # Optional: Claude Code CLI credentials (development/testing only)
+      # Uncomment if running with Claude authentication from host
+      # - ~/.config/claude-code:/home/nurse/.config/claude-code:ro
+
+    # Network configuration
+    networks:
+      - rounds-network
+
+    # Allow container to reach Docker host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rounds-data:
+    driver: local
+
+networks:
+  rounds-network:
+    driver: bridge

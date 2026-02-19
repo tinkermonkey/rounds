@@ -1,0 +1,63 @@
+# ============================================================================
+# Dockerfile.dev - Rounds Development Image
+# ============================================================================
+# Development Docker image for the Rounds continuous error diagnosis system
+# with Python 3.11+, dev dependencies, git, and live code editing support
+#
+# Image: rounds:dev
+# User: nurse (non-root, UID 1000)
+# Working directory: /workspace/rounds (mounted from host)
+# Entrypoint: Interactive bash shell for development
+# ============================================================================
+
+FROM python:3.11-slim
+
+# Install development dependencies
+# - git: For version control and Claude Code CLI
+# - nodejs npm: For Claude Code CLI package
+# - sqlite3: For signature database operations
+# - curl: For health checks and API testing
+# - build-essential: For compiling Python packages
+# - python3-dev: For Python package compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    sqlite3 \
+    nodejs \
+    npm \
+    build-essential \
+    python3-dev \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (nurse)
+RUN useradd -m -u 1000 -s /bin/bash nurse
+
+# Set environment for Python
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/nurse/.local/bin:$PATH
+
+# Switch to non-root user
+USER nurse
+WORKDIR /workspace/rounds
+
+# Install development tool dependencies
+# Note: The rounds package source is mounted at runtime, not copied here.
+# This installs development dependencies (pytest, mypy, ruff, etc.) and
+# core runtime dependencies for when the source is available.
+RUN pip install --user --no-cache-dir \
+    pytest \
+    pytest-cov \
+    pytest-asyncio \
+    mypy \
+    ruff \
+    black \
+    pydantic \
+    pydantic-settings \
+    httpx \
+    python-dotenv \
+    aiosqlite
+
+# Default interactive shell for development
+CMD ["/bin/bash"]
