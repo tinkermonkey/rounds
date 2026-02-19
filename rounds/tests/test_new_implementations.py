@@ -445,18 +445,19 @@ class TestMarkdownNotificationAdapter:
     """Test suite for MarkdownNotificationAdapter."""
 
     @pytest.fixture
-    def temp_file(self) -> Path:
-        """Create a temporary markdown file."""
-        fd, path = tempfile.mkstemp(suffix=".md")
-        import os
-        os.close(fd)
-        yield Path(path)
-        Path(path).unlink()
+    def temp_dir(self) -> Path:
+        """Create a temporary directory for markdown reports."""
+        import tempfile
+        temp_dir = Path(tempfile.mkdtemp())
+        yield temp_dir
+        # Cleanup: recursively remove temp directory
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     @pytest.fixture
-    def adapter(self, temp_file: Path) -> MarkdownNotificationAdapter:
+    def adapter(self, temp_dir: Path) -> MarkdownNotificationAdapter:
         """Create a MarkdownNotificationAdapter."""
-        return MarkdownNotificationAdapter(str(temp_file))
+        return MarkdownNotificationAdapter(str(temp_dir))
 
     @pytest.fixture
     def sample_signature(self) -> Signature:
@@ -488,22 +489,28 @@ class TestMarkdownNotificationAdapter:
         )
 
     async def test_report_appends_to_file(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path,
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that report is appended to file."""
+        """Test that report is appended to file in date-based directory."""
         await adapter.report(sample_signature, sample_diagnosis)
 
-        content = temp_file.read_text()
+        # Get today's date and check for report file in date-based directory
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        report_file = temp_dir / today / "reports.md"
+
+        assert report_file.exists(), f"Report file not found at {report_file}"
+        content = report_file.read_text()
         assert "Diagnosis Report" in content
         assert "TimeoutError" in content
         assert "api-service" in content
         assert "Connection pool exhausted" in content
 
     async def test_report_summary_appends_to_file(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path
     ) -> None:
-        """Test that summary report is appended to file."""
+        """Test that summary report is appended to file in date-based directory."""
         stats = {
             "total_signatures": 42,
             "total_errors_seen": 150,
@@ -513,20 +520,32 @@ class TestMarkdownNotificationAdapter:
 
         await adapter.report_summary(stats)
 
-        content = temp_file.read_text()
+        # Get today's date and check for report file in date-based directory
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        report_file = temp_dir / today / "reports.md"
+
+        assert report_file.exists(), f"Report file not found at {report_file}"
+        content = report_file.read_text()
         assert "Summary Report" in content
         assert "**Total Signatures**: 42" in content
         assert "**NEW**: 10" in content
 
     async def test_multiple_reports_appended(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path,
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that multiple reports are appended."""
+        """Test that multiple reports are appended to the same date file."""
         await adapter.report(sample_signature, sample_diagnosis)
         await adapter.report(sample_signature, sample_diagnosis)
 
-        content = temp_file.read_text()
+        # Get today's date and check for report file in date-based directory
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        report_file = temp_dir / today / "reports.md"
+
+        assert report_file.exists(), f"Report file not found at {report_file}"
+        content = report_file.read_text()
         # Should have two report headers
         assert content.count("Diagnosis Report") == 2
 

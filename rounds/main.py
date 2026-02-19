@@ -376,7 +376,7 @@ async def bootstrap() -> None:
         notification = StdoutNotificationAdapter(verbose=settings.debug)
         logger.info("Notification adapter: Stdout")
     elif settings.notification_backend == "markdown":
-        notification = MarkdownNotificationAdapter(report_path=settings.notification_output_dir)
+        notification = MarkdownNotificationAdapter(report_dir=settings.notification_output_dir)
         logger.info("Notification adapter: Markdown")
     elif settings.notification_backend == "github_issue":
         notification = GitHubIssueNotificationAdapter(

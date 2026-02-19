@@ -1,6 +1,7 @@
 """Markdown file notification adapter.
 
-Implements NotificationPort by appending findings to a markdown report file.
+Implements NotificationPort by appending findings to markdown report files
+organized in date-based directories (YYYY-MM-DD).
 Useful for creating audit trails and persistent diagnostic records.
 """
 
@@ -17,17 +18,29 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownNotificationAdapter(NotificationPort):
-    """Appends findings to a markdown report file."""
+    """Appends findings to markdown report files organized by date."""
 
-    def __init__(self, report_path: str):
+    def __init__(self, report_dir: str):
         """Initialize markdown notification adapter.
 
         Args:
-            report_path: Path to the markdown file where reports will be appended.
+            report_dir: Base directory where date-based subdirectories will be created.
+                       Reports will be organized as: report_dir/YYYY-MM-DD/reports.md
         """
-        self.report_path = Path(report_path)
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.base_dir = Path(report_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
+
+    def _get_report_file(self) -> Path:
+        """Get the report file path for today's date.
+
+        Returns:
+            Path to the markdown report file for today (YYYY-MM-DD/reports.md).
+        """
+        today = datetime.now(timezone.utc).date()
+        date_dir = self.base_dir / today.isoformat()
+        date_dir.mkdir(parents=True, exist_ok=True)
+        return date_dir / "reports.md"
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
@@ -39,10 +52,11 @@ class MarkdownNotificationAdapter(NotificationPort):
         # Append to file
         async with self._lock:
             try:
-                await asyncio.to_thread(self._write_to_file, entry)
+                report_file = self._get_report_file()
+                await asyncio.to_thread(self._write_to_file, report_file, entry)
 
                 logger.info(
-                    f"Appended diagnosis report to {self.report_path}",
+                    f"Appended diagnosis report to {report_file}",
                     extra={
                         "signature_id": signature.id,
                         "fingerprint": signature.fingerprint,
@@ -52,7 +66,7 @@ class MarkdownNotificationAdapter(NotificationPort):
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown report: {e}",
-                    extra={"path": str(self.report_path)},
+                    extra={"path": str(self._get_report_file())},
                     exc_info=True,
                 )
                 raise
@@ -63,24 +77,30 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         async with self._lock:
             try:
-                await asyncio.to_thread(self._write_to_file, summary)
+                report_file = self._get_report_file()
+                await asyncio.to_thread(self._write_to_file, report_file, summary)
 
                 logger.info(
-                    f"Appended summary report to {self.report_path}",
+                    f"Appended summary report to {report_file}",
                     extra={"stats": stats},
                 )
 
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown summary: {e}",
-                    extra={"path": str(self.report_path)},
+                    extra={"path": str(self._get_report_file())},
                     exc_info=True,
                 )
                 raise
 
-    def _write_to_file(self, content: str) -> None:
-        """Write content to file (blocking operation)."""
-        with open(self.report_path, "a") as f:
+    def _write_to_file(self, report_file: Path, content: str) -> None:
+        """Write content to file (blocking operation).
+
+        Args:
+            report_file: Path to the markdown report file.
+            content: Content to append to the file.
+        """
+        with open(report_file, "a") as f:
             f.write(content)
             f.write("\n")
 
