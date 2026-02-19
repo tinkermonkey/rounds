@@ -34,11 +34,11 @@ echo -e "${YELLOW}Updating Claude Code CLI...${NC}"
 
 if [ -n "$CLAUDE_CODE_VERSION" ]; then
   echo "Installing Claude Code CLI version $CLAUDE_CODE_VERSION..."
-  if npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" 2>&1; then
+  if npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"; then
     echo -e "${GREEN}Claude Code CLI version $CLAUDE_CODE_VERSION installed successfully${NC}"
   else
     echo -e "${YELLOW}Warning: Failed to install specific version, attempting latest...${NC}"
-    if npm install -g "@anthropic-ai/claude-code" 2>&1; then
+    if npm install -g "@anthropic-ai/claude-code"; then
       echo -e "${GREEN}Claude Code CLI installed successfully${NC}"
     else
       echo -e "${RED}ERROR: Could not install Claude Code CLI${NC}"
@@ -48,7 +48,7 @@ if [ -n "$CLAUDE_CODE_VERSION" ]; then
 else
   echo "Installing latest Claude Code CLI..."
   # Try to update first (if already installed), then fall back to install
-  if npm update -g "@anthropic-ai/claude-code" 2>&1 || npm install -g "@anthropic-ai/claude-code" 2>&1; then
+  if npm update -g "@anthropic-ai/claude-code" || npm install -g "@anthropic-ai/claude-code"; then
     echo -e "${GREEN}Claude Code CLI installed/updated successfully${NC}"
   else
     echo -e "${RED}ERROR: Could not install Claude Code CLI${NC}"

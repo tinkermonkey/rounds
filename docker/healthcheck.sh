@@ -14,7 +14,7 @@
 set -e
 
 # Check if the Python process running rounds.main is active
-if pgrep -f "python.*-m rounds.main" > /dev/null; then
+if pgrep -f "python -m rounds.main$" > /dev/null; then
   exit 0  # Healthy
 else
   exit 1  # Unhealthy

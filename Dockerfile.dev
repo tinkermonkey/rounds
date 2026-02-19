@@ -36,11 +36,16 @@ RUN useradd -m -u 1000 -s /bin/bash nurse
 # Set environment for Python
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH=/home/nurse/.local/bin:$PATH
+    PATH=/home/nurse/.local/bin:/home/nurse/.npm-global/bin:$PATH
 
 # Switch to non-root user
 USER nurse
 WORKDIR /workspace/rounds
+
+# Configure npm for user-local global package installation
+# This allows npm install -g to work without sudo in the container
+RUN mkdir -p ~/.npm-global && \
+    npm config set prefix '~/.npm-global'
 
 # Install development tool dependencies
 # Note: The rounds package source is mounted at runtime, not copied here.

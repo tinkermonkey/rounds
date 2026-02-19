@@ -29,23 +29,13 @@ services:
     stdin_open: true
     tty: true
 
-    # Override working directory and entrypoint
+    # Override working directory
     working_dir: /workspace/rounds
-    entrypoint: /bin/bash
 
     # Additional volume mounts for development
     volumes:
       # Mount Rounds source code for live editing
       - ./rounds:/workspace/rounds:rw
-
-      # Target codebase (read-only)
-      - /path/to/target/codebase:/workspace/target:ro
-
-      # Reports output directory
-      - ./.rounds/reports:/app/reports:rw
-
-      # Persistent data storage
-      - rounds-data:/app/data:rw
 
       # Claude Code CLI credentials (read-only)
       # Uncomment to share host Claude credentials with container
@@ -58,6 +48,3 @@ services:
     # Disable health check in development
     healthcheck:
       disable: true
-
-    # Keep container running
-    command: sleep infinity
