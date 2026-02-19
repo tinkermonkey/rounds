@@ -65,29 +65,57 @@ Rounds is built on **hexagonal architecture (ports and adapters)** to enable tec
 - Claude Code CLI or OpenAI API key for diagnosis
 - Optional: PostgreSQL for production-scale signature persistence
 
+## Quick Start
+
+The fastest way to get Rounds running is with Docker Compose:
+
+```bash
+# Copy and customize the environment file
+cp .env.rounds.template .env.rounds
+
+# Start the daemon
+docker-compose -f docker-compose.rounds.yml up -d
+
+# View logs
+docker-compose logs -f rounds
+```
+
+See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions and [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all configuration options.
+
 ## Running Rounds
 
 ### Daemon mode (continuous polling and diagnosis)
 
 ```bash
+# Direct Python (requires local setup)
 TELEMETRY_BACKEND=signoz RUN_MODE=daemon python -m rounds.main
+
+# Docker (recommended for production)
+docker-compose -f docker-compose.rounds.yml up -d
 ```
 
 ### CLI mode (interactive management)
 
 ```bash
+# Direct Python
 RUN_MODE=cli python -m rounds.main
+
+# Docker (interactive shell)
+docker-compose -f docker-compose.rounds.yml \
+               -f docker-compose.rounds.dev.yml run --rm rounds
 ```
 
 ### Webhook mode (external trigger listening)
 
 ```bash
-RUN_MODE=webhook WEBHOOK_PORT=8080 python -m rounds.main
+# Docker with webhook override
+docker-compose -f docker-compose.rounds.yml \
+               -f docker-compose.webhook.yml up -d
 ```
 
 ## Configuration
 
-Rounds is configured via environment variables (see `config.py` for all options and defaults):
+Rounds is configured via environment variables. Copy `.env.rounds.template` to `.env.rounds` and customize:
 
 ```bash
 # Telemetry backend
@@ -95,27 +123,30 @@ TELEMETRY_BACKEND=signoz                    # "signoz", "jaeger", or "grafana_st
 SIGNOZ_API_URL=http://localhost:3301
 SIGNOZ_API_KEY=your-api-key
 
-# Polling behavior
-POLL_INTERVAL_SECONDS=60
-ERROR_LOOKBACK_MINUTES=15
-POLL_BATCH_SIZE=100
-
 # Signature store
 STORE_BACKEND=sqlite                        # "sqlite" or "postgresql"
-STORE_SQLITE_PATH=./rounds.db
+STORE_SQLITE_PATH=/app/data/signatures.db
 
 # Diagnosis engine
 DIAGNOSIS_BACKEND=claude_code               # "claude_code" or "openai"
-CLAUDE_CODE_BUDGET_USD=2.0
-DAILY_BUDGET_LIMIT=20.0
+ANTHROPIC_API_KEY=sk-ant-...
 
 # Notifications
-NOTIFICATION_BACKEND=stdout                 # "stdout", "markdown", or "github_issue"
+NOTIFICATION_BACKEND=markdown               # "stdout", "markdown", or "github_issue"
 
 # Run mode
 RUN_MODE=daemon                             # "daemon", "cli", or "webhook"
-WEBHOOK_PORT=8080
 ```
+
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for complete reference with examples and best practices.
+
+## Documentation
+
+- **[DEPLOY.md](DEPLOY.md)** — Deployment guide with quick start, configurations for different backends, and production setup
+- **[docs/DOCKER.md](docs/DOCKER.md)** — Docker image specifications, customization, and security best practices
+- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — Complete environment variable reference with examples
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — Common issues and solutions
+- **[CLAUDE.md](CLAUDE.md)** — Project architecture, coding standards, and design decisions
 
 ## Project structure
 
@@ -137,7 +168,8 @@ rounds/
 │   │   ├── jaeger.py
 │   │   └── grafana_stack.py
 │   ├── store/                   # Persist signatures
-│   │   └── sqlite.py            # (postgresql adapter planned)
+│   │   ├── sqlite.py
+│   │   └── postgresql.py
 │   ├── diagnosis/               # Root cause analysis via LLM
 │   │   ├── claude_code.py
 │   │   └── openai.py
@@ -158,6 +190,17 @@ rounds/
     ├── integration/             # End-to-end pipeline tests
     └── fakes/                   # Fake port implementations
 ```
+
+## Docker Files
+
+- **Dockerfile.dist** — Production image (minimal, auto-updating Claude Code CLI)
+- **Dockerfile.dev** — Development image (testing tools, live editing)
+- **Dockerfile.agent** — Clauditoreum integration image
+- **docker-compose.rounds.yml** — Base production configuration
+- **docker-compose.rounds.dev.yml** — Development overrides
+- **docker-compose.postgres.yml** — Multi-instance setup with PostgreSQL
+- **docker-compose.full-stack.yml** — Complete stack with SigNoz
+- **docker-compose.webhook.yml** — Event-driven webhook mode
 
 ## License
 

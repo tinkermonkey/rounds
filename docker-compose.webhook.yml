@@ -1,0 +1,269 @@
+# ============================================================================
+# Docker Compose Configuration for Rounds in Webhook Mode
+# ============================================================================
+# HTTP server mode for event-driven diagnosis. Rounds listens for incoming
+# requests and diagnoses errors on-demand (rather than continuous polling).
+#
+# Usage:
+#   docker-compose -f docker-compose.rounds.yml \
+#                  -f docker-compose.webhook.yml up -d
+#
+# Features:
+#   - HTTP server listening for diagnosis requests
+#   - Optional API key authentication
+#   - Webhook signature verification (HMAC)
+#   - Integration with alerting systems (PagerDuty, Datadog, etc.)
+#
+# Environment Configuration:
+#   Copy .env.rounds.template to .env.rounds and set:
+#   RUN_MODE=webhook
+#   WEBHOOK_PORT=8080
+#   WEBHOOK_API_KEY=your-secret-key
+#   WEBHOOK_REQUIRE_AUTH=true
+# ============================================================================
+
+services:
+  rounds:
+    # Override from docker-compose.rounds.yml for webhook mode
+
+    # Environment configuration
+    environment:
+      RUN_MODE: webhook
+      WEBHOOK_HOST: 0.0.0.0
+      WEBHOOK_PORT: 8080
+      # Optional: Require API key authentication for incoming requests
+      WEBHOOK_API_KEY: rounds-webhook-secret-key-change-me
+      WEBHOOK_REQUIRE_AUTH: "true"
+      # Optional: Verify webhook signatures from alert systems
+      # WEBHOOK_SIGNATURE_ALGORITHM: hmac-sha256
+
+    # Port mapping for webhook server
+    ports:
+      - "8080:8080"
+
+    # Health check - verify webhook server is responsive
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# ============================================================================
+# WEBHOOK API ENDPOINTS
+# ============================================================================
+#
+# POST /diagnose
+# --------
+# Trigger diagnosis for a specific error
+#
+# Request Headers:
+#   Content-Type: application/json
+#   X-API-Key: your-secret-key (if WEBHOOK_REQUIRE_AUTH=true)
+#
+# Request Body:
+# {
+#   "trace_id": "abc123def456",
+#   "service": "payment-service",
+#   "error_type": "DatabaseTimeoutError",
+#   "error_message": "Connection timeout after 5000ms",
+#   "timestamp": "2025-02-19T10:30:00Z",
+#   "context": {
+#     "endpoint": "/api/v1/charges",
+#     "user_id": "user-123",
+#     "environment": "production"
+#   }
+# }
+#
+# Response (200 OK):
+# {
+#   "diagnosis_id": "sig-12345",
+#   "status": "queued",
+#   "message": "Diagnosis queued for processing"
+# }
+#
+# --------
+# GET /health
+# --------
+# Health check endpoint
+#
+# Response (200 OK):
+# {
+#   "status": "healthy",
+#   "timestamp": "2025-02-19T10:30:00Z"
+# }
+#
+# --------
+# GET /signatures
+# --------
+# List recent signatures and their diagnoses
+#
+# Query Parameters:
+#   limit=50           # Max signatures to return
+#   status=diagnosed   # Filter by status: new, investigating, diagnosed
+#
+# Response (200 OK):
+# [
+#   {
+#     "id": "sig-12345",
+#     "error_type": "DatabaseTimeoutError",
+#     "service": "payment-service",
+#     "occurrences": 5,
+#     "status": "diagnosed",
+#     "diagnosis": { ... }
+#   },
+#   ...
+# ]
+#
+# ============================================================================
+# INTEGRATION EXAMPLES
+# ============================================================================
+#
+# === PagerDuty Alert to Rounds ===
+#
+# Use PagerDuty Webhooks to trigger Rounds diagnosis when incidents occur:
+#
+# POST /diagnose HTTP/1.1
+# Host: rounds-webhook.example.com:8080
+# Content-Type: application/json
+# X-API-Key: your-secret-key
+#
+# {
+#   "trace_id": "incident-123-trace-456",
+#   "service": "web-api",
+#   "error_type": "HighErrorRate",
+#   "error_message": "Error rate exceeded 10%",
+#   "timestamp": "2025-02-19T10:30:00Z",
+#   "context": {
+#     "incident_id": "INC123456",
+#     "severity": "critical",
+#     "assigned_to": "team-platform"
+#   }
+# }
+#
+# === Datadog Monitor to Rounds ===
+#
+# Datadog monitors can POST to webhook when threshold exceeded:
+#
+# {
+#   "alert_id": 12345678,
+#   "alert_title": "High latency on payment-service",
+#   "service": "payment-service",
+#   "error_type": "HighLatency",
+#   "timestamp": "2025-02-19T10:30:00Z",
+#   "context": {
+#     "p99_latency_ms": 5000,
+#     "threshold_ms": 1000,
+#     "affected_endpoints": ["/api/v1/charges", "/api/v1/refunds"]
+#   }
+# }
+#
+# === Slack Bot to Rounds (cURL example) ===
+#
+# /trigger-diagnosis @rounds trace-id=abc123 service=api error="TimeoutError"
+#
+# Slack bot would construct:
+#
+# curl -X POST http://rounds:8080/diagnose \
+#   -H "Content-Type: application/json" \
+#   -H "X-API-Key: your-secret-key" \
+#   -d '{
+#     "trace_id": "abc123",
+#     "service": "api",
+#     "error_type": "TimeoutError",
+#     "timestamp": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'",
+#     "context": {
+#       "requested_by": "@user",
+#       "slack_channel": "#incidents"
+#     }
+#   }'
+#
+# ============================================================================
+# DEPLOYMENT CONSIDERATIONS
+# ============================================================================
+#
+# Network Configuration:
+#   - Webhook server listens on 0.0.0.0:8080 (all interfaces)
+#   - Restrict access using firewall rules or reverse proxy authentication
+#
+# Rate Limiting (planned):
+#   - Implement rate limiting to prevent abuse
+#   - Current: No built-in rate limiting
+#   - Recommended: Use reverse proxy (nginx, HAProxy) for rate limits
+#
+# Reverse Proxy Example (nginx):
+#
+#   server {
+#     listen 443 ssl http2;
+#     server_name rounds.example.com;
+#
+#     # Rate limiting
+#     limit_req_zone $binary_remote_addr zone=webhook:10m rate=10r/s;
+#     limit_req zone=webhook burst=20 nodelay;
+#
+#     # TLS configuration
+#     ssl_certificate /path/to/cert.pem;
+#     ssl_certificate_key /path/to/key.pem;
+#
+#     # Reverse proxy to Rounds
+#     location / {
+#       proxy_pass http://rounds:8080;
+#       proxy_set_header Host $host;
+#       proxy_set_header X-Real-IP $remote_addr;
+#       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#       proxy_set_header X-Forwarded-Proto $scheme;
+#
+#       # Require authentication
+#       auth_basic "Rounds Webhook";
+#       auth_basic_user_file /etc/nginx/.htpasswd;
+#     }
+#   }
+#
+# ============================================================================
+# SECURITY
+# ============================================================================
+#
+# 1. Always enable WEBHOOK_REQUIRE_AUTH in production
+#
+# 2. Use strong API key (32+ characters):
+#    openssl rand -base64 32
+#
+# 3. Use HTTPS (reverse proxy with TLS) in production
+#
+# 4. Implement webhook signature verification:
+#    - HMAC-SHA256 to verify requests from alert systems
+#    - Compare X-Webhook-Signature header
+#
+# 5. Rate limiting (via reverse proxy):
+#    - Prevent abuse from external systems
+#    - Limit requests per second and burst size
+#
+# 6. Monitor webhook activity:
+#    - Log all incoming requests
+#    - Alert on authentication failures
+#    - Track error rate and latency
+#
+# ============================================================================
+# TESTING
+# ============================================================================
+#
+# Test webhook server is running:
+#
+#   curl http://localhost:8080/health
+#
+# Send test diagnosis request:
+#
+#   curl -X POST http://localhost:8080/diagnose \
+#     -H "Content-Type: application/json" \
+#     -H "X-API-Key: rounds-webhook-secret-key-change-me" \
+#     -d '{
+#       "trace_id": "test-trace-001",
+#       "service": "test-service",
+#       "error_type": "TestError",
+#       "timestamp": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'",
+#       "context": {
+#         "test": true
+#       }
+#     }'
+#
+# ============================================================================
