@@ -9,7 +9,6 @@ Tests verify that the scan and diagnose commands correctly:
 
 import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
