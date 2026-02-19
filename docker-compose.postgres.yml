@@ -111,7 +111,7 @@ services:
     # Volume mounts
     volumes:
       # Reports output directory
-      - ./reports:/app/reports:rw
+      - ./.rounds/reports:/app/reports:rw
       # Optional: Claude Code CLI credentials
       # - ~/.config/claude-code:/home/nurse/.config/claude-code:ro
 
@@ -159,7 +159,7 @@ services:
           memory: 128M
 
     volumes:
-      - ./reports:/app/reports:rw
+      - ./.rounds/reports:/app/reports:rw
 
     networks:
       - rounds-network

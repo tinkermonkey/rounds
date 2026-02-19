@@ -259,7 +259,7 @@ services:
       # Data persistence
       - rounds-data:/app/data
       # Reports
-      - ./reports:/app/reports:rw
+      - ./.rounds/reports:/app/reports:rw
 
     # Network
     networks:
@@ -326,7 +326,7 @@ networks:
 #    pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
 #    # Then send traces to localhost:4318 (or 4317 for gRPC)
 #
-# 7. View traces in SigNoz and check Rounds diagnosis in ./reports
+# 7. View traces in SigNoz and check Rounds diagnosis in ./.rounds/reports
 #
 # ============================================================================
 #

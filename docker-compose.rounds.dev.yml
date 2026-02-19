@@ -45,6 +45,13 @@ services:
     ports:
       - "8080:8080"
 
+    # Override resource limits for development
+    deploy:
+      resources: {}
+
+    # Interactive shell
+    command: ["/bin/bash"]
+
     # Disable health check in development
     healthcheck:
       disable: true
