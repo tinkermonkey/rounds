@@ -1,0 +1,52 @@
+# Git directory
+.git/
+.github/
+
+# Python bytecode
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local configuration and secrets
+.env
+.envrc
+
+# Database files (created at runtime)
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Type checking cache
+.mypy_cache/
+.ruff_cache/
+
+# MCP configuration (development only)
+.mcp.json
