@@ -22,16 +22,16 @@ from typing import Any
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
+from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
-from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
+from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
-from rounds.adapters.webhook.receiver import WebhookReceiver
 from rounds.adapters.webhook.http_server import WebhookHTTPServer
+from rounds.adapters.webhook.receiver import WebhookReceiver
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
@@ -48,8 +48,6 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
     Args:
         cli_handler: CLICommandHandler instance for executing commands.
     """
-    import json
-
     logger = logging.getLogger(__name__)
     logger.info("Starting interactive CLI. Type 'help' for available commands or 'exit' to quit.")
 
@@ -246,22 +244,14 @@ async def _run_scan(
 
 async def _run_diagnose(
     signature_id: str,
-    telemetry: Any,
     store: Any,
-    diagnosis_engine: Any,
-    notification: Any,
-    triage: Any,
     investigator: Any,
 ) -> None:
     """Diagnose a specific signature and output results as JSON.
 
     Args:
         signature_id: UUID of the signature to diagnose.
-        telemetry: TelemetryPort implementation.
         store: SignatureStorePort implementation.
-        diagnosis_engine: DiagnosisPort implementation.
-        notification: NotificationPort implementation.
-        triage: TriageEngine instance.
         investigator: Investigator instance.
     """
     logger = logging.getLogger(__name__)
@@ -611,11 +601,7 @@ async def bootstrap(command: str | None = None, signature_id: str | None = None)
             logger.info(f"Executing diagnose command for signature {signature_id}...")
             await _run_diagnose(
                 signature_id=signature_id,
-                telemetry=telemetry,
                 store=store,
-                diagnosis_engine=diagnosis_engine,
-                notification=notification,
-                triage=triage,
                 investigator=investigator,
             )
 

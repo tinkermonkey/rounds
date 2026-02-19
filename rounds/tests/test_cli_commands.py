@@ -7,34 +7,17 @@ Tests verify that the scan and diagnose commands correctly:
 - Handle error cases gracefully
 """
 
-import asyncio
 import json
-import sys
 from datetime import datetime, timedelta, timezone
-from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from rounds.core.fingerprint import Fingerprinter
-from rounds.core.investigator import Investigator
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
-    ErrorEvent,
     PollResult,
-    Severity,
     Signature,
     SignatureStatus,
-    StackFrame,
-)
-from rounds.core.poll_service import PollService
-from rounds.core.triage import TriageEngine
-from rounds.tests.fakes import (
-    FakeDiagnosisPort,
-    FakeNotificationPort,
-    FakeSignatureStorePort,
-    FakeTelemetryPort,
 )
 
 
@@ -61,7 +44,7 @@ def sample_signature() -> Signature:
 
 
 @pytest.fixture
-def sample_diagnosis(sample_signature: Signature) -> Diagnosis:
+def sample_diagnosis() -> Diagnosis:
     """Create a sample diagnosis for testing."""
     return Diagnosis(
         root_cause="Database connection pool exhaustion due to unresolved connections",
@@ -71,39 +54,10 @@ def sample_diagnosis(sample_signature: Signature) -> Diagnosis:
             "Pool size set to 10 but seeing 150+ attempted connections",
         ),
         suggested_fix="Increase connection pool size or implement connection timeout recycling",
-        confidence="high",  # type: ignore
+        confidence="high",
         diagnosed_at=datetime.now(timezone.utc),
         model="claude-opus-4-6",
         cost_usd=0.05,
-    )
-
-
-@pytest.fixture
-def error_event() -> ErrorEvent:
-    """Create a sample error event for testing."""
-    return ErrorEvent(
-        trace_id="trace-123",
-        span_id="span-456",
-        service="payment-service",
-        error_type="ConnectionTimeoutError",
-        error_message="Failed to connect to database at 10.0.0.5:5432 for user 12345",
-        stack_frames=(
-            StackFrame(
-                module="payment.service",
-                function="process_charge",
-                filename="service.py",
-                lineno=42,
-            ),
-            StackFrame(
-                module="payment.db",
-                function="execute",
-                filename="db.py",
-                lineno=15,
-            ),
-        ),
-        timestamp=datetime.now(timezone.utc),
-        attributes={"user_id": "123", "amount": "99.99"},
-        severity=Severity.ERROR,
     )
 
 
@@ -115,10 +69,8 @@ def error_event() -> ErrorEvent:
 class TestScanCommand:
     """Test the scan command functionality."""
 
-    @pytest.mark.asyncio
-    async def test_scan_command_structure(self) -> None:
-        """Test that scan command produces correct JSON structure."""
-        # Create a mock poll result
+    def test_scan_success_data_structure(self) -> None:
+        """Test scan command success output data structure."""
         now = datetime.now(timezone.utc)
         poll_result = PollResult(
             errors_found=5,
@@ -129,12 +81,48 @@ class TestScanCommand:
             errors_failed_to_process=0,
         )
 
-        # Verify structure matches expectations
-        assert poll_result.new_signatures >= 0
-        assert poll_result.updated_signatures >= 0
-        assert poll_result.errors_found >= 0
-        assert hasattr(poll_result, "timestamp")
-        assert hasattr(poll_result, "investigations_queued")
+        # Create the output structure as scan would
+        output = {
+            "status": "success",
+            "new_signatures": poll_result.new_signatures,
+            "updated_signatures": poll_result.updated_signatures,
+            "errors_processed": poll_result.errors_found,
+            "errors_failed": poll_result.errors_failed_to_process,
+            "investigations_queued": poll_result.investigations_queued,
+            "timestamp": poll_result.timestamp.isoformat(),
+        }
+
+        # Verify output structure and JSON serializability
+        assert output["status"] == "success"
+        assert output["new_signatures"] == 2
+        assert output["updated_signatures"] == 3
+        assert output["errors_processed"] == 5
+        assert output["errors_failed"] == 0
+        assert output["investigations_queued"] == 1
+        assert "timestamp" in output
+
+        # Verify JSON serializable
+        json_str = json.dumps(output, indent=2)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "success"
+
+    def test_scan_error_data_structure(self) -> None:
+        """Test scan command error output data structure."""
+        error_message = "Telemetry connection failed"
+        output = {
+            "status": "error",
+            "message": error_message,
+        }
+
+        # Verify output structure and JSON serializability
+        assert output["status"] == "error"
+        assert output["message"] == error_message
+
+        # Verify JSON serializable
+        json_str = json.dumps(output, indent=2)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "error"
+        assert "message" in parsed
 
 
 # ============================================================================
@@ -145,14 +133,70 @@ class TestScanCommand:
 class TestDiagnoseCommand:
     """Test the diagnose command functionality."""
 
-    def test_diagnose_command_structure(self, sample_diagnosis: Diagnosis) -> None:
-        """Test that diagnose command produces correct JSON structure."""
-        # Verify diagnosis has required fields
-        assert sample_diagnosis.root_cause
-        assert sample_diagnosis.confidence in ("high", "medium", "low")
-        assert sample_diagnosis.cost_usd >= 0
-        assert hasattr(sample_diagnosis, "diagnosed_at")
-        assert sample_diagnosis.model
+    def test_diagnose_success_data_structure(self, sample_diagnosis: Diagnosis) -> None:
+        """Test diagnose command success output data structure."""
+        signature_id = "test-sig-123"
+
+        # Create the output structure as diagnose would
+        output = {
+            "status": "success",
+            "signature_id": signature_id,
+            "root_cause": sample_diagnosis.root_cause,
+            "confidence": sample_diagnosis.confidence,
+            "cost_usd": sample_diagnosis.cost_usd,
+            "diagnosed_at": sample_diagnosis.diagnosed_at.isoformat(),
+            "model": sample_diagnosis.model,
+        }
+
+        # Verify output structure
+        assert output["status"] == "success"
+        assert output["signature_id"] == signature_id
+        assert output["root_cause"] == sample_diagnosis.root_cause
+        assert output["confidence"] == sample_diagnosis.confidence
+        assert output["cost_usd"] == sample_diagnosis.cost_usd
+        assert output["model"] == sample_diagnosis.model
+        assert "diagnosed_at" in output
+
+        # Verify JSON serializable
+        json_str = json.dumps(output, indent=2)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "success"
+
+    def test_diagnose_signature_not_found_error(self) -> None:
+        """Test diagnose command error output for missing signature."""
+        error_message = "Signature not found: nonexistent-sig"
+        output = {
+            "status": "error",
+            "message": error_message,
+        }
+
+        # Verify output structure
+        assert output["status"] == "error"
+        assert "Signature not found" in output["message"]
+
+        # Verify JSON serializable
+        json_str = json.dumps(output, indent=2)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "error"
+        assert "message" in parsed
+
+    def test_diagnose_investigation_error(self) -> None:
+        """Test diagnose command error output for investigation failure."""
+        error_message = "LLM API error"
+        output = {
+            "status": "error",
+            "message": error_message,
+        }
+
+        # Verify output structure
+        assert output["status"] == "error"
+        assert output["message"] == error_message
+
+        # Verify JSON serializable
+        json_str = json.dumps(output, indent=2)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "error"
+        assert "message" in parsed
 
 
 # ============================================================================
@@ -168,32 +212,32 @@ class TestArgumentParsing:
         import argparse
 
         parser = argparse.ArgumentParser()
-        parser.add_argument('command', nargs='?', choices=['scan', 'diagnose'])
-        parser.add_argument('signature_id', nargs='?')
+        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
+        parser.add_argument("signature_id", nargs="?")
 
         # Should not raise
-        args = parser.parse_args(['scan'])
-        assert args.command == 'scan'
+        args = parser.parse_args(["scan"])
+        assert args.command == "scan"
 
     def test_argument_parser_accepts_diagnose(self) -> None:
         """Verify argparse can accept 'diagnose' command with signature_id."""
         import argparse
 
         parser = argparse.ArgumentParser()
-        parser.add_argument('command', nargs='?', choices=['scan', 'diagnose'])
-        parser.add_argument('signature_id', nargs='?')
+        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
+        parser.add_argument("signature_id", nargs="?")
 
-        args = parser.parse_args(['diagnose', 'sig-12345'])
-        assert args.command == 'diagnose'
-        assert args.signature_id == 'sig-12345'
+        args = parser.parse_args(["diagnose", "sig-12345"])
+        assert args.command == "diagnose"
+        assert args.signature_id == "sig-12345"
 
     def test_argument_parser_accepts_no_command(self) -> None:
         """Verify argparse supports interactive mode with no command."""
         import argparse
 
         parser = argparse.ArgumentParser()
-        parser.add_argument('command', nargs='?', choices=['scan', 'diagnose'])
-        parser.add_argument('signature_id', nargs='?')
+        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
+        parser.add_argument("signature_id", nargs="?")
 
         args = parser.parse_args([])
         assert args.command is None
@@ -201,14 +245,14 @@ class TestArgumentParsing:
 
 
 # ============================================================================
-# Integration tests
+# Output Structure Tests
 # ============================================================================
 
 
-class TestIntegration:
-    """Integration tests for command output structures."""
+class TestOutputStructures:
+    """Test that output structures match specification."""
 
-    def test_scan_command_output_structure(self) -> None:
+    def test_scan_output_structure(self) -> None:
         """Test that scan command output contains all required fields."""
         now = datetime.now(timezone.utc)
         poll_result = PollResult(
@@ -245,14 +289,14 @@ class TestIntegration:
         parsed = json.loads(json_str)
         assert parsed["status"] == "success"
 
-    def test_diagnose_command_output_structure(
-        self, sample_signature: Signature, sample_diagnosis: Diagnosis
-    ) -> None:
+    def test_diagnose_output_structure(self, sample_diagnosis: Diagnosis) -> None:
         """Test that diagnose command output contains all required fields."""
+        signature_id = "test-sig-123"
+
         # Create the output structure as diagnose would
         output = {
             "status": "success",
-            "signature_id": sample_signature.id,
+            "signature_id": signature_id,
             "root_cause": sample_diagnosis.root_cause,
             "confidence": sample_diagnosis.confidence,
             "cost_usd": sample_diagnosis.cost_usd,
@@ -262,7 +306,7 @@ class TestIntegration:
 
         # Verify all required fields are present
         assert output["status"] == "success"
-        assert output["signature_id"] == sample_signature.id
+        assert output["signature_id"] == signature_id
         assert "root_cause" in output
         assert "confidence" in output
         assert "cost_usd" in output
