@@ -744,7 +744,7 @@ class TestFakeManagementPort:
         port = FakeManagementPort()
         port.set_should_fail(True, "Test error")
 
-        with pytest.raises(RuntimeError, match="Test error"):
+        with pytest.raises(ValueError, match="Test error"):
             await port.mute_signature("sig-001")
 
     @pytest.mark.asyncio

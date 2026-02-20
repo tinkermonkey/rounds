@@ -32,7 +32,7 @@ class FakeManagementPort(ManagementPort):
         Tracks the mute operation for test assertions.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         self.muted_signatures[signature_id] = reason
 
@@ -44,7 +44,7 @@ class FakeManagementPort(ManagementPort):
         Tracks the resolution for test assertions.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         self.resolved_signatures[signature_id] = fix_applied
 
@@ -54,7 +54,7 @@ class FakeManagementPort(ManagementPort):
         Tracks the retriage for test assertions.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         if signature_id not in self.retriaged_signatures:
             self.retriaged_signatures.append(signature_id)
@@ -65,7 +65,7 @@ class FakeManagementPort(ManagementPort):
         Returns pre-configured details or a default SignatureDetails.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         details = self.signature_details.get(signature_id)
         if details:
@@ -96,7 +96,7 @@ class FakeManagementPort(ManagementPort):
         Returns all stored signatures or filtered by status.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         if status is None:
             return self.stored_signatures
@@ -108,7 +108,7 @@ class FakeManagementPort(ManagementPort):
         Returns a mock diagnosis and tracks the operation.
         """
         if self.should_fail:
-            raise RuntimeError(self.fail_message)
+            raise ValueError(self.fail_message)
 
         self.reinvestigated_signatures.append(signature_id)
         return Diagnosis(
