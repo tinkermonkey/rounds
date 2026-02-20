@@ -1129,9 +1129,10 @@ class TestNotificationFailureHandling:
         )
 
         # Despite notification failure, diagnosis should be recorded
-        diagnosis = await investigator.investigate(signature)
+        # But the notification error should be exposed to the caller
+        with pytest.raises(RuntimeError, match="Notification service is unavailable"):
+            await investigator.investigate(signature)
 
-        assert diagnosis is not None
         # Status should be DIAGNOSED (not reverted to NEW)
         assert signature.status == SignatureStatus.DIAGNOSED
         assert signature.diagnosis is not None
@@ -1177,8 +1178,9 @@ class TestNotificationFailureHandling:
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
 
-        # Investigate - notification will fail
-        await investigator.investigate(signature)
+        # Investigate - notification will fail and error should be exposed
+        with pytest.raises(RuntimeError, match="Notification service is unavailable"):
+            await investigator.investigate(signature)
 
         # Check that diagnosis was persisted before notification was attempted
         # Should have two updates: INVESTIGATING, then DIAGNOSED
