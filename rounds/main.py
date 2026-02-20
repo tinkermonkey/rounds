@@ -366,7 +366,6 @@ def configure_logging(log_level: str, log_format: str) -> None:
     # Map string level to logging constant
     level = getattr(logging, log_level, logging.INFO)
 
-    # Simple text format for now (json format can be added later)
     if log_format == "json":
         format_str = '{"time": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
     else:

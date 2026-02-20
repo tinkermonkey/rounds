@@ -11,7 +11,7 @@
 # Environment variables expected:
 # - RUN_MODE: "daemon" (production), "cli" (manual operations), or "webhook" (HTTP server)
 # - CLAUDE_CODE_VERSION: Optional specific version to install
-# - All ROUNDS_ prefixed configuration variables
+# - Configuration variables: TELEMETRY_*, STORE_*, DIAGNOSIS_*, POLL_*, NOTIFICATION_*, etc.
 # ============================================================================
 
 set -e
@@ -36,7 +36,11 @@ echo "This process typically takes 5-30 seconds depending on network speed and w
 # Check if Claude Code is already installed
 if command -v claude &>/dev/null; then
   CLAUDE_INSTALLED="true"
-  EXISTING_VERSION=$(claude --version 2>/dev/null || echo "unknown")
+  EXISTING_VERSION=$(claude --version 2>&1)
+  if [ $? -ne 0 ]; then
+    echo -e "${YELLOW}Warning: Could not determine Claude Code version (command failed)${NC}"
+    EXISTING_VERSION="unknown"
+  fi
   echo "Claude Code CLI already installed: $EXISTING_VERSION"
 else
   CLAUDE_INSTALLED="false"

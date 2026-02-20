@@ -215,3 +215,16 @@ async def test_concurrent_cost_recording_is_thread_safe(
 
     # Should have recorded all costs correctly
     assert scheduler._daily_cost_usd == 10.0
+
+
+@pytest.mark.asyncio
+async def test_start_without_poll_port_raises_value_error() -> None:
+    """Test that start() raises ValueError when poll_port is None."""
+    scheduler = DaemonScheduler(
+        poll_port=None,
+        poll_interval_seconds=1,
+        budget_limit=100.00,
+    )
+
+    with pytest.raises(ValueError, match="poll_port must be set"):
+        await scheduler.start()

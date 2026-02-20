@@ -32,7 +32,7 @@ Optimized for production deployments with minimal attack surface.
 - Python packages: httpx, pydantic, python-dotenv, aiosqlite
 - Claude Code CLI (auto-updated at startup)
 
-**Entrypoint:** `/docker/entrypoint.sh` - Handles authentication, directory setup, and mode selection
+**Entrypoint:** `/entrypoint.sh` - Handles authentication, directory setup, and mode selection
 
 **Size:** ~300MB
 
@@ -62,7 +62,7 @@ Comprehensive development environment with debugging tools.
 - Type checking: mypy, ruff
 - Code formatting: black
 - Database: sqlite3
-- Utilities: curl, vim, nano
+- Utilities: curl
 
 **Entrypoint:** `/bin/bash` - Interactive shell
 
@@ -225,7 +225,7 @@ docker run --env-file .env.rounds rounds:dist
 ├── reports/                 # Volume mount point for markdown reports
 └── requirements.txt         # Python dependencies
 
-/docker/
+/
 ├── entrypoint.sh           # Startup script (production image)
 └── healthcheck.sh          # Health check probe
 

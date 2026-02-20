@@ -175,3 +175,8 @@ class TestMarkdownNotificationAdapter:
         assert "|" not in result
         assert "?" not in result
         assert "*" not in result
+
+    def test_init_with_filesystem_root_raises_value_error(self) -> None:
+        """Test that __init__ raises ValueError when report_dir is filesystem root."""
+        with pytest.raises(ValueError, match="report_dir cannot be a filesystem root"):
+            MarkdownNotificationAdapter("/")
