@@ -132,7 +132,7 @@ async def test_diagnose_flow_success(mock_openai_client) -> None:
         last_seen=datetime(2026, 1, 1, 10, 15, 0, tzinfo=UTC),
         occurrence_count=15,
         status=SignatureStatus.NEW,
-        tags=["database"],
+        tags=frozenset(["database"]),
     )
 
     events = [
@@ -214,7 +214,7 @@ async def test_diagnose_handles_malformed_json(mock_openai_client) -> None:
         last_seen=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     context = InvestigationContext(
@@ -276,7 +276,7 @@ That's my diagnosis."""
         last_seen=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     context = InvestigationContext(
@@ -332,7 +332,7 @@ async def test_diagnose_rejects_invalid_confidence(mock_openai_client) -> None:
         last_seen=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     context = InvestigationContext(
@@ -378,7 +378,7 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
         last_seen=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     # Large context that will exceed budget
@@ -455,7 +455,7 @@ async def test_diagnose_handles_missing_required_fields(mock_openai_client) -> N
         last_seen=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     context = InvestigationContext(

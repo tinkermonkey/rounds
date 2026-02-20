@@ -448,11 +448,11 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         error_msg = str(e)
 
         # Redact common API key patterns (e.g., sk-*, ghp-*, Bearer *, etc.)
+        # Note: We don't redact generic hex strings to preserve UUIDs and trace IDs
         patterns = [
             (r'sk-[a-zA-Z0-9_-]{20,}', '[REDACTED_OPENAI_KEY]'),
             (r'ghp_[a-zA-Z0-9]{36,}', '[REDACTED_GITHUB_TOKEN]'),
             (r'Bearer\s+[a-zA-Z0-9_\-\.=]+', 'Bearer [REDACTED]'),
-            (r'[a-f0-9]{32,64}', '[REDACTED_HEX_KEY]'),  # Long hex strings (API keys)
             (r'[A-Za-z0-9+/]{40,}={0,2}', '[REDACTED_BASE64]'),  # Base64 encoded secrets
         ]
 
