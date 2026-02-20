@@ -185,6 +185,7 @@ async def test_diagnose_handles_malformed_json(mock_openai_client) -> None:
         ErrorEvent,
         InvestigationContext,
         Signature,
+        SignatureStatus,
         Severity,
         StackFrame,
     )
@@ -236,6 +237,7 @@ async def test_diagnose_handles_multiline_json(mock_openai_client) -> None:
     from rounds.core.models import (
         InvestigationContext,
         Signature,
+        SignatureStatus,
     )
 
     adapter = OpenAIDiagnosisAdapter(
@@ -298,6 +300,7 @@ async def test_diagnose_rejects_invalid_confidence(mock_openai_client) -> None:
     from rounds.core.models import (
         InvestigationContext,
         Signature,
+        SignatureStatus,
     )
 
     adapter = OpenAIDiagnosisAdapter(
@@ -352,6 +355,7 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
         ErrorEvent,
         InvestigationContext,
         Signature,
+        SignatureStatus,
         Severity,
         StackFrame,
     )
@@ -380,7 +384,8 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
     # Large context that will exceed budget
     events = [
         ErrorEvent(
-            event_id=f"evt-{i}",
+            trace_id=f"trace-{i}",
+            span_id=f"span-{i}",
             timestamp=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
             service="test-service",
             error_type="TestError",
@@ -392,7 +397,7 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
                     lineno=i,
                     function="test",
                     module="test",
-                    
+
                 ),
             ),
             attributes={},
@@ -420,6 +425,7 @@ async def test_diagnose_handles_missing_required_fields(mock_openai_client) -> N
     from rounds.core.models import (
         InvestigationContext,
         Signature,
+        SignatureStatus,
     )
 
     adapter = OpenAIDiagnosisAdapter(

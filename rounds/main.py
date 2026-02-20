@@ -444,9 +444,26 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         settings = load_settings()
     except (ValueError, ValidationError) as e:
         # Sanitize error message to avoid leaking sensitive values
+        import re
         error_msg = str(e)
-        # Remove any potential API keys or tokens from error message
-        sanitized_msg = error_msg.replace("api_key", "[REDACTED]").replace("token", "[REDACTED]")
+
+        # Redact common API key patterns (e.g., sk-*, ghp-*, Bearer *, etc.)
+        patterns = [
+            (r'sk-[a-zA-Z0-9_-]{20,}', '[REDACTED_OPENAI_KEY]'),
+            (r'ghp_[a-zA-Z0-9]{36,}', '[REDACTED_GITHUB_TOKEN]'),
+            (r'Bearer\s+[a-zA-Z0-9_\-\.=]+', 'Bearer [REDACTED]'),
+            (r'[a-f0-9]{32,64}', '[REDACTED_HEX_KEY]'),  # Long hex strings (API keys)
+            (r'[A-Za-z0-9+/]{40,}={0,2}', '[REDACTED_BASE64]'),  # Base64 encoded secrets
+        ]
+
+        sanitized_msg = error_msg
+        for pattern, replacement in patterns:
+            sanitized_msg = re.sub(pattern, replacement, sanitized_msg)
+
+        # Also redact any environment variable values from error messages
+        # by removing quoted values that might contain secrets
+        sanitized_msg = re.sub(r"'[^']{20,}'", "'[REDACTED]'", sanitized_msg)
+
         print(f"ERROR: Configuration validation failed.")
         print(f"Details: {sanitized_msg}")
         print("Please check your .env.rounds file and ensure all required variables are set.")
