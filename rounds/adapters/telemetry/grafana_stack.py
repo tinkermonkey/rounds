@@ -24,6 +24,7 @@ import httpx
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
+    PartialResultsInfo,
     Severity,
     SpanNode,
     StackFrame,
