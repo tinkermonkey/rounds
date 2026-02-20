@@ -88,5 +88,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD /healthcheck.sh
 
 # Entrypoint: Auto-update Claude Code CLI, then start daemon
+# Default mode (daemon) is set via RUN_MODE env var in entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["daemon"]

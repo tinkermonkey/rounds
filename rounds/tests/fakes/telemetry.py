@@ -24,6 +24,7 @@ class FakeTelemetryPort(TelemetryPort):
         self.get_traces_call_count = 0
         self.get_correlated_logs_call_count = 0
         self.get_events_for_signature_call_count = 0
+        self._error_to_raise: Exception | None = None
 
     def add_error(self, error: ErrorEvent) -> None:
         """Add an error event to the fake telemetry backend."""
@@ -57,6 +58,14 @@ class FakeTelemetryPort(TelemetryPort):
         """Add events for a specific signature fingerprint."""
         self.signature_events[fingerprint] = events
 
+    def set_error(self, error: Exception) -> None:
+        """Configure the fake to raise an error on the next query.
+
+        Args:
+            error: Exception to raise when any query method is called.
+        """
+        self._error_to_raise = error
+
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
@@ -65,6 +74,9 @@ class FakeTelemetryPort(TelemetryPort):
         Returns all errors with timestamp >= since.
         Filters by service if services list is provided.
         """
+        if self._error_to_raise:
+            raise self._error_to_raise
+
         self.get_recent_errors_call_count += 1
 
         result = []
@@ -150,3 +162,4 @@ class FakeTelemetryPort(TelemetryPort):
         self.get_traces_call_count = 0
         self.get_correlated_logs_call_count = 0
         self.get_events_for_signature_call_count = 0
+        self._error_to_raise = None

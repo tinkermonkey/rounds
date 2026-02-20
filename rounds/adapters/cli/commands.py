@@ -42,11 +42,9 @@ class CLICommandHandler:
             verbose: If True, print additional information.
 
         Returns:
-            Dictionary with status and message.
-
-        Raises:
-            ValueError: If signature doesn't exist.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "mute", "signature_id": str, "message": str}
+            - On error: {"status": "error", "operation": "mute", "signature_id": str, "message": str}
         """
         try:
             await self.management.mute_signature(signature_id, reason)
@@ -92,11 +90,9 @@ class CLICommandHandler:
             verbose: If True, print additional information.
 
         Returns:
-            Dictionary with status and message.
-
-        Raises:
-            ValueError: If signature doesn't exist.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "resolve", "signature_id": str, "message": str}
+            - On error: {"status": "error", "operation": "resolve", "signature_id": str, "message": str}
         """
         try:
             await self.management.resolve_signature(signature_id, fix_applied)
@@ -138,11 +134,9 @@ class CLICommandHandler:
             verbose: If True, print additional information.
 
         Returns:
-            Dictionary with status and message.
-
-        Raises:
-            ValueError: If signature doesn't exist.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "retriage", "signature_id": str, "message": str}
+            - On error: {"status": "error", "operation": "retriage", "signature_id": str, "message": str}
         """
         try:
             await self.management.retriage_signature(signature_id)
@@ -181,11 +175,9 @@ class CLICommandHandler:
             output_format: Output format ('json', 'text'). Default 'json'.
 
         Returns:
-            Dictionary with signature details or status/message on error.
-
-        Raises:
-            ValueError: If signature doesn't exist.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "get_details", "data": {...}}
+            - On error: {"status": "error", "operation": "get_details", "message": str}
         """
         try:
             details = await self.management.get_signature_details(signature_id)
@@ -286,11 +278,9 @@ class CLICommandHandler:
             output_format: Output format ('json', 'text'). Default 'json'.
 
         Returns:
-            Dictionary with signature list or status/message on error.
-
-        Raises:
-            ValueError: If status is invalid.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "list", "signatures": [...]}
+            - On error: {"status": "error", "operation": "list", "message": str}
         """
         try:
             from rounds.core.models import SignatureStatus
@@ -353,11 +343,9 @@ class CLICommandHandler:
             verbose: If True, print additional information.
 
         Returns:
-            Dictionary with diagnosis or status/message on error.
-
-        Raises:
-            ValueError: If signature doesn't exist.
-            Exception: If operation fails.
+            Dictionary with status and data:
+            - On success: {"status": "success", "operation": "reinvestigate", "signature_id": str, "diagnosis": {...}}
+            - On error: {"status": "error", "operation": "reinvestigate", "signature_id": str, "message": str}
         """
         try:
             diagnosis = await self.management.reinvestigate(signature_id)

@@ -69,6 +69,30 @@ class TestConfigurationLoading:
                 load_settings()
 
 
+class TestBootstrapErrorHandling:
+    """Test bootstrap function error handling."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_exits_on_configuration_value_error(self, capsys) -> None:
+        """Test bootstrap catches ValueError from load_settings and exits cleanly."""
+        from rounds.main import bootstrap
+
+        # Mock load_settings to raise ValueError
+        with patch("rounds.main.load_settings") as mock_load:
+            mock_load.side_effect = ValueError("Invalid telemetry backend: 'invalid_backend'")
+
+            # Should exit with code 1
+            with pytest.raises(SystemExit) as exc_info:
+                await bootstrap()
+
+            assert exc_info.value.code == 1
+
+            # Verify error message was printed
+            captured = capsys.readouterr()
+            assert "Configuration error:" in captured.out
+            assert "Invalid telemetry backend" in captured.out
+
+
 class TestAdapterInstantiation:
     """Test that adapters are correctly instantiated with configuration."""
 

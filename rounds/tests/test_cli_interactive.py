@@ -166,3 +166,22 @@ class TestInteractiveCLILoop:
             error_calls = [call for call in mock_print.call_args_list
                           if any("error" in str(arg).lower() for arg in call[0])]
             assert len(error_calls) > 0
+
+    @pytest.mark.parametrize(
+        "critical_error",
+        [
+            MemoryError("Out of memory"),
+            SystemError("System error"),
+            SystemExit(42),
+        ],
+    )
+    async def test_cli_reraises_critical_errors(self, critical_error: Exception) -> None:
+        """Test that _run_cli_interactive re-raises critical system errors."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        # Mock input to raise critical error
+        with patch("builtins.input", side_effect=critical_error):
+            # Critical error should propagate
+            with pytest.raises(type(critical_error)):
+                await _run_cli_interactive(handler)

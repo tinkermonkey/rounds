@@ -384,6 +384,46 @@ class TestRunScanIntegration:
         assert isinstance(output["investigations_queued"], int)
         assert isinstance(output["timestamp"], str)
 
+    @pytest.mark.asyncio
+    async def test_run_scan_handles_connection_error(self, capsys) -> None:
+        """Test that _run_scan handles ConnectionError with specific error_type."""
+        from rounds.core.fingerprint import Fingerprinter
+        from rounds.core.triage import TriageEngine
+        from rounds.core.poll_service import PollService
+
+        # Create fake adapters with telemetry that raises ConnectionError
+        store = FakeSignatureStorePort()
+        telemetry = FakeTelemetryPort()
+        telemetry.set_error(ConnectionError("Telemetry service unreachable"))
+
+        fingerprinter = Fingerprinter()
+        triage = TriageEngine()
+        investigator = FakeInvestigator()
+
+        poll_service = PollService(
+            telemetry=telemetry,
+            store=store,
+            fingerprinter=fingerprinter,
+            triage=triage,
+            investigator=investigator,
+            lookback_minutes=60,
+            batch_size=100,
+        )
+
+        # Execute _run_scan and expect SystemExit
+        with pytest.raises(SystemExit) as exc_info:
+            await _run_scan(poll_service)
+
+        # Verify exit code is 1
+        assert exc_info.value.code == 1
+
+        # Verify JSON output on stderr contains correct error_type
+        captured = capsys.readouterr()
+        output = json.loads(captured.err)
+        assert output["status"] == "error"
+        assert output["error_type"] == "connection_error"
+        assert "Telemetry service unreachable" in output["message"]
+
 
 class TestRunDiagnoseIntegration:
     """Integration tests for _run_diagnose function with fake adapters."""
