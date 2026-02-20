@@ -31,6 +31,7 @@ from rounds.core.models import (
     Diagnosis,
     Severity,
     Signature,
+    SignatureDetails,
     SignatureStatus,
     StackFrame,
 )
@@ -337,27 +338,48 @@ class TestCLICommandHandler:
         return CLICommandHandler(mock_management)
 
     @pytest.fixture
-    def sample_details(self) -> dict[str, Any]:
+    def sample_details(self) -> SignatureDetails:
         """Create sample signature details."""
-        return {
-            "id": "sig-123",
-            "fingerprint": "abc123",
-            "service": "api-service",
-            "error_type": "ValueError",
-            "status": "new",
-            "occurrence_count": 5,
-            "first_seen": "2024-01-01T00:00:00",
-            "last_seen": "2024-01-02T00:00:00",
-            "message_template": "Invalid value: {value}",
-            "diagnosis": {
-                "root_cause": "Missing validation",
-                "confidence": "high",
-                "suggested_fix": "Add input validation",
-            },
-            "related_signatures": [
-                {"id": "sig-456", "service": "api-service", "occurrence_count": 3}
-            ],
-        }
+        signature = Signature(
+            id="sig-123",
+            fingerprint="abc123",
+            error_type="ValueError",
+            service="api-service",
+            message_template="Invalid value: {value}",
+            stack_hash="stack-123",
+            first_seen=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            last_seen=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            occurrence_count=5,
+            status=SignatureStatus.NEW,
+            diagnosis=Diagnosis(
+                root_cause="Missing validation",
+                evidence=("No input checks",),
+                suggested_fix="Add input validation",
+                confidence="high",
+                diagnosed_at=datetime.now(tz=timezone.utc),
+                model="claude-3",
+                cost_usd=0.25,
+            ),
+        )
+
+        related_sig = Signature(
+            id="sig-456",
+            fingerprint="def456",
+            error_type="ValueError",
+            service="api-service",
+            message_template="Invalid value",
+            stack_hash="stack-456",
+            first_seen=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            last_seen=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            occurrence_count=3,
+            status=SignatureStatus.NEW,
+        )
+
+        return SignatureDetails(
+            signature=signature,
+            recent_events=(),
+            related_signatures=(related_sig,),
+        )
 
     async def test_mute_signature_command(self, handler: CLICommandHandler, mock_management: AsyncMock) -> None:
         """Test mute signature command."""
@@ -399,7 +421,7 @@ class TestCLICommandHandler:
 
     async def test_get_details_json_format(
         self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details in JSON format."""
         mock_management.get_signature_details.return_value = sample_details
@@ -408,11 +430,11 @@ class TestCLICommandHandler:
 
         assert result["status"] == "success"
         assert result["operation"] == "get_details"
-        assert result["data"]["id"] == "sig-123"
+        assert result["data"].signature.id == "sig-123"
 
     async def test_get_details_text_format(
         self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details in text format."""
         mock_management.get_signature_details.return_value = sample_details
@@ -427,7 +449,7 @@ class TestCLICommandHandler:
 
     async def test_get_details_invalid_format(
         self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details with invalid format."""
         mock_management.get_signature_details.return_value = sample_details
