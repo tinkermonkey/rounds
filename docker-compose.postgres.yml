@@ -32,7 +32,7 @@ services:
     environment:
       POSTGRES_DB: rounds
       POSTGRES_USER: rounds
-      POSTGRES_PASSWORD: rounds-secure-password-change-me  # Change in production!
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env or environment}
       PGDATA: /var/lib/postgresql/data/pgdata
       # Performance tuning (adjust for your hardware)
       POSTGRES_INITDB_ARGS: >
@@ -95,7 +95,7 @@ services:
     # PostgreSQL-specific overrides
     environment:
       STORE_BACKEND: postgresql
-      STORE_POSTGRESQL_URL: postgresql://rounds:rounds-secure-password-change-me@postgres:5432/rounds
+      STORE_POSTGRESQL_URL: postgresql://rounds:${POSTGRES_PASSWORD}@postgres:5432/rounds
       INSTANCE_ID: rounds-1  # For distributed tracing
 
     # Resource limits

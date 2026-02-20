@@ -39,7 +39,7 @@ services:
     environment:
       CLICKHOUSE_DB: signoz
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhouse-password
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in .env or environment}
 
     # Resource limits (adjust for your hardware)
     deploy:
@@ -89,7 +89,7 @@ services:
     environment:
       CLICKHOUSE_URL: http://clickhouse:9000
       CLICKHOUSE_USERNAME: default
-      CLICKHOUSE_PASSWORD: clickhouse-password
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       STORAGE: clickhouse
       GODEBUG: madvdontneed=1
 

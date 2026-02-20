@@ -3,7 +3,12 @@
 from datetime import datetime, timezone
 
 from rounds.core.investigator import Investigator
-from rounds.core.models import Diagnosis, Signature, SignatureStatus
+from rounds.core.models import Diagnosis, Signature
+from rounds.core.triage import TriageEngine
+from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
+from rounds.tests.fakes.notification import FakeNotificationPort
+from rounds.tests.fakes.store import FakeSignatureStorePort
+from rounds.tests.fakes.telemetry import FakeTelemetryPort
 
 
 class FakeInvestigator(Investigator):
@@ -16,19 +21,26 @@ class FakeInvestigator(Investigator):
             diagnosis_to_return: Diagnosis to return when investigating. If None, returns a default diagnosis.
             raise_error: Exception to raise when investigating. If provided, raises instead of returning diagnosis.
         """
+        # Create fake port implementations from existing test fakes
+        fake_telemetry = FakeTelemetryPort()
+        fake_store = FakeSignatureStorePort()
+        fake_diagnosis = FakeDiagnosisPort()
+        fake_notification = FakeNotificationPort()
+        fake_triage = TriageEngine()
+
+        # Initialize parent with fake ports
+        super().__init__(
+            telemetry=fake_telemetry,
+            store=fake_store,
+            diagnosis_engine=fake_diagnosis,
+            notification=fake_notification,
+            triage=fake_triage,
+            codebase_path="/fake/codebase",
+        )
+
         self.diagnosis_to_return = diagnosis_to_return
         self.raise_error = raise_error
         self.investigated_signatures: list[Signature] = []
-
-        # Initialize parent with None ports (not used)
-        super().__init__(
-            telemetry=None,  # type: ignore
-            store=None,  # type: ignore
-            diagnosis_engine=None,  # type: ignore
-            notification=None,  # type: ignore
-            triage=None,  # type: ignore
-            codebase_path="/fake/codebase",
-        )
 
     async def investigate(self, signature: Signature) -> Diagnosis:
         """Investigate a signature.

@@ -37,6 +37,7 @@ from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
 from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
+from rounds.core.ports import TelemetryPort, SignatureStorePort
 from rounds.core.triage import TriageEngine
 
 
@@ -196,39 +197,14 @@ async def _execute_cli_command(
         raise ValueError(f"Unknown command: {command}. Use 'help' for available commands.")
 
 
-async def _run_scan(
-    telemetry: Any,
-    store: Any,
-    fingerprinter: Any,
-    triage: Any,
-    investigator: Any,
-    lookback_minutes: int,
-    batch_size: int,
-) -> None:
+async def _run_scan(poll_service: PollService) -> None:
     """Execute single poll cycle and output results as JSON.
 
     Args:
-        telemetry: TelemetryPort implementation.
-        store: SignatureStorePort implementation.
-        fingerprinter: Fingerprinter instance.
-        triage: TriageEngine instance.
-        investigator: Investigator instance.
-        lookback_minutes: How far back to look for errors.
-        batch_size: Maximum errors to process.
+        poll_service: PollService instance for executing the poll cycle.
     """
     logger = logging.getLogger(__name__)
     try:
-        # Create poll service for this execution
-        poll_service = PollService(
-            telemetry=telemetry,
-            store=store,
-            fingerprinter=fingerprinter,
-            triage=triage,
-            investigator=investigator,
-            lookback_minutes=lookback_minutes,
-            batch_size=batch_size,
-        )
-
         # Execute single poll cycle
         result = await poll_service.execute_poll_cycle()
 
@@ -253,8 +229,8 @@ async def _run_scan(
 
 async def _run_diagnose(
     signature_id: str,
-    store: Any,
-    investigator: Any,
+    store: SignatureStorePort,
+    investigator: Investigator,
 ) -> None:
     """Diagnose a specific signature and output results as JSON.
 
@@ -588,15 +564,7 @@ async def bootstrap(command: str | None = None, signature_id: str | None = None)
         # Check for non-interactive commands first
         if command == "scan":
             logger.info("Executing scan command...")
-            await _run_scan(
-                telemetry=telemetry,
-                store=store,
-                fingerprinter=fingerprinter,
-                triage=triage,
-                investigator=investigator,
-                lookback_minutes=settings.error_lookback_minutes,
-                batch_size=settings.poll_batch_size,
-            )
+            await _run_scan(poll_service=poll_service)
 
         elif command == "diagnose":
             if not signature_id:

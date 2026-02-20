@@ -30,9 +30,15 @@ class MarkdownNotificationAdapter(NotificationPort):
                        Summary will be written to: report_dir/../summary.md
 
         Raises:
+            ValueError: If report_dir is a filesystem root or invalid path.
             OSError: If base directory cannot be created (permission denied, invalid path, etc.)
         """
-        self.base_dir = Path(report_dir)
+        self.base_dir = Path(report_dir).resolve()
+
+        # Validate that report_dir is not a filesystem root
+        if self.base_dir.parent == self.base_dir:
+            raise ValueError(f"report_dir cannot be a filesystem root: {report_dir}")
+
         try:
             self.base_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -53,18 +59,36 @@ class MarkdownNotificationAdapter(NotificationPort):
         sanitized = re.sub(r'[^\w\-]', '_', text)
         return sanitized
 
-    def _get_report_file(self, signature: Signature, diagnosis: Diagnosis) -> Path:
-        """Get the report file path for a specific diagnosis.
+    async def _ensure_date_dir(self, date_str: str) -> Path:
+        """Ensure date directory exists, creating it if necessary.
+
+        Args:
+            date_str: Directory name in YYYY-MM-DD format.
+
+        Returns:
+            Path to the date directory.
+
+        Raises:
+            OSError: If directory cannot be created.
+        """
+        date_dir = self.base_dir / date_str
+        try:
+            await asyncio.to_thread(date_dir.mkdir, parents=True, exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Failed to create date directory {date_dir}: {e}") from e
+        return date_dir
+
+    def _get_report_file_path(self, signature: Signature, diagnosis: Diagnosis) -> tuple[Path, str]:
+        """Get the report file path components for a specific diagnosis.
+
+        This is a synchronous helper that computes paths without I/O.
 
         Args:
             signature: The signature being diagnosed.
             diagnosis: The diagnosis results.
 
         Returns:
-            Path to the individual markdown report file.
-
-        Raises:
-            OSError: If date subdirectory cannot be created (permission denied, disk full, etc.)
+            Tuple of (date_directory_path, filename) where date_directory_path is not yet created.
         """
         # Get timestamp from diagnosis
         timestamp = diagnosis.diagnosed_at
@@ -75,16 +99,10 @@ class MarkdownNotificationAdapter(NotificationPort):
         service = self._sanitize_filename(signature.service or "unknown")
         error_type = self._sanitize_filename(signature.error_type or "UnknownError")
 
-        # Create date directory
-        date_dir = self.base_dir / date_str
-        try:
-            date_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            raise OSError(f"Failed to create date directory {date_dir}: {e}") from e
-
         # Generate filename: HH-MM-SS_service_ErrorType.md
+        date_dir = self.base_dir / date_str
         filename = f"{time_str}_{service}_{error_type}.md"
-        return date_dir / filename
+        return date_dir, filename
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
@@ -93,10 +111,15 @@ class MarkdownNotificationAdapter(NotificationPort):
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
 
+        # Get report file path components (synchronous, no I/O)
+        date_dir, filename = self._get_report_file_path(signature, diagnosis)
+
         # Write to individual file
         async with self._lock:
             try:
-                report_file = self._get_report_file(signature, diagnosis)
+                # Ensure date directory exists
+                await self._ensure_date_dir(date_dir.name)
+                report_file = date_dir / filename
                 await asyncio.to_thread(report_file.write_text, entry, encoding='utf-8')
 
                 logger.info(
@@ -110,7 +133,7 @@ class MarkdownNotificationAdapter(NotificationPort):
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown report: {e}",
-                    extra={"path": str(self._get_report_file(signature, diagnosis))},
+                    extra={"path": str(date_dir / filename)},
                     exc_info=True,
                 )
                 raise
@@ -128,7 +151,7 @@ class MarkdownNotificationAdapter(NotificationPort):
                 summary_file = self.base_dir.parent / "summary.md"
                 # Ensure parent directory exists
                 try:
-                    summary_file.parent.mkdir(parents=True, exist_ok=True)
+                    await asyncio.to_thread(summary_file.parent.mkdir, parents=True, exist_ok=True)
                 except OSError as e:
                     raise OSError(f"Failed to create summary directory {summary_file.parent}: {e}") from e
 
@@ -142,7 +165,7 @@ class MarkdownNotificationAdapter(NotificationPort):
             except IOError as e:
                 logger.error(
                     f"Failed to write markdown summary: {e}",
-                    extra={"path": str(self.base_dir.parent / "summary.md")},
+                    extra={"path": str(summary_file)},
                     exc_info=True,
                 )
                 raise
