@@ -62,9 +62,17 @@ if [ -n "$CLAUDE_CODE_VERSION" ]; then
 else
   # Check network connectivity before attempting update
   NETWORK_AVAILABLE="false"
-  if timeout 5 npm view "@anthropic-ai/claude-code" version &>/dev/null; then
+  NPM_VIEW_ERROR=$(mktemp)
+  if timeout 5 npm view "@anthropic-ai/claude-code" version >/dev/null 2>"$NPM_VIEW_ERROR"; then
     NETWORK_AVAILABLE="true"
+  else
+    # Log error details for debugging network/auth issues
+    if [ -s "$NPM_VIEW_ERROR" ]; then
+      echo -e "${YELLOW}npm view check failed:${NC}"
+      cat "$NPM_VIEW_ERROR"
+    fi
   fi
+  rm -f "$NPM_VIEW_ERROR"
 
   # If we have an existing installation and no network, skip update
   if [ "$CLAUDE_INSTALLED" = "true" ] && [ "$NETWORK_AVAILABLE" = "false" ]; then
@@ -160,13 +168,21 @@ cd "$HEALTH_TEST_DIR"
 
 # Use a timeout to prevent hanging if API is unreachable
 # We'll run a very simple query that should complete quickly
-if timeout 30s claude query "What is 1+1?" --workspace . > /dev/null 2>&1; then
+# Capture output to show errors if authentication fails
+CLAUDE_TEST_OUTPUT=$(mktemp)
+if timeout 30s claude query "What is 1+1?" --workspace . >"$CLAUDE_TEST_OUTPUT" 2>&1; then
   echo -e "${GREEN}✓ Claude Code authentication successful and API is reachable${NC}"
+  rm -f "$CLAUDE_TEST_OUTPUT"
 elif [ $? -eq 124 ]; then
   # Timeout occurred
   echo -e "${RED}ERROR: Claude Code authentication test timed out after 30 seconds${NC}"
   echo "API may be slow or unreachable."
   echo "Check ANTHROPIC_API_KEY and network connectivity."
+  if [ -s "$CLAUDE_TEST_OUTPUT" ]; then
+    echo -e "${YELLOW}Claude output before timeout:${NC}"
+    cat "$CLAUDE_TEST_OUTPUT"
+  fi
+  rm -f "$CLAUDE_TEST_OUTPUT"
   # Only exit if running in daemon or webhook mode (automated operation)
   # In CLI mode, user can troubleshoot interactively
   if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
@@ -179,6 +195,11 @@ else
   # Command failed for other reasons
   echo -e "${RED}ERROR: Claude Code authentication test failed${NC}"
   echo "This indicates an invalid ANTHROPIC_API_KEY or API connectivity issues."
+  if [ -s "$CLAUDE_TEST_OUTPUT" ]; then
+    echo -e "${YELLOW}Claude error output:${NC}"
+    cat "$CLAUDE_TEST_OUTPUT"
+  fi
+  rm -f "$CLAUDE_TEST_OUTPUT"
   # Only exit if running in daemon or webhook mode (automated operation)
   if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
     echo "Cannot proceed with automated operation without verified authentication."

@@ -21,7 +21,7 @@ class TestInteractiveCLILoop:
     """Test suite for interactive CLI loop."""
 
     async def test_cli_reads_and_executes_commands(self) -> None:
-        """Test that CLI reads JSON commands and executes them."""
+        """Test that CLI reads commands in 'command args_json' format and executes them."""
         management = FakeManagementPort()
         handler = CLICommandHandler(management)
 
@@ -65,13 +65,16 @@ class TestInteractiveCLILoop:
         management = FakeManagementPort()
         handler = CLICommandHandler(management)
 
-        # First input raises KeyboardInterrupt, second input exits
-        commands = [
-            KeyboardInterrupt(),  # First call raises interrupt
-            "exit",  # Second call exits normally
-        ]
+        # Create a mock that raises once, then returns exit
+        call_count = [0]
 
-        with patch("builtins.input", side_effect=commands):
+        def input_with_interrupt(_: str) -> str:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise KeyboardInterrupt()
+            return "exit"
+
+        with patch("builtins.input", side_effect=input_with_interrupt):
             # Should handle interrupt and continue, then exit gracefully
             await _run_cli_interactive(handler)
 

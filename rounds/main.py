@@ -667,29 +667,42 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
 
     finally:
         # Clean up resources with individual error handling
+        # Collect critical errors to re-raise after all cleanup attempts
+        cleanup_critical_error: BaseException | None = None
+
         try:
             await telemetry.close()
-        except (SystemExit, MemoryError, SystemError):
-            # Re-raise critical system errors immediately
-            raise
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during telemetry cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
         except Exception:
             logger.error("Failed to close telemetry adapter", exc_info=True)
 
         try:
             await store.close_pool()
-        except (SystemExit, MemoryError, SystemError):
-            # Re-raise critical system errors immediately
-            raise
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during store cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
         except Exception:
             logger.error("Failed to close signature store", exc_info=True)
 
         try:
             await notification.close()
-        except (SystemExit, MemoryError, SystemError):
-            # Re-raise critical system errors immediately
-            raise
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during notification cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
         except Exception:
             logger.error("Failed to close notification adapter", exc_info=True)
+
+        # Re-raise first critical error after all cleanup attempts
+        if cleanup_critical_error is not None:
+            raise cleanup_critical_error
 
 
 def main() -> None:
