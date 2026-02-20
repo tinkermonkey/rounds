@@ -669,16 +669,25 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         # Clean up resources with individual error handling
         try:
             await telemetry.close()
+        except (SystemExit, MemoryError, SystemError):
+            # Re-raise critical system errors immediately
+            raise
         except Exception:
             logger.error("Failed to close telemetry adapter", exc_info=True)
 
         try:
             await store.close_pool()
+        except (SystemExit, MemoryError, SystemError):
+            # Re-raise critical system errors immediately
+            raise
         except Exception:
             logger.error("Failed to close signature store", exc_info=True)
 
         try:
             await notification.close()
+        except (SystemExit, MemoryError, SystemError):
+            # Re-raise critical system errors immediately
+            raise
         except Exception:
             logger.error("Failed to close notification adapter", exc_info=True)
 

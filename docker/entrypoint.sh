@@ -77,17 +77,27 @@ else
 
     # Try to update first (if already installed), then fall back to install
     UPDATE_SUCCESS="false"
+    NPM_ERROR_LOG=$(mktemp)
+
     if [ "$CLAUDE_INSTALLED" = "true" ]; then
-      if npm update -g "@anthropic-ai/claude-code" 2>/dev/null; then
+      if npm update -g "@anthropic-ai/claude-code" 2>"$NPM_ERROR_LOG"; then
         UPDATE_SUCCESS="true"
+      else
+        echo -e "${YELLOW}npm update failed, stderr:${NC}"
+        cat "$NPM_ERROR_LOG"
       fi
     fi
 
     if [ "$UPDATE_SUCCESS" = "false" ]; then
-      if npm install -g "@anthropic-ai/claude-code" 2>/dev/null; then
+      if npm install -g "@anthropic-ai/claude-code" 2>"$NPM_ERROR_LOG"; then
         UPDATE_SUCCESS="true"
+      else
+        echo -e "${YELLOW}npm install failed, stderr:${NC}"
+        cat "$NPM_ERROR_LOG"
       fi
     fi
+
+    rm -f "$NPM_ERROR_LOG"
 
     if [ "$UPDATE_SUCCESS" = "true" ]; then
       END_TIME=$(date +%s)
@@ -154,14 +164,28 @@ if timeout 30s claude query "What is 1+1?" --workspace . > /dev/null 2>&1; then
   echo -e "${GREEN}✓ Claude Code authentication successful and API is reachable${NC}"
 elif [ $? -eq 124 ]; then
   # Timeout occurred
-  echo -e "${YELLOW}WARNING: Claude Code authentication test timed out after 30 seconds${NC}"
-  echo "API may be slow or unreachable. Continuing with startup..."
-  echo "If diagnosis operations fail, check ANTHROPIC_API_KEY and network connectivity."
+  echo -e "${RED}ERROR: Claude Code authentication test timed out after 30 seconds${NC}"
+  echo "API may be slow or unreachable."
+  echo "Check ANTHROPIC_API_KEY and network connectivity."
+  # Only exit if running in daemon or webhook mode (automated operation)
+  # In CLI mode, user can troubleshoot interactively
+  if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
+    echo "Cannot proceed with automated operation without verified authentication."
+    exit 1
+  else
+    echo -e "${YELLOW}WARNING: Continuing in CLI mode - diagnosis operations may fail${NC}"
+  fi
 else
   # Command failed for other reasons
-  echo -e "${YELLOW}WARNING: Claude Code authentication test failed${NC}"
-  echo "This may indicate an invalid ANTHROPIC_API_KEY or API connectivity issues."
-  echo "Continuing with startup - diagnosis operations may fail until this is resolved."
+  echo -e "${RED}ERROR: Claude Code authentication test failed${NC}"
+  echo "This indicates an invalid ANTHROPIC_API_KEY or API connectivity issues."
+  # Only exit if running in daemon or webhook mode (automated operation)
+  if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
+    echo "Cannot proceed with automated operation without verified authentication."
+    exit 1
+  else
+    echo -e "${YELLOW}WARNING: Continuing in CLI mode - diagnosis operations will fail until this is resolved${NC}"
+  fi
 fi
 
 cd - > /dev/null

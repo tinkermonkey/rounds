@@ -26,8 +26,8 @@ class TestInteractiveCLILoop:
         handler = CLICommandHandler(management)
 
         commands = [
-            json.dumps({"command": "list"}),
-            json.dumps({"command": "exit"}),
+            "list {}",
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -40,8 +40,8 @@ class TestInteractiveCLILoop:
         handler = CLICommandHandler(management)
 
         commands = [
-            "not valid json",
-            json.dumps({"command": "exit"}),
+            "list not-valid-json",
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -65,14 +65,14 @@ class TestInteractiveCLILoop:
         management = FakeManagementPort()
         handler = CLICommandHandler(management)
 
-        # First input raises KeyboardInterrupt, then exit
-        def input_with_interrupt(prompt: str) -> str:
-            if "rounds>" in prompt:
-                raise KeyboardInterrupt()
-            return ""
+        # First input raises KeyboardInterrupt, second input exits
+        commands = [
+            KeyboardInterrupt(),  # First call raises interrupt
+            "exit",  # Second call exits normally
+        ]
 
-        with patch("builtins.input", side_effect=input_with_interrupt):
-            # Should exit gracefully without exception
+        with patch("builtins.input", side_effect=commands):
+            # Should handle interrupt and continue, then exit gracefully
             await _run_cli_interactive(handler)
 
     async def test_cli_executes_mute_command(self) -> None:
@@ -81,8 +81,8 @@ class TestInteractiveCLILoop:
         handler = CLICommandHandler(management)
 
         commands = [
-            json.dumps({"command": "mute", "signature_id": "sig-123", "reason": "false positive"}),
-            json.dumps({"command": "exit"}),
+            f'mute {json.dumps({"signature_id": "sig-123", "reason": "false positive"})}',
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -99,8 +99,8 @@ class TestInteractiveCLILoop:
         handler = CLICommandHandler(management)
 
         commands = [
-            json.dumps({"command": "resolve", "signature_id": "sig-456", "fix_applied": "patched"}),
-            json.dumps({"command": "exit"}),
+            f'resolve {json.dumps({"signature_id": "sig-456", "fix_applied": "patched"})}',
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -119,7 +119,7 @@ class TestInteractiveCLILoop:
         commands = [
             "",  # Empty input
             "   ",  # Whitespace only
-            json.dumps({"command": "exit"}),
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -133,7 +133,7 @@ class TestInteractiveCLILoop:
 
         commands = [
             "help",
-            json.dumps({"command": "exit"}),
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
@@ -151,8 +151,8 @@ class TestInteractiveCLILoop:
         handler = CLICommandHandler(management)
 
         commands = [
-            json.dumps({"command": "invalid_command"}),
-            json.dumps({"command": "exit"}),
+            "invalid_command {}",
+            "exit",
         ]
 
         with patch("builtins.input", side_effect=commands):
