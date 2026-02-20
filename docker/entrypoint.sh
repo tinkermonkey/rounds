@@ -37,13 +37,9 @@ if [ -n "$CLAUDE_CODE_VERSION" ]; then
   if npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"; then
     echo -e "${GREEN}Claude Code CLI version $CLAUDE_CODE_VERSION installed successfully${NC}"
   else
-    echo -e "${YELLOW}Warning: Failed to install specific version, attempting latest...${NC}"
-    if npm install -g "@anthropic-ai/claude-code"; then
-      echo -e "${GREEN}Claude Code CLI installed successfully${NC}"
-    else
-      echo -e "${RED}ERROR: Could not install Claude Code CLI${NC}"
-      exit 1
-    fi
+    echo -e "${RED}ERROR: Failed to install Claude Code CLI version $CLAUDE_CODE_VERSION${NC}"
+    echo "Requested version: $CLAUDE_CODE_VERSION"
+    exit 1
   fi
 else
   echo "Installing latest Claude Code CLI..."
@@ -57,7 +53,7 @@ else
 fi
 
 # ============================================================================
-# Step 2: Verify Claude Authentication
+# Step 2: Verify Claude Code CLI Installation
 # ============================================================================
 echo -e "${YELLOW}Verifying Claude Code CLI installation...${NC}"
 
@@ -108,4 +104,12 @@ esac
 export RUN_MODE
 
 # Launch the Rounds application
-exec python -m rounds.main
+# If a command was provided (via CMD or docker run), use it as an argument to set RUN_MODE
+# Otherwise, RUN_MODE from environment is used (defaults to "daemon" above)
+if [ $# -gt 0 ]; then
+  # CMD or docker run args were provided - use first arg as run mode
+  exec python -m rounds.main "$1"
+else
+  # No command provided - use RUN_MODE from environment
+  exec python -m rounds.main "$RUN_MODE"
+fi

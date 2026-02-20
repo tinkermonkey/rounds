@@ -24,6 +24,7 @@ from rounds.core.models import (
 from rounds.tests.fakes.investigator import FakeInvestigator
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
+from rounds.main import _run_scan, _run_diagnose
 
 
 # ============================================================================
@@ -346,7 +347,9 @@ class TestRunScanIntegration:
     """Integration tests for _run_scan function with fake adapters."""
 
     @pytest.mark.asyncio
-    async def test_run_scan_invokes_poll_service(self, sample_signature: Signature) -> None:
+    async def test_run_scan_invokes_poll_service(
+        self, sample_signature: Signature, capsys
+    ) -> None:
         """Test that _run_scan invokes PollService with correct parameters."""
         from rounds.core.fingerprint import Fingerprinter
         from rounds.core.triage import TriageEngine
@@ -361,7 +364,7 @@ class TestRunScanIntegration:
         triage = TriageEngine()
         investigator = FakeInvestigator()
 
-        # Create PollService with fakes and execute poll cycle
+        # Create PollService with fakes
         poll_service = PollService(
             telemetry=telemetry,
             store=store,
@@ -372,19 +375,27 @@ class TestRunScanIntegration:
             batch_size=100,
         )
 
-        result = await poll_service.execute_poll_cycle()
+        # Execute _run_scan (the actual function)
+        await _run_scan(poll_service)
 
-        # Verify result structure
-        assert result.new_signatures >= 0
-        assert result.updated_signatures >= 0
-        assert result.errors_found >= 0
-        assert result.errors_failed_to_process >= 0
-        assert result.investigations_queued >= 0
-        assert result.timestamp is not None
+        # Capture output and verify it's valid JSON
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        # Verify output structure
+        assert output["status"] == "success"
+        assert "new_signatures" in output
+        assert "updated_signatures" in output
+        assert "errors_processed" in output
+        assert "errors_failed" in output
+        assert "investigations_queued" in output
+        assert "timestamp" in output
 
     @pytest.mark.asyncio
-    async def test_run_scan_output_structure(self, sample_signature: Signature) -> None:
-        """Test that scan output structure matches JSON specification."""
+    async def test_run_scan_output_structure(
+        self, sample_signature: Signature, capsys
+    ) -> None:
+        """Test that _run_scan output structure matches JSON specification."""
         from rounds.core.fingerprint import Fingerprinter
         from rounds.core.triage import TriageEngine
         from rounds.core.poll_service import PollService
@@ -398,7 +409,7 @@ class TestRunScanIntegration:
         triage = TriageEngine()
         investigator = FakeInvestigator()
 
-        # Create PollService and execute poll
+        # Create PollService with fakes
         poll_service = PollService(
             telemetry=telemetry,
             store=store,
@@ -409,27 +420,21 @@ class TestRunScanIntegration:
             batch_size=100,
         )
 
-        result = await poll_service.execute_poll_cycle()
+        # Execute _run_scan (the actual function)
+        await _run_scan(poll_service)
 
-        # Simulate what _run_scan outputs
-        output = {
-            "status": "success",
-            "new_signatures": result.new_signatures,
-            "updated_signatures": result.updated_signatures,
-            "errors_processed": result.errors_found,
-            "errors_failed": result.errors_failed_to_process,
-            "investigations_queued": result.investigations_queued,
-            "timestamp": result.timestamp.isoformat(),
-        }
+        # Capture output and verify structure
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
 
-        # Verify JSON serializability
-        json_str = json.dumps(output)
-        parsed = json.loads(json_str)
-
-        assert parsed["status"] == "success"
-        assert "new_signatures" in parsed
-        assert "updated_signatures" in parsed
-        assert "errors_processed" in parsed
+        # Verify all required fields
+        assert output["status"] == "success"
+        assert isinstance(output["new_signatures"], int)
+        assert isinstance(output["updated_signatures"], int)
+        assert isinstance(output["errors_processed"], int)
+        assert isinstance(output["errors_failed"], int)
+        assert isinstance(output["investigations_queued"], int)
+        assert isinstance(output["timestamp"], str)
 
 
 class TestRunDiagnoseIntegration:
@@ -437,7 +442,7 @@ class TestRunDiagnoseIntegration:
 
     @pytest.mark.asyncio
     async def test_run_diagnose_invokes_investigator(
-        self, sample_signature: Signature, sample_diagnosis: Diagnosis
+        self, sample_signature: Signature, sample_diagnosis: Diagnosis, capsys
     ) -> None:
         """Test that _run_diagnose invokes investigator with correct signature."""
         # Create fake adapters
@@ -446,37 +451,49 @@ class TestRunDiagnoseIntegration:
 
         investigator = FakeInvestigator(diagnosis_to_return=sample_diagnosis)
 
-        # Simulate what _run_diagnose does
-        signature = await store.get_by_id(sample_signature.id)
-        assert signature is not None
+        # Execute _run_diagnose (the actual function)
+        await _run_diagnose(sample_signature.id, store, investigator)
 
-        diagnosis = await investigator.investigate(signature)
+        # Capture output and verify it's valid JSON
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
 
         # Verify investigator was called with correct signature
         assert len(investigator.investigated_signatures) == 1
         assert investigator.investigated_signatures[0].id == sample_signature.id
 
-        # Verify diagnosis structure
-        assert diagnosis.root_cause == sample_diagnosis.root_cause
-        assert diagnosis.confidence == sample_diagnosis.confidence
-        assert diagnosis.cost_usd == sample_diagnosis.cost_usd
+        # Verify output structure
+        assert output["status"] == "success"
+        assert output["signature_id"] == sample_signature.id
+        assert output["root_cause"] == sample_diagnosis.root_cause
+        assert output["confidence"] == sample_diagnosis.confidence
+        assert output["cost_usd"] == sample_diagnosis.cost_usd
 
     @pytest.mark.asyncio
-    async def test_run_diagnose_handles_missing_signature(self) -> None:
-        """Test that diagnose properly handles nonexistent signature."""
+    async def test_run_diagnose_handles_missing_signature(self, capsys) -> None:
+        """Test that _run_diagnose properly handles nonexistent signature."""
         # Create fake adapters with empty store
         store = FakeSignatureStorePort()
         investigator = FakeInvestigator()
 
-        # Attempt to retrieve nonexistent signature
-        signature = await store.get_by_id("nonexistent-sig")
+        # Execute _run_diagnose with nonexistent signature
+        with pytest.raises(SystemExit) as exc_info:
+            await _run_diagnose("nonexistent-sig", store, investigator)
 
-        # Verify it returns None
-        assert signature is None
+        # Verify it exited with error code
+        assert exc_info.value.code == 1
+
+        # Verify error output contains signature not found message
+        captured = capsys.readouterr()
+        error_output = json.loads(captured.err)
+        assert error_output["status"] == "error"
+        assert "Signature not found" in error_output["message"]
 
     @pytest.mark.asyncio
-    async def test_run_diagnose_handles_investigation_error(self, sample_signature: Signature) -> None:
-        """Test that diagnose handles investigation errors."""
+    async def test_run_diagnose_handles_investigation_error(
+        self, sample_signature: Signature, capsys
+    ) -> None:
+        """Test that _run_diagnose handles investigation errors."""
         # Create fake adapters with error investigator
         store = FakeSignatureStorePort()
         await store.save(sample_signature)
@@ -484,9 +501,15 @@ class TestRunDiagnoseIntegration:
         error = RuntimeError("LLM API error")
         investigator = FakeInvestigator(raise_error=error)
 
-        # Attempt to investigate
-        signature = await store.get_by_id(sample_signature.id)
-        assert signature is not None
+        # Execute _run_diagnose and expect it to exit with error
+        with pytest.raises(SystemExit) as exc_info:
+            await _run_diagnose(sample_signature.id, store, investigator)
 
-        with pytest.raises(RuntimeError, match="LLM API error"):
-            await investigator.investigate(signature)
+        # Verify it exited with error code
+        assert exc_info.value.code == 1
+
+        # Verify error output contains LLM API error message
+        captured = capsys.readouterr()
+        error_output = json.loads(captured.err)
+        assert error_output["status"] == "error"
+        assert "LLM API error" in error_output["message"]

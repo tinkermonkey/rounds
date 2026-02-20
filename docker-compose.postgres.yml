@@ -146,7 +146,7 @@ services:
 
     environment:
       STORE_BACKEND: postgresql
-      STORE_POSTGRESQL_URL: postgresql://rounds:rounds-secure-password-change-me@postgres:5432/rounds
+      STORE_POSTGRESQL_URL: postgresql://rounds:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/rounds
       INSTANCE_ID: rounds-2
 
     deploy:

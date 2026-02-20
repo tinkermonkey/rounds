@@ -235,7 +235,7 @@ async def _run_diagnose(
     """Diagnose a specific signature and output results as JSON.
 
     Args:
-        signature_id: UUID of the signature to diagnose.
+        signature_id: Unique identifier string of the signature to diagnose (e.g., "sig_12345").
         store: SignatureStorePort implementation.
         investigator: Investigator instance.
     """
@@ -262,7 +262,7 @@ async def _run_diagnose(
         print(json.dumps(output, indent=2))
 
     except ValueError as e:
-        logger.error(f"Diagnose command failed: {e}")
+        logger.error(f"Diagnose command failed: {e}", exc_info=True)
         output = {"status": "error", "message": str(e)}
         print(json.dumps(output, indent=2), file=sys.stderr)
         sys.exit(1)
