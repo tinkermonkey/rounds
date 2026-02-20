@@ -526,13 +526,14 @@ class TestMarkdownNotificationAdapter:
         # Verify date directory was created
         assert date_dir.exists(), f"Date directory not found at {date_dir}"
 
-        # Check for individual report file with HH-MM-SS_service_ErrorType.md format
+        # Check for individual report file with HH-MM-SS_service_ErrorType_sigID.md format
         report_files = list(date_dir.glob("*.md"))
         assert len(report_files) == 1, f"Expected 1 report file, found {len(report_files)}"
 
         report_file = report_files[0]
-        # Verify filename format: HH-MM-SS_service_ErrorType.md
-        assert report_file.name.endswith("_api-service_TimeoutError.md"), f"Unexpected filename: {report_file.name}"
+        # Verify filename format: HH-MM-SS_service_ErrorType_sigID.md
+        # Signature ID is included to prevent collisions when multiple diagnoses complete in the same second
+        assert report_file.name.endswith("_api-service_TimeoutError_sig-123.md"), f"Unexpected filename: {report_file.name}"
 
         content = report_file.read_text()
         assert "Diagnosis Report" in content

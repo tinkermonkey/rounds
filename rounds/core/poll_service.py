@@ -169,11 +169,23 @@ class PollService(PollPort):
                     diagnosis = await self.investigator.investigate(signature)
                     diagnoses.append(diagnosis)
                 except Exception as e:
-                    logger.error(
-                        f"Failed to investigate signature {signature.fingerprint}: {e}",
-                        exc_info=True,
-                    )
-                    investigations_failed += 1
+                    # Check if diagnosis was persisted despite the error
+                    # (e.g., notification failure after successful diagnosis)
+                    if signature.status == SignatureStatus.DIAGNOSED and signature.diagnosis is not None:
+                        # Diagnosis succeeded, only notification failed
+                        logger.warning(
+                            f"Investigation succeeded for signature {signature.fingerprint} "
+                            f"but post-diagnosis step failed: {e}",
+                            exc_info=True,
+                        )
+                        diagnoses.append(signature.diagnosis)
+                    else:
+                        # Actual investigation failure
+                        logger.error(
+                            f"Failed to investigate signature {signature.fingerprint}: {e}",
+                            exc_info=True,
+                        )
+                        investigations_failed += 1
 
         return InvestigationResult(
             diagnoses_produced=tuple(diagnoses),
