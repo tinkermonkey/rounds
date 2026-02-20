@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
+from rounds.core.models import PollResult
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -108,20 +109,23 @@ async def test_run_loop_executes_poll_cycles(
     """Test that _run_loop executes poll cycles until stopped."""
     scheduler = DaemonScheduler(
         poll_port=poll_port,
-        poll_interval_seconds=0.01,  # Fast polling for tests
+        poll_interval_seconds=1,  # Use integer for type safety
         budget_limit=1000.0,
     )
+    scheduler.running = True  # Start the scheduler
 
     # Run for a short time then stop
     async def run_then_stop() -> None:
         await asyncio.sleep(0.05)
-        scheduler.stop()
+        await scheduler.stop()
 
-    task = asyncio.create_task(run_then_stop())
-    await scheduler._run_loop()
-    await task
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
 
-    # Should have executed multiple cycles
+    # Should have executed at least one cycle
     assert poll_port.poll_cycle_count > 0
 
 
@@ -132,17 +136,20 @@ async def test_run_loop_exits_on_stop_called(
     """Test that _run_loop exits when stop() is called."""
     scheduler = DaemonScheduler(
         poll_port=poll_port,
-        poll_interval_seconds=10.0,  # Long interval
+        poll_interval_seconds=10,  # Use integer for type safety
         budget_limit=1000.0,
     )
+    scheduler.running = True  # Start the scheduler
 
     async def stop_after_delay() -> None:
         await asyncio.sleep(0.01)
-        scheduler.stop()
+        await scheduler.stop()
 
-    task = asyncio.create_task(stop_after_delay())
-    await scheduler._run_loop()
-    await task
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_delay(),
+    )
 
     # Should exit quickly despite long poll interval
     assert not scheduler.running
@@ -155,8 +162,21 @@ async def test_run_loop_investigation_failure_tracking(
     """Test that _run_loop tracks investigation cycle failures."""
     scheduler = DaemonScheduler(
         poll_port=poll_port,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=1,  # Use integer for type safety
         budget_limit=1000.0,
+    )
+    scheduler.running = True  # Start the scheduler
+
+    # Configure poll port to return a result with investigations queued
+    # so that investigation cycle will be triggered
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(timezone.utc),
+        )
     )
 
     # Make investigation cycle fail
@@ -165,11 +185,13 @@ async def test_run_loop_investigation_failure_tracking(
     # Run a few cycles
     async def stop_after_cycles() -> None:
         await asyncio.sleep(0.05)
-        scheduler.stop()
+        await scheduler.stop()
 
-    task = asyncio.create_task(stop_after_cycles())
-    await scheduler._run_loop()
-    await task
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_cycles(),
+    )
 
     # Failure counter should have incremented
     assert scheduler._investigation_failure_count > 0

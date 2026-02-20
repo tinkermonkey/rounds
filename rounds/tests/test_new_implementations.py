@@ -427,7 +427,7 @@ class TestCLICommandHandler:
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details in JSON format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="json")
 
@@ -440,7 +440,7 @@ class TestCLICommandHandler:
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details in text format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="text")
 
@@ -455,7 +455,7 @@ class TestCLICommandHandler:
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details with invalid format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="invalid")
 
@@ -812,11 +812,7 @@ class TestRunCommand:
 
     async def test_run_details_command(self, mock_management: FakeManagementPort) -> None:
         """Test running details command."""
-        mock_management.get_signature_details.return_value = {
-            "id": "sig-123",
-            "service": "test",
-        }
-
+        # FakeManagementPort returns default details for any signature_id
         result = await run_command(
             mock_management,
             "details",

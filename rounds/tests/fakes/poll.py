@@ -22,6 +22,7 @@ class FakePollPort(PollPort):
         self.default_investigation_result: InvestigationResult | None = None
         self.should_fail: bool = False
         self.fail_message: str = "Poll failed"
+        self.should_fail_investigation: bool = False
 
     def set_default_poll_result(self, result: PollResult) -> None:
         """Set the default poll result to return."""
@@ -38,6 +39,11 @@ class FakePollPort(PollPort):
     def add_investigation_result(self, result: InvestigationResult) -> None:
         """Queue an investigation result to be returned on next call."""
         self.investigation_results.append(result)
+
+    @property
+    def poll_cycle_count(self) -> int:
+        """Alias for execute_poll_cycle_call_count for test compatibility."""
+        return self.execute_poll_cycle_call_count
 
     async def execute_poll_cycle(self) -> PollResult:
         """Execute a poll cycle.
@@ -71,7 +77,7 @@ class FakePollPort(PollPort):
         """
         self.execute_investigation_cycle_call_count += 1
 
-        if self.should_fail:
+        if self.should_fail or self.should_fail_investigation:
             raise RuntimeError(self.fail_message)
 
         if self.investigation_results:
@@ -101,4 +107,5 @@ class FakePollPort(PollPort):
         self.default_poll_result = None
         self.default_investigation_result = None
         self.should_fail = False
+        self.should_fail_investigation = False
         self.fail_message = "Poll failed"
