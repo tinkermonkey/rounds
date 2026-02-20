@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownNotificationAdapter(NotificationPort):
-    """Appends findings to markdown report files organized by date."""
+    """Appends findings to markdown report files organized by date.
+
+    Thread-safety: This adapter uses an asyncio.Lock (_lock) to ensure thread-safe
+    concurrent access to file I/O operations. Multiple coroutines can call report()
+    and report_summary() concurrently without risking file corruption or race conditions.
+    """
 
     def __init__(self, report_dir: str):
         """Initialize markdown notification adapter.
@@ -136,7 +141,11 @@ class MarkdownNotificationAdapter(NotificationPort):
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
     ) -> None:
-        """Report a diagnosed signature to markdown file."""
+        """Report a diagnosed signature to markdown file.
+
+        Thread-safe: Uses asyncio.Lock to serialize file writes and prevent
+        concurrent modification issues when multiple diagnoses complete simultaneously.
+        """
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
 

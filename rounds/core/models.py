@@ -349,9 +349,15 @@ class StoreStats:
     avg_occurrence_count: float
 
     def __post_init__(self) -> None:
-        """Convert mutable dicts to immutable proxies."""
-        object.__setattr__(self, "by_status", MappingProxyType(self.by_status))
-        object.__setattr__(self, "by_service", MappingProxyType(self.by_service))
+        """Convert mutable dicts to immutable proxies.
+
+        Checks isinstance() before wrapping to prevent double-wrapping when
+        deserializing or reconstructing StoreStats instances.
+        """
+        if not isinstance(self.by_status, MappingProxyType):
+            object.__setattr__(self, "by_status", MappingProxyType(self.by_status))
+        if not isinstance(self.by_service, MappingProxyType):
+            object.__setattr__(self, "by_service", MappingProxyType(self.by_service))
 
 
 @dataclass(frozen=True)

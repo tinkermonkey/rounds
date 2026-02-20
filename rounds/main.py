@@ -427,6 +427,11 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         command: Optional command to execute (scan or diagnose).
         signature_id: Optional signature ID for diagnose command.
 
+    Design note: The invariant "diagnose requires signature_id" is enforced at runtime
+    (see lines 607-614) rather than via type system (e.g., overloads or discriminated
+    union). This keeps the API simple for callers and avoids requiring complex type
+    narrowing at all call sites. The runtime check provides clear error messages.
+
     Raises:
         SystemExit: On fatal errors (configuration, adapter initialization)
         asyncio.CancelledError: On graceful shutdown signal

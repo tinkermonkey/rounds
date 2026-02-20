@@ -113,7 +113,6 @@ class DaemonScheduler:
 
     async def _run_loop(self) -> None:
         """Main daemon loop."""
-        # Type guard: poll_port is guaranteed to be non-None (checked in start())
         poll_port = cast(PollPort, self.poll_port)
 
         cycle_number = 0
