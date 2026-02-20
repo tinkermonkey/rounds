@@ -336,8 +336,8 @@ class TestLoggingConfiguration:
         handler = root_logger.handlers[0]
         if isinstance(handler, logging.StreamHandler):
             formatter = handler.formatter
-            if formatter:
-                assert "time" in formatter._fmt  # type: ignore[attr-defined]
+            if formatter and hasattr(formatter, '_fmt') and formatter._fmt:
+                assert "time" in formatter._fmt
 
 
 class TestConfigurationDefaults:

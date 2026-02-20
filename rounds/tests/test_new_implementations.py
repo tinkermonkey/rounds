@@ -12,6 +12,7 @@ Covers:
 import asyncio
 import json
 import tempfile
+from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -445,7 +446,7 @@ class TestMarkdownNotificationAdapter:
     """Test suite for MarkdownNotificationAdapter."""
 
     @pytest.fixture
-    def temp_dir(self) -> Path:
+    def temp_dir(self) -> Generator[Path, None, None]:
         """Create a temporary directory for markdown reports."""
         import tempfile
         temp_dir = Path(tempfile.mkdtemp())

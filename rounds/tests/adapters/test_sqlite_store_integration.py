@@ -2,6 +2,7 @@
 
 import pytest
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
@@ -11,7 +12,7 @@ from rounds.adapters.store.sqlite import SQLiteSignatureStore
 
 
 @pytest.fixture
-async def temp_db() -> tuple[SQLiteSignatureStore, Path]:
+async def temp_db() -> AsyncGenerator[tuple[SQLiteSignatureStore, Path], None]:
     """Create a temporary SQLite database for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"

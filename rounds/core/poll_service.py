@@ -142,12 +142,13 @@ class PollService(PollPort):
             Exception: If signature store fetch fails. Errors are not silenced.
         """
         try:
-            pending = await self.store.get_pending_investigation()
+            pending_seq = await self.store.get_pending_investigation()
         except Exception as e:
             logger.error(f"Failed to fetch pending signatures: {e}", exc_info=True)
             raise
 
-        # Sort by priority
+        # Convert to list and sort by priority
+        pending = list(pending_seq)
         pending.sort(
             key=lambda s: self.triage.calculate_priority(s), reverse=True
         )

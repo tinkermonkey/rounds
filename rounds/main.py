@@ -37,7 +37,7 @@ from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
 from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
-from rounds.core.ports import TelemetryPort, SignatureStorePort
+from rounds.core.ports import TelemetryPort, SignatureStorePort, DiagnosisPort, NotificationPort
 from rounds.core.triage import TriageEngine
 
 
@@ -431,6 +431,7 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
     logger.info("Initializing adapters...")
 
     # Telemetry adapter - select based on config
+    telemetry: TelemetryPort
     if settings.telemetry_backend == "signoz":
         telemetry = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
@@ -454,6 +455,7 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         sys.exit(1)
 
     # Signature store - select based on config
+    store: SignatureStorePort
     if settings.store_backend == "sqlite":
         store = SQLiteSignatureStore(
             db_path=settings.store_sqlite_path,
@@ -483,6 +485,7 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         sys.exit(1)
 
     # Diagnosis adapter - select based on config
+    diagnosis_engine: DiagnosisPort
     if settings.diagnosis_backend == "claude_code":
         diagnosis_engine = ClaudeCodeDiagnosisAdapter(
             model=settings.claude_model,
@@ -507,6 +510,7 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         sys.exit(1)
 
     # Notification adapter - select based on config
+    notification: NotificationPort
     if settings.notification_backend == "stdout":
         notification = StdoutNotificationAdapter(verbose=settings.debug)
         logger.info("Notification adapter: Stdout")

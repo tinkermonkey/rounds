@@ -9,6 +9,7 @@ Tests verify that the adapter correctly:
 
 import asyncio
 import tempfile
+from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -20,7 +21,7 @@ from rounds.core.models import Diagnosis, Signature, SignatureStatus
 
 
 @pytest.fixture
-def temp_report_dir() -> Path:
+def temp_report_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for reports."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)

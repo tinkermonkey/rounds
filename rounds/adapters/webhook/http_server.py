@@ -321,7 +321,7 @@ class WebhookHTTPServer:
         """Stop the HTTP server."""
         if self.server:
             self.server.shutdown()
-            self.server.close()
+            self.server.server_close()
         if self._server_task:
             self._server_task.cancel()
             try:

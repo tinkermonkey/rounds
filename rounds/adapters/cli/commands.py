@@ -7,9 +7,10 @@ operations. It handles CLI-specific formatting and error reporting.
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
-from rounds.core.models import Signature
+from rounds.core.models import Signature, SignatureDetails
 from rounds.core.ports import ManagementPort
 
 logger = logging.getLogger(__name__)
@@ -221,49 +222,55 @@ class CLICommandHandler:
                 "message": str(e),
             }
 
-    def _format_details_as_text(self, details: dict[str, Any]) -> str:
+    def _format_details_as_text(self, details: SignatureDetails) -> str:
         """Format signature details as human-readable text.
 
         Args:
-            details: Signature details dictionary.
+            details: SignatureDetails object containing signature and related data.
 
         Returns:
             Formatted text string.
         """
         lines = []
+        sig = details.signature
 
         # Header
-        lines.append(f"Signature ID: {details.get('id')}")
-        lines.append(f"Fingerprint: {details.get('fingerprint')}")
-        lines.append(f"Service: {details.get('service')}")
-        lines.append(f"Error Type: {details.get('error_type')}")
+        lines.append(f"Signature ID: {sig.id}")
+        lines.append(f"Fingerprint: {sig.fingerprint}")
+        lines.append(f"Service: {sig.service}")
+        lines.append(f"Error Type: {sig.error_type}")
         lines.append("")
 
         # Status and counts
-        lines.append(f"Status: {details.get('status')}")
-        lines.append(f"Occurrences: {details.get('occurrence_count')}")
-        lines.append(f"First Seen: {details.get('first_seen')}")
-        lines.append(f"Last Seen: {details.get('last_seen')}")
+        lines.append(f"Status: {sig.status}")
+        lines.append(f"Occurrences: {sig.occurrence_count}")
+        lines.append(f"First Seen: {sig.first_seen.isoformat()}")
+        lines.append(f"Last Seen: {sig.last_seen.isoformat()}")
         lines.append("")
 
         # Message template
-        lines.append(f"Message Template: {details.get('message_template')}")
+        lines.append(f"Message Template: {sig.message_template}")
         lines.append("")
 
         # Diagnosis if available
-        if details.get("diagnosis"):
-            diagnosis = details["diagnosis"]
+        if sig.diagnosis:
             lines.append("Diagnosis:")
-            lines.append(f"  Root Cause: {diagnosis.get('root_cause')}")
-            lines.append(f"  Confidence: {diagnosis.get('confidence')}")
-            lines.append(f"  Suggested Fix: {diagnosis.get('suggested_fix')}")
+            lines.append(f"  Root Cause: {sig.diagnosis.root_cause_hypothesis}")
+            lines.append(f"  Confidence: {sig.diagnosis.confidence}")
+            lines.append("")
+
+        # Recent events
+        if details.recent_events:
+            lines.append(f"Recent Events ({len(details.recent_events)}):")
+            for event in details.recent_events[:5]:  # Show first 5
+                lines.append(f"  - {event.timestamp.isoformat()}: {event.error_message}")
             lines.append("")
 
         # Related signatures
-        if details.get("related_signatures"):
-            lines.append("Related Signatures:")
-            for sig in details["related_signatures"]:
-                lines.append(f"  - {sig.get('id')}: {sig.get('service')} ({sig.get('occurrence_count')} occurrences)")
+        if details.related_signatures:
+            lines.append(f"Related Signatures ({len(details.related_signatures)}):")
+            for related_sig in details.related_signatures[:5]:  # Show first 5
+                lines.append(f"  - {related_sig.id}: {related_sig.service} ({related_sig.occurrence_count} occurrences)")
             lines.append("")
 
         return "\n".join(lines)
@@ -389,11 +396,11 @@ class CLICommandHandler:
                 "message": str(e),
             }
 
-    def _format_signatures_as_text(self, signatures: list[Signature]) -> str:
+    def _format_signatures_as_text(self, signatures: Sequence[Signature]) -> str:
         """Format signatures as human-readable text.
 
         Args:
-            signatures: List of signatures.
+            signatures: Sequence of signatures.
 
         Returns:
             Formatted text string.

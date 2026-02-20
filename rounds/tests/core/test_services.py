@@ -741,7 +741,7 @@ class TestPollService:
         telemetry = FakeTelemetryPort()
         store = FakeSignatureStorePort()
         notification = FakeNotificationPort()
-        investigator_calls = []
+        investigator_calls: list[str] = []
 
         # Create a diagnosis engine that fails on the first signature
         class PartiallyFailingDiagnosisPort(FakeDiagnosisPort):
@@ -927,26 +927,17 @@ class TestPollCycleErrorHandling:
     ) -> None:
         """Poll cycle should continue processing after individual error processing fails."""
 
-        class PartiallyBrokenFingerprinter:
+        class PartiallyBrokenFingerprinter(Fingerprinter):
             def __init__(self, broken_on_count: int = 2):
+                super().__init__()
                 self.call_count = 0
                 self.broken_on_count = broken_on_count
-                self.base = Fingerprinter()
 
             def fingerprint(self, error):
                 self.call_count += 1
                 if self.call_count == self.broken_on_count:
                     raise RuntimeError("Fingerprinter broke")
-                return self.base.fingerprint(error)
-
-            def normalize_stack(self, frames):
-                return self.base.normalize_stack(frames)
-
-            def templatize_message(self, msg):
-                return self.base.templatize_message(msg)
-
-            def hash_stack(self, frames):
-                return self.base.hash_stack(frames)
+                return super().fingerprint(error)
 
         error1 = ErrorEvent(
             trace_id="trace-1",

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import signal
 from datetime import datetime, timezone
+from typing import cast
 
 from rounds.core.ports import PollPort
 
@@ -48,6 +49,8 @@ class DaemonScheduler:
         """
         if self.poll_port is None:
             raise ValueError("poll_port must be set before starting the scheduler")
+
+        assert self.poll_port is not None
 
         if self.running:
             logger.warning("Daemon scheduler already running")
@@ -109,6 +112,9 @@ class DaemonScheduler:
 
     async def _run_loop(self) -> None:
         """Main daemon loop."""
+        # Type guard: poll_port is guaranteed to be non-None (checked in start())
+        poll_port = cast(PollPort, self.poll_port)
+
         cycle_number = 0
         loop = asyncio.get_running_loop()
 
@@ -125,12 +131,12 @@ class DaemonScheduler:
                         f"${self.budget_limit:.2f}), skipping investigation cycles"
                     )
                     # Still poll for errors, but don't diagnose
-                    result = await self.poll_port.execute_poll_cycle()
+                    result = await poll_port.execute_poll_cycle()
                 else:
                     start_time = loop.time()
 
                     # Execute poll cycle
-                    result = await self.poll_port.execute_poll_cycle()
+                    result = await poll_port.execute_poll_cycle()
 
                     elapsed = loop.time() - start_time
 
@@ -146,7 +152,7 @@ class DaemonScheduler:
                     if result.investigations_queued > 0:
                         logger.debug(f"Starting investigation cycle #{cycle_number}")
                         try:
-                            inv_result = await self.poll_port.execute_investigation_cycle()
+                            inv_result = await poll_port.execute_investigation_cycle()
                             # Reset failure counter on successful cycle
                             self._investigation_failure_count = 0
                             logger.info(
@@ -231,6 +237,9 @@ class DaemonScheduler:
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""
+        if self.poll_port is None:
+            raise ValueError("poll_port must be set to run investigation cycle")
+
         try:
             logger.info("Starting on-demand investigation cycle")
             result = await self.poll_port.execute_investigation_cycle()
