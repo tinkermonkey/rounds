@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, Union
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
+    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
     severity: Severity
 
     def __post_init__(self) -> None:
@@ -245,8 +245,8 @@ class SpanNode:
     operation: str
     duration_ms: float
     status: str
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
-    events: tuple[MappingProxyType[str, Any], ...]  # read-only event dicts
+    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
+    events: Union[tuple[Union[dict[str, Any], MappingProxyType[str, Any]], ...], tuple[MappingProxyType[str, Any], ...]]  # converted to proxies in __post_init__
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
     def __post_init__(self) -> None:
@@ -280,7 +280,7 @@ class LogEntry:
     timestamp: datetime
     severity: Severity
     body: str
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
+    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
     trace_id: str | None
     span_id: str | None
 
@@ -338,17 +338,10 @@ class StoreStats:
     """Statistics about the signature store."""
 
     total_signatures: int
-    by_status: MappingProxyType[str, int]  # status -> count (read-only)
-    by_service: MappingProxyType[str, int]  # service -> count (read-only)
+    by_status: dict[str, int]  # status -> count
+    by_service: dict[str, int]  # service -> count
     oldest_signature_age_hours: float | None  # None if no signatures
     avg_occurrence_count: float
-
-    def __post_init__(self) -> None:
-        """Convert dicts to read-only proxies."""
-        if isinstance(self.by_status, dict):
-            object.__setattr__(self, "by_status", MappingProxyType(self.by_status))
-        if isinstance(self.by_service, dict):
-            object.__setattr__(self, "by_service", MappingProxyType(self.by_service))
 
 
 @dataclass(frozen=True)
