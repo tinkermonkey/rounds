@@ -89,7 +89,7 @@ class TestBootstrapErrorHandling:
 
             # Verify error message was printed
             captured = capsys.readouterr()
-            assert "Configuration error:" in captured.out
+            assert "ERROR: Configuration validation failed" in captured.out
             assert "Invalid telemetry backend" in captured.out
 
 
