@@ -26,7 +26,7 @@ class FakeInvestigator(Investigator):
         fake_store = FakeSignatureStorePort()
         fake_diagnosis = FakeDiagnosisPort()
         fake_notification = FakeNotificationPort()
-        fake_triage = TriageEngine()
+        fake_triage = TriageEngine()  # Real triage implementation (domain logic, not I/O)
 
         # Initialize parent with fake ports
         super().__init__(

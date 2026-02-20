@@ -221,6 +221,9 @@ async def _run_scan(poll_service: PollService) -> None:
     Args:
         poll_service: PollService instance for executing the poll cycle.
 
+    Returns:
+        None: Returns normally on success (no explicit return value).
+
     Raises:
         SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
     """
@@ -431,9 +434,9 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         signature_id: Optional signature ID for diagnose command.
 
     Design note: The invariant "diagnose requires signature_id" is enforced at runtime
-    (see lines 607-614) rather than via type system (e.g., overloads or discriminated
-    union). This keeps the API simple for callers and avoids requiring complex type
-    narrowing at all call sites. The runtime check provides clear error messages.
+    (validation in _run_diagnose function) rather than via type system (e.g., overloads
+    or discriminated union). This keeps the API simple for callers and avoids requiring
+    complex type narrowing at all call sites. The runtime check provides clear error messages.
 
     Raises:
         SystemExit: On fatal errors (configuration, adapter initialization)

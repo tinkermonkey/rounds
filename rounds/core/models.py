@@ -57,7 +57,9 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
+    # Union type accepts both dict and MappingProxyType for initialization flexibility.
+    # Runtime type is always MappingProxyType after __post_init__ conversion.
+    attributes: dict[str, Any] | MappingProxyType[str, Any]
     severity: Severity
 
     def __post_init__(self) -> None:
