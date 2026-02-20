@@ -16,7 +16,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -38,6 +38,7 @@ from rounds.core.models import (
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
 from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
+from rounds.tests.fakes.management import FakeManagementPort
 
 
 # --- ManagementService Tests ---
@@ -328,13 +329,13 @@ class TestCLICommandHandler:
     """Test suite for CLICommandHandler."""
 
     @pytest.fixture
-    def mock_management(self) -> AsyncMock:
-        """Create a mock ManagementPort."""
-        return AsyncMock()
+    def mock_management(self) -> FakeManagementPort:
+        """Create a fake ManagementPort for testing."""
+        return FakeManagementPort()
 
     @pytest.fixture
-    def handler(self, mock_management: AsyncMock) -> CLICommandHandler:
-        """Create a CLICommandHandler with mock management."""
+    def handler(self, mock_management: FakeManagementPort) -> CLICommandHandler:
+        """Create a CLICommandHandler with fake management."""
         return CLICommandHandler(mock_management)
 
     @pytest.fixture
@@ -381,7 +382,7 @@ class TestCLICommandHandler:
             related_signatures=(related_sig,),
         )
 
-    async def test_mute_signature_command(self, handler: CLICommandHandler, mock_management: AsyncMock) -> None:
+    async def test_mute_signature_command(self, handler: CLICommandHandler, mock_management: FakeManagementPort) -> None:
         """Test mute signature command."""
         result = await handler.mute_signature("sig-123", "Fixed in v2.0", verbose=False)
 
@@ -389,11 +390,13 @@ class TestCLICommandHandler:
         assert result["operation"] == "mute"
         assert result["signature_id"] == "sig-123"
         assert result["reason"] == "Fixed in v2.0"
-        mock_management.mute_signature.assert_called_once_with("sig-123", "Fixed in v2.0")
+        assert "sig-123" in mock_management.muted_signatures
+        assert mock_management.muted_signatures["sig-123"] == "Fixed in v2.0"
 
-    async def test_mute_signature_error(self, handler: CLICommandHandler, mock_management: AsyncMock) -> None:
+    async def test_mute_signature_error(self, handler: CLICommandHandler, mock_management: FakeManagementPort) -> None:
         """Test mute command with error."""
-        mock_management.mute_signature.side_effect = ValueError("Signature not found")
+        mock_management.should_fail = True
+        mock_management.fail_message = "Signature not found"
 
         result = await handler.mute_signature("nonexistent")
 
@@ -401,7 +404,7 @@ class TestCLICommandHandler:
         assert "not found" in result["message"]
 
     async def test_resolve_signature_command(
-        self, handler: CLICommandHandler, mock_management: AsyncMock
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort
     ) -> None:
         """Test resolve signature command."""
         result = await handler.resolve_signature("sig-123", "Upgraded connection pool")
@@ -411,7 +414,7 @@ class TestCLICommandHandler:
         assert result["fix_applied"] == "Upgraded connection pool"
 
     async def test_retriage_signature_command(
-        self, handler: CLICommandHandler, mock_management: AsyncMock
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort
     ) -> None:
         """Test retriage signature command."""
         result = await handler.retriage_signature("sig-123")
@@ -420,7 +423,7 @@ class TestCLICommandHandler:
         assert result["operation"] == "retriage"
 
     async def test_get_details_json_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details in JSON format."""
@@ -433,7 +436,7 @@ class TestCLICommandHandler:
         assert result["data"].signature.id == "sig-123"
 
     async def test_get_details_text_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details in text format."""
@@ -448,7 +451,7 @@ class TestCLICommandHandler:
         assert "Status: new" in text
 
     async def test_get_details_invalid_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
         sample_details: SignatureDetails
     ) -> None:
         """Test getting details with invalid format."""
@@ -772,11 +775,11 @@ class TestRunCommand:
     """Test suite for CLI command runner."""
 
     @pytest.fixture
-    def mock_management(self) -> AsyncMock:
-        """Create a mock ManagementPort."""
-        return AsyncMock()
+    def mock_management(self) -> FakeManagementPort:
+        """Create a fake ManagementPort for testing."""
+        return FakeManagementPort()
 
-    async def test_run_mute_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_mute_command(self, mock_management: FakeManagementPort) -> None:
         """Test running mute command."""
         result = await run_command(
             mock_management,
@@ -785,9 +788,9 @@ class TestRunCommand:
         )
 
         assert result["status"] == "success"
-        mock_management.mute_signature.assert_called_once()
+        assert "sig-123" in mock_management.muted_signatures
 
-    async def test_run_resolve_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_resolve_command(self, mock_management: FakeManagementPort) -> None:
         """Test running resolve command."""
         result = await run_command(
             mock_management,
@@ -797,7 +800,7 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_retriage_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_retriage_command(self, mock_management: FakeManagementPort) -> None:
         """Test running retriage command."""
         result = await run_command(
             mock_management,
@@ -807,7 +810,7 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_details_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_details_command(self, mock_management: FakeManagementPort) -> None:
         """Test running details command."""
         mock_management.get_signature_details.return_value = {
             "id": "sig-123",
@@ -822,7 +825,7 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_unknown_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_unknown_command(self, mock_management: FakeManagementPort) -> None:
         """Test running unknown command."""
         with pytest.raises(ValueError, match="Unknown command"):
             await run_command(mock_management, "unknown", {})

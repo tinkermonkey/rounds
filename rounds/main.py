@@ -428,7 +428,13 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         asyncio.CancelledError: On graceful shutdown signal
     """
     # Step 1: Load configuration
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except ValueError as e:
+        print(f"❌ Configuration error: {e}")
+        print("Please check your .env.rounds file and ensure all required variables are set.")
+        print("See .env.rounds.template for required configuration options.")
+        sys.exit(1)
 
     # Step 2: Configure logging
     configure_logging(settings.log_level, settings.log_format)
@@ -660,12 +666,21 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
                 sys.exit(1)
 
     finally:
-        # Clean up resources
-        await telemetry.close()
-        await store.close_pool()
-        # Close notification adapter if it has a close method
-        if hasattr(notification, 'close'):
+        # Clean up resources with individual error handling
+        try:
+            await telemetry.close()
+        except Exception:
+            logger.error("Failed to close telemetry adapter", exc_info=True)
+
+        try:
+            await store.close_pool()
+        except Exception:
+            logger.error("Failed to close signature store", exc_info=True)
+
+        try:
             await notification.close()
+        except Exception:
+            logger.error("Failed to close notification adapter", exc_info=True)
 
 
 def main() -> None:

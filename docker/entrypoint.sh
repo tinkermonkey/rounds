@@ -112,12 +112,6 @@ esac
 export RUN_MODE
 
 # Launch the Rounds application
-# If a command was provided (via CMD or docker run), use it as an argument to set RUN_MODE
-# Otherwise, RUN_MODE from environment is used (defaults to "daemon" above)
-if [ $# -gt 0 ]; then
-  # CMD or docker run args were provided - use first arg as run mode
-  exec python -m rounds.main "$1"
-else
-  # No command provided - use RUN_MODE from environment
-  exec python -m rounds.main "$RUN_MODE"
-fi
+# RUN_MODE from environment is used (defaults to "daemon" above)
+# The Python application reads RUN_MODE via config.py
+exec python -m rounds.main

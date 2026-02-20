@@ -389,6 +389,18 @@ class NotificationPort(ABC):
             Exception: If notification channel is unavailable.
         """
 
+    async def close(self) -> None:
+        """Close connections and clean up resources.
+
+        Optional lifecycle method for adapters that manage external connections.
+        Default implementation does nothing. Subclasses should override
+        if they manage connections, file handles, or other resources.
+
+        Raises:
+            Exception: If resource cleanup fails.
+        """
+        pass
+
 
 # ============================================================================
 # DRIVING PORTS (Adapters/external systems call into core)
