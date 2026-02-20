@@ -468,7 +468,8 @@ CLAUDE_CODE_VERSION=                # Default: latest
 
 - Specific version to install (e.g., `1.2.3`)
 - Leave empty for latest version (recommended)
-- Useful for pinning to known-stable version
+- When set: Container will fail to start if specified version cannot be installed
+- This ensures reproducible deployments by rejecting fallback to unpinned versions
 
 ### Debug Mode
 

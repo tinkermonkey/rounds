@@ -53,13 +53,9 @@ if [ -n "$CLAUDE_CODE_VERSION" ]; then
   else
     echo -e "${RED}ERROR: Failed to install Claude Code CLI version $CLAUDE_CODE_VERSION${NC}"
     echo "Requested version: $CLAUDE_CODE_VERSION"
-
-    if [ "$CLAUDE_INSTALLED" = "true" ]; then
-      echo "Falling back to existing installation: $EXISTING_VERSION"
-    else
-      echo "No existing installation found. Network failure and no fallback available."
-      exit 1
-    fi
+    echo "Version pinning requires exact version match. Cannot proceed with fallback."
+    echo "Please verify the version exists and network connectivity is available."
+    exit 1
   fi
 else
   echo -e "${YELLOW}Updating Claude Code CLI to latest version...${NC}"
