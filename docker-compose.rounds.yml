@@ -1,20 +1,24 @@
 # ============================================================================
-# Docker Compose Configuration for Rounds (Production)
+# Rounds Docker Compose - Target Project Deployment
 # ============================================================================
-# Base configuration for running the Rounds continuous error diagnosis system
-# in production mode with persistent storage and proper networking.
+# USAGE:
+#   1. Place this file in the ROOT of your target project directory (the application being monitored)
+#   2. Copy .env.rounds.template to .env.rounds and configure
+#   3. Run: docker-compose -f docker-compose.rounds.yml up -d
 #
-# Usage:
-#   docker-compose -f docker-compose.rounds.yml up -d
+# The current directory (.) will be mounted as /workspace/target inside the container
+# so Rounds can access your target project's codebase for diagnosis.
 #
-# Environment Configuration:
-#   Copy .env.rounds.template to .env.rounds and customize values
-#   See .env.rounds.template for all available configuration options
+# See docs/QUICK_START_TARGET_PROJECT.md for detailed deployment instructions.
+#
+# Requirements:
+#   - .env.rounds file with configuration (created from .env.rounds.template)
+#   - rounds:dist image available (pull from Docker Hub or build locally)
 #
 # Volumes:
-#   - rounds-data: Persistent SQLite database storage
-#   - ./path/to/target: Target codebase (bind mount, read-only)
-#   - ./.rounds/reports: Markdown report output (bind mount, read-write)
+#   - Current directory (your project root) mounted read-only as /workspace/target
+#   - .rounds/reports/ for diagnosis output
+#   - rounds-data volume for signature database
 # ============================================================================
 
 services:

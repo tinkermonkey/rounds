@@ -15,20 +15,15 @@ This guide covers deploying the Rounds continuous error diagnosis system in vari
 
 ### Basic Deployment in 5 Minutes
 
-1. Clone the Rounds repository:
-```bash
-git clone https://github.com/your-org/rounds.git
-cd rounds
-```
+Run from your target project's root directory (the application being monitored):
 
-2. Copy and customize the environment template:
 ```bash
-cp .env.rounds.template .env.rounds
-# Edit .env.rounds with your settings
-```
+# 1. Install Rounds configuration files to your project
+curl -fsSL https://raw.githubusercontent.com/your-org/rounds/main/scripts/install-compose.sh | bash
 
-3. Start the service:
-```bash
+# 2. Edit .env.rounds with your settings (see docs/QUICK_START_TARGET_PROJECT.md)
+
+# 3. Start the service
 docker-compose -f docker-compose.rounds.yml up -d
 ```
 
