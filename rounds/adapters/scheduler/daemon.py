@@ -168,13 +168,17 @@ class DaemonScheduler:
                                 f"(consecutive failures: {self._investigation_failure_count})",
                                 exc_info=True
                             )
-                            # Log alert if too many consecutive failures
+                            # Raise exception if too many consecutive failures
                             if self._investigation_failure_count >= 5:
                                 logger.critical(
                                     f"Investigation cycle has failed {self._investigation_failure_count} "
-                                    f"consecutive times. This may indicate a persistent issue. "
-                                    f"Manual intervention may be required."
+                                    f"consecutive times. This indicates a persistent issue requiring "
+                                    f"manual intervention. Stopping daemon."
                                 )
+                                raise RuntimeError(
+                                    f"Investigation cycle failed {self._investigation_failure_count} "
+                                    f"consecutive times. Last error: {e}"
+                                ) from e
 
             except asyncio.CancelledError:
                 raise

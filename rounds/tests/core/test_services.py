@@ -1251,11 +1251,16 @@ class TestManagementService:
 
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
 
         management_service = ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
         # Retriage the signature
@@ -1273,11 +1278,16 @@ class TestManagementService:
         store = FakeSignatureStorePort()
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
 
         management_service = ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
         # Attempt to retriage non-existent signature

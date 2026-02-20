@@ -599,6 +599,9 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
         store=store,
         telemetry=telemetry,
         diagnosis_engine=diagnosis_engine,
+        notification=notification,
+        triage=triage,
+        codebase_path=settings.codebase_path,
     )
 
     # Step 5: Handle non-interactive commands or select run mode

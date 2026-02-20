@@ -28,8 +28,10 @@ from rounds.core.models import (
     SignatureDetails,
     SignatureStatus,
 )
+from rounds.core.triage import TriageEngine
 from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
 from rounds.tests.fakes.management import FakeManagementPort
+from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
 
@@ -50,10 +52,15 @@ class TestManagementService:
         """Create a ManagementService with fake dependencies."""
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
         return ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
     @pytest.fixture
