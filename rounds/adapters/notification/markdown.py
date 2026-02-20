@@ -66,9 +66,12 @@ class MarkdownNotificationAdapter(NotificationPort):
     def _sanitize_filename(text: str) -> str:
         """Sanitize a string for use in filenames.
 
-        Replaces all non-alphanumeric characters (except underscores and hyphens)
+        Replaces all non-alphanumeric ASCII characters (except underscores and hyphens)
         with underscores. This ensures the output is filesystem-safe across
         platforms and prevents directory traversal or special character issues.
+
+        Uses ASCII-only character class to avoid Unicode compatibility issues on
+        network shares, Windows compatibility mode, or tools with limited encoding support.
 
         Truncates to 100 characters to prevent OS filename length errors (most
         filesystems support up to 255 bytes, leaving room for timestamps and
@@ -78,8 +81,8 @@ class MarkdownNotificationAdapter(NotificationPort):
             text: The text to sanitize.
 
         Returns:
-            Sanitized string containing only alphanumeric characters, underscores,
-            and hyphens. No spaces or special characters. Maximum 100 characters.
+            Sanitized string containing only ASCII alphanumeric characters, underscores,
+            and hyphens. No spaces, Unicode, or special characters. Maximum 100 characters.
             Safe for use in filenames on any filesystem.
 
         Examples:
@@ -88,8 +91,8 @@ class MarkdownNotificationAdapter(NotificationPort):
             >>> _sanitize_filename("Error@Type:123")
             'Error_Type_123'
         """
-        # Replace any character that's not alphanumeric, underscore, or hyphen
-        sanitized = re.sub(r'[^\w\-]', '_', text)
+        # Replace any character that's not ASCII alphanumeric, underscore, or hyphen
+        sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '_', text)
         # Truncate to prevent OS filename length errors (255 byte limit on most filesystems)
         return sanitized[:100]
 
@@ -133,9 +136,13 @@ class MarkdownNotificationAdapter(NotificationPort):
         service = self._sanitize_filename(signature.service or "unknown")
         error_type = self._sanitize_filename(signature.error_type or "UnknownError")
 
-        # Generate filename: HH-MM-SS_service_ErrorType.md
+        # Include signature ID to prevent filename collisions when multiple
+        # diagnoses for the same service/error complete in the same second
+        sig_id_short = self._sanitize_filename(signature.id[:12] if signature.id else "unknown")
+
+        # Generate filename: HH-MM-SS_service_ErrorType_sigID.md
         date_dir = self.base_dir / date_str
-        filename = f"{time_str}_{service}_{error_type}.md"
+        filename = f"{time_str}_{service}_{error_type}_{sig_id_short}.md"
         return date_dir, filename
 
     async def report(

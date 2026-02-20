@@ -112,7 +112,15 @@ class DaemonScheduler:
             logger.warning(f"Failed to set up signal handlers: {e}")
 
     async def _run_loop(self) -> None:
-        """Main daemon loop."""
+        """Main daemon loop.
+
+        Raises:
+            ValueError: If poll_port is not set (should be caught by start()).
+        """
+        # Runtime validation - the cast provides type hints but doesn't enforce at runtime
+        if self.poll_port is None:
+            raise ValueError("poll_port must be set before _run_loop is called")
+
         poll_port = cast(PollPort, self.poll_port)
 
         cycle_number = 0

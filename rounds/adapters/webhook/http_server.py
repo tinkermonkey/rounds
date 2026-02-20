@@ -263,6 +263,9 @@ class WebhookHTTPServer:
             api_key: Optional API key for authentication.
             require_auth: Whether to require authentication (default False).
                          If True, api_key must be provided.
+
+        Raises:
+            ValueError: If require_auth=True but api_key is not provided.
         """
         self.webhook_receiver = webhook_receiver
         self.host = host
@@ -272,11 +275,11 @@ class WebhookHTTPServer:
         self.server: HTTPServer | None = None
         self._server_task: asyncio.Task[None] | None = None
 
-        # Validate auth configuration
+        # Validate auth configuration - fail fast at startup
         if require_auth and not api_key:
-            logger.warning(
-                "Authentication required but no API key provided. "
-                "Webhook endpoints will reject all authenticated requests."
+            raise ValueError(
+                "Authentication is required (require_auth=True) but no API key provided. "
+                "Please set WEBHOOK_API_KEY environment variable or disable authentication."
             )
 
     async def start(self) -> None:

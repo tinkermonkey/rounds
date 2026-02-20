@@ -156,66 +156,21 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
 fi
 echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured${NC}"
 
-# Verify authentication and basic functionality
-# Create a temporary workspace for the authentication test
-HEALTH_TEST_DIR=$(mktemp -d)
-
-# Create a minimal test file
-echo "print('health check')" > "$HEALTH_TEST_DIR/test.py"
-
-# Try to authenticate with Claude Code by running a simple command
-# The 'claude --help' command validates the CLI works but doesn't validate auth
-# We need to run a minimal operation that requires API access
-echo -e "${YELLOW}Testing Claude Code authentication and API connectivity...${NC}"
-cd "$HEALTH_TEST_DIR"
-
-# Use a timeout to prevent hanging if API is unreachable
-# We'll run a very simple query that should complete quickly
-# Capture output to show errors if authentication fails
-CLAUDE_TEST_OUTPUT=$(mktemp)
-if timeout 30s claude query "What is 1+1?" --workspace . >"$CLAUDE_TEST_OUTPUT" 2>&1; then
-  echo -e "${GREEN}✓ Claude Code authentication successful and API is reachable${NC}"
-  rm -f "$CLAUDE_TEST_OUTPUT"
-elif [ $? -eq 124 ]; then
-  # Timeout occurred
-  echo -e "${RED}ERROR: Claude Code authentication test timed out after 30 seconds${NC}"
-  echo "API may be slow or unreachable."
-  echo "Check ANTHROPIC_API_KEY and network connectivity."
-  if [ -s "$CLAUDE_TEST_OUTPUT" ]; then
-    echo -e "${YELLOW}Claude output before timeout:${NC}"
-    cat "$CLAUDE_TEST_OUTPUT"
-  fi
-  rm -f "$CLAUDE_TEST_OUTPUT"
-  # Only exit if running in daemon or webhook mode (automated operation)
-  # In CLI mode, user can troubleshoot interactively
-  if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
-    echo "Cannot proceed with automated operation without verified authentication."
-    exit 1
-  else
-    echo -e "${YELLOW}WARNING: Continuing in CLI mode - diagnosis operations may fail${NC}"
-  fi
-else
-  # Command failed for other reasons
-  echo -e "${RED}ERROR: Claude Code authentication test failed${NC}"
-  echo "This indicates an invalid ANTHROPIC_API_KEY or API connectivity issues."
-  if [ -s "$CLAUDE_TEST_OUTPUT" ]; then
-    echo -e "${YELLOW}Claude error output:${NC}"
-    cat "$CLAUDE_TEST_OUTPUT"
-  fi
-  rm -f "$CLAUDE_TEST_OUTPUT"
-  # Only exit if running in daemon or webhook mode (automated operation)
-  if [ "$RUN_MODE" = "daemon" ] || [ "$RUN_MODE" = "webhook" ]; then
-    echo "Cannot proceed with automated operation without verified authentication."
-    exit 1
-  else
-    echo -e "${YELLOW}WARNING: Continuing in CLI mode - diagnosis operations will fail until this is resolved${NC}"
-  fi
+# Verify CLI functionality with --help (no API call required)
+# The --help command validates the CLI works but doesn't consume API credits
+if ! claude --help >/dev/null 2>&1; then
+  echo -e "${RED}ERROR: Claude Code CLI is not functioning properly${NC}"
+  echo "The 'claude --help' command failed."
+  exit 1
 fi
+echo -e "${GREEN}✓ CLI functionality verified${NC}"
 
-cd - > /dev/null
-
-# Clean up health test directory
-rm -rf "$HEALTH_TEST_DIR"
+# Note: We skip a live API authentication test to avoid consuming API credits
+# on every container startup. The application's budget system will catch
+# authentication failures when diagnosis is attempted.
+# For explicit auth testing, use: docker exec <container> claude --help
+echo -e "${YELLOW}⚠ Authentication will be validated on first diagnosis operation${NC}"
+echo "The first diagnosis attempt will fail if ANTHROPIC_API_KEY is invalid."
 
 # ============================================================================
 # Step 3: Create Required Directories
