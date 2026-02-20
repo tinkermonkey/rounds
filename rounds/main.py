@@ -105,6 +105,8 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
                 # Re-raise critical system errors to outer handler
                 raise
             except Exception as e:
+                # Catch all other exceptions to keep CLI alive
+                # Interactive CLI should survive individual command failures
                 logger.error(f"Command execution error: {e}", exc_info=True)
                 print(json.dumps({
                     "status": "error",
@@ -124,7 +126,8 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
             logger.error(f"Critical system error: {e}", exc_info=True)
             raise
         except Exception as e:
-            # Log other errors and provide user feedback
+            # Catch all other exceptions to keep CLI alive
+            # Interactive CLI should survive input parsing and prompt errors
             logger.error(f"CLI error: {e}", exc_info=True)
             print(json.dumps({
                 "status": "error",
@@ -733,6 +736,13 @@ def main() -> None:
     try:
         # Parse command-line arguments
         args = _parse_arguments()
+
+        # Validate command-line arguments early to fail fast
+        if args.command == "diagnose" and not args.signature_id:
+            print("ERROR: diagnose command requires signature_id argument", file=sys.stderr)
+            print("Usage: python -m rounds.main diagnose SIGNATURE_ID", file=sys.stderr)
+            sys.exit(1)
+
         # Run bootstrap with optional command and signature_id
         asyncio.run(bootstrap(command=args.command, signature_id=args.signature_id))
     except KeyboardInterrupt:

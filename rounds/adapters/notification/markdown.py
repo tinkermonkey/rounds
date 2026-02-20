@@ -42,7 +42,8 @@ class MarkdownNotificationAdapter(NotificationPort):
         self.base_dir = Path(report_dir).resolve()
 
         # Validate that report_dir is not a filesystem root
-        if self.base_dir.parent == self.base_dir:
+        # Use parts to detect roots: POSIX "/" has 1 part, Windows "C:\" has 2 parts (drive + root)
+        if len(self.base_dir.parts) <= 2 and self.base_dir.parent == self.base_dir:
             raise ValueError(f"report_dir cannot be a filesystem root: {report_dir}")
 
         # Validate that parent directory exists or can be created (needed for summary.md)
@@ -106,9 +107,19 @@ class MarkdownNotificationAdapter(NotificationPort):
             Path to the date directory.
 
         Raises:
+            ValueError: If date_str contains directory traversal sequences or invalid format.
             OSError: If directory cannot be created.
         """
+        # Validate date_str format to prevent directory traversal
+        # Expected format: YYYY-MM-DD (e.g., "2026-02-20")
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            raise ValueError(f"Invalid date_str format (expected YYYY-MM-DD): {date_str}")
+
         date_dir = self.base_dir / date_str
+
+        # Additional safety check: ensure resolved path is under base_dir
+        if not date_dir.resolve().is_relative_to(self.base_dir):
+            raise ValueError(f"date_str would create path outside base_dir: {date_str}")
         try:
             await asyncio.to_thread(date_dir.mkdir, parents=True, exist_ok=True)
         except OSError as e:

@@ -97,8 +97,13 @@ class DaemonScheduler:
                 logger.info(f"Received signal {sig}, initiating graceful shutdown...")
                 # Store task reference to prevent garbage collection
                 task = asyncio.create_task(self.stop())
-                # Task will complete when stop() finishes
-                task.add_done_callback(lambda _: None)
+                # Log any exceptions from stop() to prevent silent failures
+                def _log_task_exception(t: asyncio.Task[None]) -> None:
+                    try:
+                        t.result()  # Retrieve result to raise any exception
+                    except Exception as e:
+                        logger.error(f"Error during signal-triggered shutdown: {e}", exc_info=True)
+                task.add_done_callback(_log_task_exception)
 
             # Register handlers for SIGTERM and SIGINT
             loop.add_signal_handler(
