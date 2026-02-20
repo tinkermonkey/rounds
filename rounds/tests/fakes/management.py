@@ -1,7 +1,6 @@
 """Fake ManagementPort implementation for testing."""
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from rounds.core.models import Diagnosis, Signature, SignatureDetails, SignatureStatus
 from rounds.core.ports import ManagementPort
@@ -79,8 +78,8 @@ class FakeManagementPort(ManagementPort):
                 service="",
                 message_template="",
                 stack_hash="",
-                first_seen=datetime.now(timezone.utc),
-                last_seen=datetime.now(timezone.utc),
+                first_seen=datetime.now(UTC),
+                last_seen=datetime.now(UTC),
                 occurrence_count=1,
                 status=SignatureStatus.NEW,
             ),
@@ -116,7 +115,7 @@ class FakeManagementPort(ManagementPort):
             evidence=("Fake evidence",),
             suggested_fix="Fake fix",
             confidence="medium",
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model="fake-model",
             cost_usd=0.0,
         )

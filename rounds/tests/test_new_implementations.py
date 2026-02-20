@@ -9,14 +9,10 @@ Covers:
 - GrafanaStackTelemetryAdapter (Grafana Stack backend)
 """
 
-import asyncio
-import json
 import tempfile
 from collections.abc import Generator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,19 +23,15 @@ from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.core.management_service import ManagementService
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
-    Severity,
     Signature,
     SignatureDetails,
     SignatureStatus,
-    StackFrame,
 )
-from rounds.tests.fakes.store import FakeSignatureStorePort
-from rounds.tests.fakes.telemetry import FakeTelemetryPort
 from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
 from rounds.tests.fakes.management import FakeManagementPort
-
+from rounds.tests.fakes.store import FakeSignatureStorePort
+from rounds.tests.fakes.telemetry import FakeTelemetryPort
 
 # --- ManagementService Tests ---
 
@@ -74,8 +66,8 @@ class TestManagementService:
             service="auth-service",
             message_template="Connection timeout after {duration}ms",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.NEW,
         )
@@ -125,7 +117,7 @@ class TestManagementService:
             evidence=("Pool size 10", "Concurrent requests 15"),
             suggested_fix="Increase pool size",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -153,7 +145,7 @@ class TestManagementService:
             evidence=("Pool exhausted",),
             suggested_fix="Increase pool size",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -198,8 +190,8 @@ class TestManagementService:
             service="api",
             message_template="Invalid value",
             stack_hash="hash-1",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )
@@ -210,8 +202,8 @@ class TestManagementService:
             service="api",
             message_template="Timeout",
             stack_hash="hash-2",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=2,
             status=SignatureStatus.DIAGNOSED,
         )
@@ -239,8 +231,8 @@ class TestManagementService:
             service="worker",
             message_template="Runtime error",
             stack_hash="hash-diagnosed",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.DIAGNOSED,
         )
@@ -251,8 +243,8 @@ class TestManagementService:
             service="legacy",
             message_template="Deprecated",
             stack_hash="hash-muted",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=3,
             status=SignatureStatus.MUTED,
         )
@@ -348,8 +340,8 @@ class TestCLICommandHandler:
             service="api-service",
             message_template="Invalid value: {value}",
             stack_hash="stack-123",
-            first_seen=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            last_seen=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 1, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 2, tzinfo=UTC),
             occurrence_count=5,
             status=SignatureStatus.NEW,
             diagnosis=Diagnosis(
@@ -357,7 +349,7 @@ class TestCLICommandHandler:
                 evidence=("No input checks",),
                 suggested_fix="Add input validation",
                 confidence="high",
-                diagnosed_at=datetime.now(tz=timezone.utc),
+                diagnosed_at=datetime.now(tz=UTC),
                 model="claude-3",
                 cost_usd=0.25,
             ),
@@ -370,8 +362,8 @@ class TestCLICommandHandler:
             service="api-service",
             message_template="Invalid value",
             stack_hash="stack-456",
-            first_seen=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            last_seen=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 1, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 2, tzinfo=UTC),
             occurrence_count=3,
             status=SignatureStatus.NEW,
         )
@@ -473,7 +465,6 @@ class TestMarkdownNotificationAdapter:
     @pytest.fixture
     def temp_dir(self) -> Generator[Path, None, None]:
         """Create a temporary directory for markdown reports."""
-        import tempfile
         temp_dir = Path(tempfile.mkdtemp())
         yield temp_dir
         # Cleanup: recursively remove temp directory
@@ -495,8 +486,8 @@ class TestMarkdownNotificationAdapter:
             service="api-service",
             message_template="Connection timeout",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.NEW,
         )
@@ -509,7 +500,7 @@ class TestMarkdownNotificationAdapter:
             evidence=("10 concurrent requests", "Pool size 5"),
             suggested_fix="Increase pool size to 20",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -611,8 +602,8 @@ class TestMarkdownNotificationAdapter:
             service="api-gateway/v2",  # Contains slash
             message_template="Invalid input",
             stack_hash="stack-456",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=3,
             status=SignatureStatus.NEW,
         )
@@ -622,7 +613,7 @@ class TestMarkdownNotificationAdapter:
             evidence=("Test",),
             suggested_fix="Validate",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -669,8 +660,8 @@ class TestGitHubIssueNotificationAdapter:
             service="payment-service",
             message_template="Connection refused",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=10,
             status=SignatureStatus.NEW,
         )
@@ -683,7 +674,7 @@ class TestGitHubIssueNotificationAdapter:
             evidence=("100 open connections", "CPU at 95%"),
             suggested_fix="Scale database vertically or add replicas",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.75,
         )

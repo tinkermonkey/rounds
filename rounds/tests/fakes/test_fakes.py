@@ -4,16 +4,16 @@ These tests verify that fake adapters work correctly as test doubles
 and can be used confidently in tests of core domain logic.
 """
 
-import pytest
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-import sys
+
+import pytest
 
 # Add the rounds directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
@@ -27,14 +27,13 @@ from rounds.core.models import (
     TraceTree,
 )
 from tests.fakes import (
-    FakeTelemetryPort,
-    FakeSignatureStorePort,
     FakeDiagnosisPort,
+    FakeManagementPort,
     FakeNotificationPort,
     FakePollPort,
-    FakeManagementPort,
+    FakeSignatureStorePort,
+    FakeTelemetryPort,
 )
-
 
 # ============================================================================
 # Test Fixtures

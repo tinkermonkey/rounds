@@ -4,17 +4,17 @@ Tests verify that port abstract base classes are properly defined
 and that implementations must satisfy the interface contract.
 """
 
-import pytest
-from datetime import datetime, timezone
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-import sys
+
+import pytest
 
 # Add the rounds directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
@@ -25,20 +25,19 @@ from core.models import (
     Signature,
     SignatureDetails,
     SignatureStatus,
-    StackFrame,
-    TraceTree,
     SpanNode,
+    StackFrame,
     StoreStats,
+    TraceTree,
 )
 from core.ports import (
-    TelemetryPort,
-    SignatureStorePort,
     DiagnosisPort,
+    ManagementPort,
     NotificationPort,
     PollPort,
-    ManagementPort,
+    SignatureStorePort,
+    TelemetryPort,
 )
-
 
 # ============================================================================
 # Test Fixtures
@@ -370,8 +369,8 @@ class MockManagementPort(ManagementPort):
                 service="",
                 message_template="",
                 stack_hash="",
-                first_seen=datetime.now(timezone.utc),
-                last_seen=datetime.now(timezone.utc),
+                first_seen=datetime.now(UTC),
+                last_seen=datetime.now(UTC),
                 occurrence_count=1,
                 status=SignatureStatus.NEW,
             ),
@@ -392,7 +391,7 @@ class MockManagementPort(ManagementPort):
             evidence=("Mock evidence",),
             suggested_fix="Mock fix",
             confidence="high",
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model="mock-model",
             cost_usd=0.0,
         )

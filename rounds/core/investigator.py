@@ -8,7 +8,7 @@ external diagnosis services.
 import logging
 from typing import Protocol
 
-from .models import Diagnosis, InvestigationContext, Signature, SignatureStatus
+from .models import Diagnosis, InvestigationContext, Signature
 from .ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 

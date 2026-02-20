@@ -15,8 +15,9 @@ view of errors, traces, and logs.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
@@ -157,7 +158,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
             # Convert timestamp to nanoseconds for Loki
             start_ns = int(since.timestamp() * 1e9)
-            end_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+            end_ns = int(datetime.now(UTC).timestamp() * 1e9)
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
@@ -217,7 +218,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 )
 
             # Parse timestamp
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now(UTC)
             if "timestamp" in log_data:
                 try:
                     timestamp = datetime.fromisoformat(log_data["timestamp"])
@@ -499,7 +500,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 for stream in streams:
                     for timestamp, log_line in stream.get("values", []):
                         log_entry = LogEntry(
-                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=timezone.utc),
+                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=UTC),
                             severity=Severity.INFO,
                             body=log_line,
                             attributes={},
@@ -539,7 +540,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             Exception: If telemetry backend is unreachable.
         """
         # Fetch recent errors from last 24 hours
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        since = datetime.now(UTC) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
         # Filter by fingerprint using injected fingerprinter

@@ -7,12 +7,11 @@ Tests verify that the adapter correctly:
 - Handles character encoding issues
 """
 
-import asyncio
 import tempfile
 from collections.abc import Generator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -37,8 +36,8 @@ def sample_signature() -> Signature:
         service="api-service",
         message_template="Failed to connect to {database}",
         stack_hash="stack-abc",
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
+        first_seen=datetime.now(UTC),
+        last_seen=datetime.now(UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )
@@ -52,7 +51,7 @@ def sample_diagnosis() -> Diagnosis:
         evidence=("Pool size exceeded",),
         suggested_fix="Increase pool size",
         confidence="high",
-        diagnosed_at=datetime.now(timezone.utc),
+        diagnosed_at=datetime.now(UTC),
         model="claude-opus",
         cost_usd=0.01,
     )

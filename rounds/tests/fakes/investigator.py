@@ -1,6 +1,6 @@
 """Fake Investigator for testing."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rounds.core.investigator import Investigator
 from rounds.core.models import Diagnosis, Signature
@@ -68,7 +68,7 @@ class FakeInvestigator(Investigator):
             evidence=("Fake evidence 1", "Fake evidence 2"),
             suggested_fix="Fake suggested fix",
             confidence="medium",
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model="fake-model",
             cost_usd=0.01,
         )

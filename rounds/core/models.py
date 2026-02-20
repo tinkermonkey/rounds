@@ -4,11 +4,12 @@ All models in this module use only Python standard library types,
 ensuring zero external dependencies in the core domain.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, TypeAlias, Union
+from typing import Any, Literal, TypeAlias
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
+    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
     severity: Severity
 
     def __post_init__(self) -> None:
@@ -249,7 +250,7 @@ class SpanNode:
     operation: str
     duration_ms: float
     status: str
-    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
+    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
     events: EventTuple  # converted to proxies in __post_init__
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
@@ -284,7 +285,7 @@ class LogEntry:
     timestamp: datetime
     severity: Severity
     body: str
-    attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
+    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
     trace_id: str | None
     span_id: str | None
 

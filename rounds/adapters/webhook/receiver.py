@@ -54,7 +54,7 @@ class WebhookReceiver:
         """
         result = await self.poll_port.execute_poll_cycle()
         logger.info(
-            f"Poll cycle triggered via webhook",
+            "Poll cycle triggered via webhook",
             extra={
                 "errors_found": result.errors_found,
                 "new_signatures": result.new_signatures,
@@ -83,7 +83,7 @@ class WebhookReceiver:
         """
         result = await self.poll_port.execute_investigation_cycle()
         logger.info(
-            f"Investigation cycle triggered via webhook",
+            "Investigation cycle triggered via webhook",
             extra={
                 "diagnoses_count": len(result.diagnoses_produced),
                 "investigations_failed": result.investigations_failed,
@@ -114,7 +114,7 @@ class WebhookReceiver:
         """
         await self.management_port.mute_signature(signature_id, reason)
         logger.info(
-            f"Signature muted via webhook",
+            "Signature muted via webhook",
             extra={"signature_id": signature_id, "reason": reason},
         )
         return {
@@ -140,7 +140,7 @@ class WebhookReceiver:
         """
         await self.management_port.resolve_signature(signature_id, fix_applied)
         logger.info(
-            f"Signature resolved via webhook",
+            "Signature resolved via webhook",
             extra={"signature_id": signature_id, "fix_applied": fix_applied},
         )
         return {
@@ -163,7 +163,7 @@ class WebhookReceiver:
         """
         await self.management_port.retriage_signature(signature_id)
         logger.info(
-            f"Signature retriaged via webhook",
+            "Signature retriaged via webhook",
             extra={"signature_id": signature_id},
         )
         return {
@@ -187,7 +187,7 @@ class WebhookReceiver:
         """
         diagnosis = await self.management_port.reinvestigate(signature_id)
         logger.info(
-            f"Signature reinvestigated via webhook",
+            "Signature reinvestigated via webhook",
             extra={
                 "signature_id": signature_id,
                 "confidence": diagnosis.confidence,
@@ -219,7 +219,7 @@ class WebhookReceiver:
         """
         details = await self.management_port.get_signature_details(signature_id)
         logger.debug(
-            f"Signature details retrieved via webhook",
+            "Signature details retrieved via webhook",
             extra={"signature_id": signature_id},
         )
 
@@ -300,7 +300,7 @@ class WebhookReceiver:
 
         signatures = await self.management_port.list_signatures(status_enum)
         logger.debug(
-            f"Signatures listed via webhook",
+            "Signatures listed via webhook",
             extra={"count": len(signatures), "status_filter": status},
         )
         return {

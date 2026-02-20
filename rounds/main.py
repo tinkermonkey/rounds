@@ -39,7 +39,7 @@ from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
 from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
-from rounds.core.ports import TelemetryPort, SignatureStorePort, DiagnosisPort, NotificationPort
+from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
 
 
@@ -244,7 +244,7 @@ async def _run_scan(poll_service: PollService) -> None:
         output = {
             "status": "error",
             "error_type": "connection_error",
-            "message": f"Telemetry service unreachable: {str(e)}"
+            "message": f"Telemetry service unreachable: {e!s}"
         }
         print(json.dumps(output, indent=2), file=sys.stderr)
         sys.exit(1)

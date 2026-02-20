@@ -10,8 +10,7 @@ import asyncio
 import json
 import logging
 import subprocess
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, InvestigationContext
@@ -65,7 +64,7 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
                 evidence=diagnosis.evidence,
                 suggested_fix=diagnosis.suggested_fix,
                 confidence=diagnosis.confidence,
-                diagnosed_at=datetime.now(timezone.utc),
+                diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
             )
@@ -297,7 +296,7 @@ Respond with a JSON object in exactly this format:
             evidence=evidence,
             suggested_fix=suggested_fix,
             confidence=confidence_lower,
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be filled in by diagnose()
         )

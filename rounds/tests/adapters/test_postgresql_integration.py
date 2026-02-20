@@ -4,17 +4,17 @@ NOTE: These tests require a PostgreSQL instance. For development testing,
 tests can be skipped if PostgreSQL is not available using pytest.mark.skipif
 """
 
-import pytest
 import os
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
 
+import pytest
+
+from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 from rounds.core.models import (
     Diagnosis,
     Signature,
     SignatureStatus,
 )
-from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 
 
 @pytest.fixture
@@ -76,8 +76,8 @@ async def test_create_and_retrieve_signature(
         service="user-service",
         message_template="Invalid value: {value}",
         stack_hash="stack123",
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
+        first_seen=datetime.now(UTC),
+        last_seen=datetime.now(UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
     )
@@ -140,8 +140,8 @@ class TestPostgreSQLTransactions:
             service="api-service",
             message_template="Runtime error",
             stack_hash="stack-tx",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )
@@ -168,8 +168,8 @@ class TestPostgreSQLTransactions:
             service="db-service",
             message_template="Timeout",
             stack_hash="stack-diag",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )

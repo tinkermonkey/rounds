@@ -5,8 +5,9 @@ Normalizes SigNoz-specific data structures into core domain models.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
@@ -375,7 +376,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             May be empty if no recent matches found.
         """
         # Fetch recent errors from last 24 hours
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        since = datetime.now(UTC) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
         # Filter by fingerprint using injected fingerprinter
@@ -401,7 +402,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(span_data.get("timestamp", 0))
-            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc)
+            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
             severity_text = span_data.get("severityText", "ERROR")
 
             if not error_type:
@@ -456,7 +457,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(log_data.get("timestamp", 0))
             return LogEntry(
-                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc),
+                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC),
                 severity=self._parse_severity(log_data.get("severityText", "INFO")),
                 body=log_data.get("body", ""),
                 attributes=log_data.get("attributes", {}),

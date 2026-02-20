@@ -7,11 +7,16 @@ investigations.
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .fingerprint import Fingerprinter
 from .investigator import Investigator
-from .models import Diagnosis, ErrorEvent, InvestigationResult, PollResult, Signature, SignatureStatus
+from .models import (
+    InvestigationResult,
+    PollResult,
+    Signature,
+    SignatureStatus,
+)
 from .ports import PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
@@ -56,7 +61,7 @@ class PollService(PollPort):
         Raises:
             Exception: If telemetry fetch fails. Errors are not silenced.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         since = now - timedelta(minutes=self.lookback_minutes)
 
         try:

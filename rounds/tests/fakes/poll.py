@@ -1,8 +1,8 @@
 """Fake PollPort implementation for testing."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from rounds.core.models import Diagnosis, InvestigationResult, PollResult
+from rounds.core.models import InvestigationResult, PollResult
 from rounds.core.ports import PollPort
 
 
@@ -67,7 +67,7 @@ class FakePollPort(PollPort):
             new_signatures=0,
             updated_signatures=0,
             investigations_queued=0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
     async def execute_investigation_cycle(self) -> InvestigationResult:

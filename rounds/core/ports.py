@@ -18,8 +18,9 @@ Port Interface Categories:
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from .models import (
     Diagnosis,
@@ -28,13 +29,12 @@ from .models import (
     InvestigationResult,
     LogEntry,
     PollResult,
-    SignatureDetails,
-    StoreStats,
     Signature,
+    SignatureDetails,
     SignatureStatus,
+    StoreStats,
     TraceTree,
 )
-
 
 # ============================================================================
 # DRIVEN PORTS (Core calls out to adapters)

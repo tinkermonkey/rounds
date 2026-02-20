@@ -9,7 +9,7 @@ Jaeger provides distributed tracing and can integrate with various backends
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -118,7 +118,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         try:
             # Calculate time range
-            end_time_us = int(datetime.now(timezone.utc).timestamp() * 1e6)
+            end_time_us = int(datetime.now(UTC).timestamp() * 1e6)
             start_time_us = int(since.timestamp() * 1e6)
 
             # If no services specified, query each service separately
@@ -225,7 +225,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 error_message=error_message,
                 stack_frames=stack_frames,
                 timestamp=datetime.fromtimestamp(
-                    span.get("startTime", 0) / 1e6, tz=timezone.utc
+                    span.get("startTime", 0) / 1e6, tz=UTC
                 ),
                 attributes=tags,
                 severity=Severity.ERROR,
@@ -586,10 +586,10 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         timestamp_us = log.get("timestamp", 0)
                         if timestamp_us:
                             timestamp = datetime.fromtimestamp(
-                                timestamp_us / 1e6, tz=timezone.utc
+                                timestamp_us / 1e6, tz=UTC
                             )
                         else:
-                            timestamp = datetime.now(timezone.utc)
+                            timestamp = datetime.now(UTC)
 
                         # Extract message and other fields
                         message = ""
@@ -652,7 +652,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                     # Build tag query for fingerprint and error status
                     tags = f"error=true AND fingerprint={fingerprint}"
 
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                     end_time_us = int(now.timestamp() * 1e6)
                     # Look back 24 hours for events matching this fingerprint
                     start_time_us = int((now - timedelta(hours=24)).timestamp() * 1e6)

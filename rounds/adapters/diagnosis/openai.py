@@ -7,7 +7,7 @@ for LLM-powered code analysis and root cause diagnosis.
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, InvestigationContext
@@ -88,7 +88,7 @@ class OpenAIDiagnosisAdapter(DiagnosisPort):
                 evidence=diagnosis.evidence,
                 suggested_fix=diagnosis.suggested_fix,
                 confidence=diagnosis.confidence,
-                diagnosed_at=datetime.now(timezone.utc),
+                diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
             )
@@ -309,7 +309,7 @@ Respond with a JSON object in exactly this format:
             evidence=evidence,
             suggested_fix=suggested_fix,
             confidence=confidence_raw.lower(),
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be overwritten by caller
         )

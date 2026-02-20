@@ -1,17 +1,14 @@
 """Integration tests for OpenAI diagnosis adapter."""
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch, MagicMock
-import json
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
 from rounds.core.models import (
     Diagnosis,
-    ErrorEvent,
-    Severity,
-    StackFrame,
 )
-from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
 
 
 @pytest.fixture
@@ -76,7 +73,7 @@ async def test_budget_tracking() -> None:
         evidence=("Evidence 1", "Evidence 2"),
         suggested_fix="Test fix",
         confidence="medium",
-        diagnosed_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
         model="gpt-4",
         cost_usd=0.05,
     )

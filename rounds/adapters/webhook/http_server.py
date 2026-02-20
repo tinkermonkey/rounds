@@ -11,8 +11,9 @@ import asyncio
 import hmac
 import json
 import logging
+from collections.abc import Coroutine
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Coroutine
+from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
 
@@ -94,8 +95,8 @@ def make_webhook_handler(
             content_length = int(self.headers.get("Content-Length", 0))
 
             # Add 1MB body size limit to prevent DoS
-            MAX_BODY_SIZE = 1024 * 1024
-            if content_length > MAX_BODY_SIZE:
+            max_body_size = 1024 * 1024
+            if content_length > max_body_size:
                 self.send_error(413, "Request body too large")
                 return
 

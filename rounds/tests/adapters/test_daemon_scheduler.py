@@ -1,7 +1,8 @@
 """Tests for DaemonScheduler budget enforcement."""
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
@@ -50,7 +51,6 @@ async def test_budget_resets_on_date_change(
     await scheduler.record_diagnosis_cost(8.00)
     assert scheduler._daily_cost_usd == 8.00
 
-    original_cost = scheduler._daily_cost_usd
     original_date = scheduler._budget_date
 
     # Simulate date change by modifying the internal budget date to yesterday
@@ -175,7 +175,7 @@ async def test_run_loop_investigation_failure_tracking(
             new_signatures=1,
             updated_signatures=0,
             investigations_queued=1,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
     )
 

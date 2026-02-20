@@ -7,7 +7,7 @@ triggers poll cycles at configurable intervals.
 import asyncio
 import logging
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 
 from rounds.core.ports import PollPort
@@ -37,7 +37,7 @@ class DaemonScheduler:
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
-        self._budget_date = datetime.now(timezone.utc).date()
+        self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0  # Track consecutive investigation cycle failures
 
@@ -95,7 +95,10 @@ class DaemonScheduler:
 
             def _handle_signal(sig: int) -> None:
                 logger.info(f"Received signal {sig}, initiating graceful shutdown...")
-                asyncio.create_task(self.stop())
+                # Store task reference to prevent garbage collection
+                task = asyncio.create_task(self.stop())
+                # Task will complete when stop() finishes
+                task.add_done_callback(lambda _: None)
 
             # Register handlers for SIGTERM and SIGINT
             loop.add_signal_handler(
@@ -202,7 +205,7 @@ class DaemonScheduler:
 
         async with self._budget_lock:
             # Reset daily cost if date has changed
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._budget_date = today
@@ -220,7 +223,7 @@ class DaemonScheduler:
         """
         async with self._budget_lock:
             # Reset daily cost if date has changed
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._budget_date = today

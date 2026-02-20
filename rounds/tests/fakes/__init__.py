@@ -11,18 +11,18 @@ without external dependencies:
 - FakeManagementPort: Captured management operations
 """
 
-from .telemetry import FakeTelemetryPort
-from .store import FakeSignatureStorePort
 from .diagnosis import FakeDiagnosisPort
+from .management import FakeManagementPort
 from .notification import FakeNotificationPort
 from .poll import FakePollPort
-from .management import FakeManagementPort
+from .store import FakeSignatureStorePort
+from .telemetry import FakeTelemetryPort
 
 __all__ = [
-    "FakeTelemetryPort",
-    "FakeSignatureStorePort",
     "FakeDiagnosisPort",
+    "FakeManagementPort",
     "FakeNotificationPort",
     "FakePollPort",
-    "FakeManagementPort",
+    "FakeSignatureStorePort",
+    "FakeTelemetryPort",
 ]

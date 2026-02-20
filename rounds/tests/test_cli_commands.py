@@ -7,11 +7,9 @@ Tests verify that the scan and diagnose commands correctly:
 - Handle error cases gracefully
 """
 
-import asyncio
 import json
 import sys
-from datetime import datetime, timedelta, timezone
-from io import StringIO
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -21,11 +19,10 @@ from rounds.core.models import (
     Signature,
     SignatureStatus,
 )
+from rounds.main import _parse_arguments, _run_diagnose, _run_scan
 from rounds.tests.fakes.investigator import FakeInvestigator
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
-from rounds.main import _run_scan, _run_diagnose, _parse_arguments
-
 
 # ============================================================================
 # Test Fixtures
@@ -42,8 +39,8 @@ def sample_signature() -> Signature:
         service="payment-service",
         message_template="Failed to connect to database at {host}:{port} for user {user_id}",
         stack_hash="stack789",
-        first_seen=datetime.now(timezone.utc) - timedelta(hours=1),
-        last_seen=datetime.now(timezone.utc),
+        first_seen=datetime.now(UTC) - timedelta(hours=1),
+        last_seen=datetime.now(UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )
@@ -61,7 +58,7 @@ def sample_diagnosis() -> Diagnosis:
         ),
         suggested_fix="Increase connection pool size or implement connection timeout recycling",
         confidence="high",
-        diagnosed_at=datetime.now(timezone.utc),
+        diagnosed_at=datetime.now(UTC),
         model="claude-opus-4-6",
         cost_usd=0.05,
     )
@@ -77,7 +74,7 @@ class TestScanCommand:
 
     def test_scan_success_data_structure(self) -> None:
         """Test scan command success output data structure."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         poll_result = PollResult(
             errors_found=5,
             new_signatures=2,
@@ -300,8 +297,8 @@ class TestRunScanIntegration:
     ) -> None:
         """Test that _run_scan invokes PollService with correct parameters."""
         from rounds.core.fingerprint import Fingerprinter
-        from rounds.core.triage import TriageEngine
         from rounds.core.poll_service import PollService
+        from rounds.core.triage import TriageEngine
 
         # Create fake adapters
         store = FakeSignatureStorePort()
@@ -345,8 +342,8 @@ class TestRunScanIntegration:
     ) -> None:
         """Test that _run_scan output structure matches JSON specification."""
         from rounds.core.fingerprint import Fingerprinter
-        from rounds.core.triage import TriageEngine
         from rounds.core.poll_service import PollService
+        from rounds.core.triage import TriageEngine
 
         # Create fake adapters
         store = FakeSignatureStorePort()
@@ -388,8 +385,8 @@ class TestRunScanIntegration:
     async def test_run_scan_handles_connection_error(self, capsys) -> None:
         """Test that _run_scan handles ConnectionError with specific error_type."""
         from rounds.core.fingerprint import Fingerprinter
-        from rounds.core.triage import TriageEngine
         from rounds.core.poll_service import PollService
+        from rounds.core.triage import TriageEngine
 
         # Create fake adapters with telemetry that raises ConnectionError
         store = FakeSignatureStorePort()

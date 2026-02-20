@@ -8,8 +8,14 @@ and auditable.
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
-from .models import Diagnosis, InvestigationContext, Signature, SignatureDetails, SignatureStatus, ErrorEvent
+
+from .models import (
+    Diagnosis,
+    InvestigationContext,
+    Signature,
+    SignatureDetails,
+    SignatureStatus,
+)
 from .ports import (
     DiagnosisPort,
     ManagementPort,
@@ -201,7 +207,7 @@ class ManagementService(ManagementPort):
         signatures = await self.store.get_all(status=status)
 
         logger.debug(
-            f"Listed signatures" + (f" with status={status.value}" if status else ""),
+            "Listed signatures" + (f" with status={status.value}" if status else ""),
             extra={
                 "count": len(signatures),
             },
