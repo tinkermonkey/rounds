@@ -162,7 +162,8 @@ class TestMarkdownNotificationAdapter:
         """Test _sanitize_filename with very long string."""
         long_string = "A" * 300  # Very long error type name
         result = MarkdownNotificationAdapter._sanitize_filename(long_string)
-        assert len(result) == 300  # Length should be preserved
+        assert len(result) == 100  # Truncated to prevent OS filename length errors
+        assert result == "A" * 100  # Should be truncated to first 100 characters
 
     def test_sanitize_filename_special_characters(self) -> None:
         """Test _sanitize_filename with filesystem-problematic characters."""

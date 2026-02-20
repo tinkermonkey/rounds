@@ -155,7 +155,6 @@ echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured${NC}"
 # Verify authentication and basic functionality
 # Create a temporary workspace for the authentication test
 HEALTH_TEST_DIR=$(mktemp -d)
-trap 'rm -rf "$HEALTH_TEST_DIR"' EXIT
 
 # Create a minimal test file
 echo "print('health check')" > "$HEALTH_TEST_DIR/test.py"
@@ -210,6 +209,9 @@ else
 fi
 
 cd - > /dev/null
+
+# Clean up health test directory
+rm -rf "$HEALTH_TEST_DIR"
 
 # ============================================================================
 # Step 3: Create Required Directories

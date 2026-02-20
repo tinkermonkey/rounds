@@ -235,6 +235,10 @@ class Signature:
         self.diagnosis = diagnosis
 
 
+# Type alias for event tuples in SpanNode (runtime type after __post_init__ conversion)
+EventTuple: TypeAlias = tuple[MappingProxyType[str, Any], ...]
+
+
 @dataclass(frozen=True)
 class SpanNode:
     """A single span in a distributed trace."""
@@ -246,7 +250,7 @@ class SpanNode:
     duration_ms: float
     status: str
     attributes: Union[dict[str, Any], MappingProxyType[str, Any]]  # converted to proxy in __post_init__
-    events: Union[tuple[Union[dict[str, Any], MappingProxyType[str, Any]], ...], tuple[MappingProxyType[str, Any], ...]]  # converted to proxies in __post_init__
+    events: EventTuple  # converted to proxies in __post_init__
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
     def __post_init__(self) -> None:
@@ -256,7 +260,7 @@ class SpanNode:
                 self, "attributes", MappingProxyType(self.attributes)
             )
         # Convert mutable dicts in events tuple to immutable proxies
-        if self.events and isinstance(self.events[0], dict):
+        if self.events and any(isinstance(e, dict) for e in self.events):
             events_proxies = tuple(
                 MappingProxyType(event) if isinstance(event, dict) else event
                 for event in self.events

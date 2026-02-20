@@ -50,8 +50,6 @@ class DaemonScheduler:
         if self.poll_port is None:
             raise ValueError("poll_port must be set before starting the scheduler")
 
-        assert self.poll_port is not None
-
         if self.running:
             logger.warning("Daemon scheduler already running")
             return

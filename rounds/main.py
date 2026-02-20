@@ -20,6 +20,8 @@ import sys
 import urllib.parse
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
@@ -99,6 +101,9 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
                 result = await _execute_cli_command(cli_handler, command, args)
                 # Print result
                 print(json.dumps(result, indent=2, default=str))
+            except (MemoryError, SystemError, SystemExit):
+                # Re-raise critical system errors to outer handler
+                raise
             except Exception as e:
                 logger.error(f"Command execution error: {e}", exc_info=True)
                 print(json.dumps({
@@ -430,8 +435,8 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
     # Step 1: Load configuration
     try:
         settings = load_settings()
-    except ValueError as e:
-        print(f"❌ Configuration error: {e}")
+    except (ValueError, ValidationError) as e:
+        print(f"ERROR: Configuration error: {e}")
         print("Please check your .env.rounds file and ensure all required variables are set.")
         print("See .env.rounds.template for required configuration options.")
         sys.exit(1)

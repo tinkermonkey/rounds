@@ -40,6 +40,17 @@ class MarkdownNotificationAdapter(NotificationPort):
         if self.base_dir.parent == self.base_dir:
             raise ValueError(f"report_dir cannot be a filesystem root: {report_dir}")
 
+        # Validate that parent directory exists or can be created (needed for summary.md)
+        if not self.base_dir.parent.exists():
+            try:
+                self.base_dir.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise OSError(f"Failed to create parent directory {self.base_dir.parent}: {e}") from e
+
+        # Validate parent directory is writable (for summary.md)
+        if not self.base_dir.parent.is_dir():
+            raise ValueError(f"Parent path is not a directory: {self.base_dir.parent}")
+
         try:
             self.base_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -54,13 +65,17 @@ class MarkdownNotificationAdapter(NotificationPort):
         with underscores. This ensures the output is filesystem-safe across
         platforms and prevents directory traversal or special character issues.
 
+        Truncates to 100 characters to prevent OS filename length errors (most
+        filesystems support up to 255 bytes, leaving room for timestamps and
+        extensions in the full filename).
+
         Args:
             text: The text to sanitize.
 
         Returns:
             Sanitized string containing only alphanumeric characters, underscores,
-            and hyphens. No spaces or special characters. Safe for use in filenames
-            on any filesystem.
+            and hyphens. No spaces or special characters. Maximum 100 characters.
+            Safe for use in filenames on any filesystem.
 
         Examples:
             >>> _sanitize_filename("My Service")
@@ -70,7 +85,8 @@ class MarkdownNotificationAdapter(NotificationPort):
         """
         # Replace any character that's not alphanumeric, underscore, or hyphen
         sanitized = re.sub(r'[^\w\-]', '_', text)
-        return sanitized
+        # Truncate to prevent OS filename length errors (255 byte limit on most filesystems)
+        return sanitized[:100]
 
     async def _ensure_date_dir(self, date_str: str) -> Path:
         """Ensure date directory exists, creating it if necessary.
