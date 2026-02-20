@@ -139,6 +139,7 @@ class Investigator:
 
         # 6. Notify if warranted (failure here should NOT revert the persisted diagnosis)
         # Pass original status to should_notify for correct medium-confidence logic
+        notification_error: Exception | None = None
         try:
             if self.triage.should_notify(signature, diagnosis, original_status=original_status):
                 await self.notification.report(signature, diagnosis)
@@ -148,5 +149,10 @@ class Investigator:
                 f"Failed to notify about diagnosis for signature {signature.fingerprint}: {e}",
                 exc_info=True,
             )
+            notification_error = e
+
+        # Re-raise notification error to expose it to caller
+        if notification_error:
+            raise notification_error
 
         return diagnosis

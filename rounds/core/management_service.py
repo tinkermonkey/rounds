@@ -268,17 +268,22 @@ class ManagementService(ManagementPort):
             signature.fingerprint, limit=10
         )
 
+        # Fetch trace data and logs for higher-quality diagnosis
+        trace_ids = [e.trace_id for e in recent_events]
+        traces = await self.telemetry.get_traces(trace_ids)
+
+        # Fetch related logs using trace IDs
+        logs = await self.telemetry.get_correlated_logs(trace_ids, window_minutes=5)
+
         # Get similar signatures for context
         similar = await self.store.get_similar(signature, limit=5)
 
-        # Build investigation context with available data
-        # Trace data and logs could be fetched from telemetry for higher-quality diagnosis,
-        # but this adds latency. Current approach provides fast reinvestigation with recent events.
+        # Build investigation context with complete data
         context = InvestigationContext(
             signature=signature,
             recent_events=tuple(recent_events),
-            trace_data=(),
-            related_logs=(),
+            trace_data=tuple(traces),
+            related_logs=tuple(logs),
             codebase_path=self.codebase_path,
             historical_context=tuple(similar),
         )

@@ -152,6 +152,16 @@ def make_webhook_handler(
             try:
                 # Wait for result with timeout
                 future.result(timeout=30)
+            except TimeoutError as e:
+                # Log timeout error
+                logger.error(f"Timeout handling webhook request: {e}", exc_info=True)
+                # Return 504 Gateway Timeout
+                self.send_error(504, "Gateway timeout")
+            except ValueError as e:
+                # Log validation error
+                logger.error(f"Validation error handling webhook request: {e}", exc_info=True)
+                # Return 400 Bad Request
+                self.send_error(400, "Bad request")
             except Exception as e:
                 # Log full exception server-side for debugging
                 logger.error(f"Error handling webhook request: {e}", exc_info=True)
@@ -276,7 +286,7 @@ class WebhookHTTPServer:
         self._server_task: asyncio.Task[None] | None = None
 
         # Validate auth configuration - fail fast at startup
-        if require_auth and not api_key:
+        if require_auth and (not api_key or api_key.strip() == ""):
             raise ValueError(
                 "Authentication is required (require_auth=True) but no API key provided. "
                 "Please set WEBHOOK_API_KEY environment variable or disable authentication."

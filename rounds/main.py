@@ -670,7 +670,7 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
                 try:
                     while True:
                         await asyncio.sleep(1)
-                except KeyboardInterrupt:
+                except (KeyboardInterrupt, asyncio.CancelledError):
                     await http_server.stop()
 
             else:
