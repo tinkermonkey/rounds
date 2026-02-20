@@ -67,7 +67,7 @@ class CLICommandHandler:
 
             return result
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to mute signature: {e}", exc_info=True)
             return {
                 "status": "error",
@@ -115,7 +115,7 @@ class CLICommandHandler:
 
             return result
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to resolve signature: {e}", exc_info=True)
             return {
                 "status": "error",
@@ -156,7 +156,7 @@ class CLICommandHandler:
 
             return result
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to retriage signature: {e}", exc_info=True)
             return {
                 "status": "error",
@@ -205,7 +205,7 @@ class CLICommandHandler:
                     "message": f"Unsupported format: {output_format}",
                 }
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to get signature details: {e}", exc_info=True)
             return {
                 "status": "error",
@@ -325,7 +325,7 @@ class CLICommandHandler:
                     "message": f"Unsupported format: {output_format}",
                 }
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to list signatures: {e}", exc_info=True)
             return {
                 "status": "error",
@@ -375,7 +375,7 @@ class CLICommandHandler:
 
             return result
 
-        except (ValueError, Exception) as e:
+        except Exception as e:
             logger.error(f"Failed to reinvestigate signature: {e}", exc_info=True)
             return {
                 "status": "error",
