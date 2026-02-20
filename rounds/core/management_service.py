@@ -270,7 +270,7 @@ class ManagementService(ManagementPort):
 
         # Fetch trace data and logs for higher-quality diagnosis
         trace_ids = [e.trace_id for e in recent_events]
-        traces = await self.telemetry.get_traces(trace_ids)
+        traces, _partial_info = await self.telemetry.get_traces(trace_ids)
 
         # Fetch related logs using trace IDs
         logs = await self.telemetry.get_correlated_logs(trace_ids, window_minutes=5)

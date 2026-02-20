@@ -170,7 +170,22 @@ class Signature:
         self.status = SignatureStatus.INVESTIGATING
 
     def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
-        """Transition signature to diagnosed status with diagnosis."""
+        """Transition signature to diagnosed status with diagnosis.
+
+        Raises:
+            ValueError: If signature is already RESOLVED or MUTED, as these are
+                terminal states that should not transition to DIAGNOSED.
+        """
+        if self.status == SignatureStatus.RESOLVED:
+            raise ValueError(
+                f"Cannot diagnose a resolved signature (id={self.id}). "
+                "Use reset_to_new() first if re-diagnosis is needed."
+            )
+        if self.status == SignatureStatus.MUTED:
+            raise ValueError(
+                f"Cannot diagnose a muted signature (id={self.id}). "
+                "Unmute the signature first if diagnosis is needed."
+            )
         self.diagnosis = diagnosis
         self.status = SignatureStatus.DIAGNOSED
 
@@ -295,6 +310,25 @@ class LogEntry:
             object.__setattr__(
                 self, "attributes", MappingProxyType(self.attributes)
             )
+
+
+@dataclass(frozen=True)
+class PartialResultsInfo:
+    """Metadata about partial results returned from telemetry queries.
+
+    Telemetry adapters may return partial results when:
+    - Query timeout occurs before all results are retrieved
+    - Result set exceeds maximum size limits
+    - API rate limits are encountered
+
+    This model provides structured indication to callers that the
+    returned results may be incomplete.
+    """
+
+    total_requested: int  # Number of results requested
+    total_returned: int  # Number of results actually returned
+    is_partial: bool  # Whether results were truncated
+    reason: str | None = None  # Optional explanation for partial results
 
 
 @dataclass(frozen=True)

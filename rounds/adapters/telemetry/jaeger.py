@@ -478,25 +478,28 @@ class JaegerTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Batch retrieve multiple traces.
 
         Args:
             trace_ids: List of trace IDs to retrieve.
 
         Returns:
-            List of TraceTree objects. Partial results may be returned if some
-            traces cannot be fetched.
+            Tuple of (traces, partial_info) where traces is the list of successfully
+            retrieved TraceTree objects and partial_info indicates if results are complete.
 
         Raises:
             ValueError: If any trace ID format is invalid.
         """
+        from rounds.core.models import PartialResultsInfo
+
         # Validate all trace IDs upfront
         for trace_id in trace_ids:
             if not _is_valid_trace_id(trace_id):
                 raise ValueError(f"Invalid trace ID format: {trace_id}")
 
         traces: list[TraceTree] = []
+        failed_count = 0
 
         for trace_id in trace_ids:
             try:
@@ -504,9 +507,18 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 traces.append(trace)
             except Exception as e:
                 logger.warning(f"Failed to fetch trace {trace_id}: {e}")
+                failed_count += 1
                 continue
 
-        return traces
+        is_partial = failed_count > 0
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(traces),
+            is_partial=is_partial,
+            reason=f"Failed to retrieve {failed_count} traces" if is_partial else None
+        )
+
+        return traces, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5

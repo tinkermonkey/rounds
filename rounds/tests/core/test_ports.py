@@ -20,6 +20,7 @@ from core.models import (
     InvestigationContext,
     InvestigationResult,
     LogEntry,
+    PartialResultsInfo,
     PollResult,
     Severity,
     Signature,
@@ -210,8 +211,10 @@ class MockTelemetryPort(TelemetryPort):
         )
         return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Mock implementation."""
+        from rounds.core.models import PartialResultsInfo
+
         root_span = SpanNode(
             span_id="span-1",
             parent_id=None,
@@ -222,10 +225,17 @@ class MockTelemetryPort(TelemetryPort):
             attributes={},
             events=(),
         )
-        return [
+        traces = [
             TraceTree(trace_id=tid, root_span=root_span, error_spans=())
             for tid in trace_ids
         ]
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(traces),
+            is_partial=False,
+            reason=None
+        )
+        return traces, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
@@ -465,12 +475,18 @@ class TestTelemetryPort:
         assert isinstance(result, TraceTree)
 
     @pytest.mark.asyncio
-    async def test_get_traces_returns_list(self) -> None:
-        """get_traces must return a list of TraceTree."""
+    async def test_get_traces_returns_tuple_with_partial_info(self) -> None:
+        """get_traces must return tuple of (list, PartialResultsInfo)."""
+        from rounds.core.models import PartialResultsInfo
+
         port = MockTelemetryPort()
         result = await port.get_traces(["trace-123", "trace-456"])
-        assert isinstance(result, list)
-        assert all(isinstance(t, TraceTree) for t in result)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        traces, partial_info = result
+        assert isinstance(traces, list)
+        assert all(isinstance(t, TraceTree) for t in traces)
+        assert isinstance(partial_info, PartialResultsInfo)
 
     @pytest.mark.asyncio
     async def test_get_correlated_logs_returns_list(self) -> None:

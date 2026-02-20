@@ -124,6 +124,9 @@ class PollService(PollPort):
                 if self.triage.should_investigate(signature):
                     investigations_queued += 1
 
+            except (MemoryError, SystemExit, KeyboardInterrupt):
+                # Don't catch system errors - let them propagate
+                raise
             except Exception as e:
                 logger.error(
                     f"Failed to process error event {error.trace_id}: {e}",

@@ -202,7 +202,7 @@ NOTIFICATION_BACKEND=markdown
 NOTIFICATION_OUTPUT_DIR=/app/reports
 ```
 - Writes diagnosis reports to individual markdown files
-- Directory structure: `/reports/YYYY-MM-DD/signature-id.md`
+- Directory structure: `/reports/YYYY-MM-DD/HH-MM-SS_service_ErrorType_sigID.md`
 - Mount `./.rounds/reports` volume to access on host
 
 **GitHub Issues**

@@ -213,8 +213,11 @@ class TestFakeTelemetryPort:
 
         port.add_traces([trace1, trace2])
 
-        traces = await port.get_traces(["trace-1", "trace-2"])
+        traces, partial_info = await port.get_traces(["trace-1", "trace-2"])
         assert len(traces) == 2
+        assert not partial_info.is_partial
+        assert partial_info.total_requested == 2
+        assert partial_info.total_returned == 2
 
     @pytest.mark.asyncio
     async def test_get_correlated_logs(self, log_entry: LogEntry) -> None:

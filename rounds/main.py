@@ -443,7 +443,12 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
     try:
         settings = load_settings()
     except (ValueError, ValidationError) as e:
-        print(f"ERROR: Configuration error: {e}")
+        # Sanitize error message to avoid leaking sensitive values
+        error_msg = str(e)
+        # Remove any potential API keys or tokens from error message
+        sanitized_msg = error_msg.replace("api_key", "[REDACTED]").replace("token", "[REDACTED]")
+        print(f"ERROR: Configuration validation failed.")
+        print(f"Details: {sanitized_msg}")
         print("Please check your .env.rounds file and ensure all required variables are set.")
         print("See .env.rounds.template for required configuration options.")
         sys.exit(1)

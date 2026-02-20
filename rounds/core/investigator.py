@@ -69,14 +69,14 @@ class Investigator:
             signature.fingerprint, limit=5
         )
         trace_ids = [e.trace_id for e in events]
-        traces = await self.telemetry.get_traces(trace_ids)
+        traces, partial_info = await self.telemetry.get_traces(trace_ids)
 
         # Log if trace retrieval was incomplete
-        if len(traces) < len(trace_ids):
+        if partial_info.is_partial:
             logger.warning(
                 f"Incomplete trace data for signature {signature.fingerprint}: "
-                f"retrieved {len(traces)} of {len(trace_ids)} traces. "
-                f"Proceeding with partial context."
+                f"retrieved {partial_info.total_returned} of {partial_info.total_requested} traces. "
+                f"Reason: {partial_info.reason}. Proceeding with partial context."
             )
 
         logs = await self.telemetry.get_correlated_logs(

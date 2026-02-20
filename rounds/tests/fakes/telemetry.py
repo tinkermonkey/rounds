@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import ErrorEvent, LogEntry, TraceTree
+from rounds.core.models import ErrorEvent, LogEntry, PartialResultsInfo, TraceTree
 from rounds.core.ports import TelemetryPort
 
 
@@ -104,13 +104,14 @@ class FakeTelemetryPort(TelemetryPort):
 
         return self.traces[trace_id]
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Get multiple traces by ID.
 
-        Returns only traces that exist. Matches real telemetry behavior where
-        missing traces are silently omitted (caller detects partial results by
-        comparing len(result) < len(trace_ids)).
+        Returns only traces that exist along with partial results metadata.
+        Matches real telemetry behavior where missing traces are silently omitted.
         """
+        from rounds.core.models import PartialResultsInfo
+
         self.get_traces_call_count += 1
 
         result = []
@@ -118,7 +119,15 @@ class FakeTelemetryPort(TelemetryPort):
             if trace_id in self.traces:
                 result.append(self.traces[trace_id])
 
-        return result
+        is_partial = len(result) < len(trace_ids)
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(result),
+            is_partial=is_partial,
+            reason=f"{len(trace_ids) - len(result)} traces not found" if is_partial else None
+        )
+
+        return result, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5

@@ -28,6 +28,7 @@ from .models import (
     InvestigationContext,
     InvestigationResult,
     LogEntry,
+    PartialResultsInfo,
     PollResult,
     Signature,
     SignatureDetails,
@@ -95,17 +96,18 @@ class TelemetryPort(ABC):
         """
 
     @abstractmethod
-    async def get_traces(self, trace_ids: list[str]) -> Sequence[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[Sequence[TraceTree], PartialResultsInfo]:
         """Batch trace retrieval.
 
         Args:
             trace_ids: List of OpenTelemetry trace IDs.
 
         Returns:
-            List of TraceTree objects. Network failures and individual trace fetch
-            failures are silently omitted from results, so order may not match
-            trace_ids. The caller can detect partial results by comparing
-            len(result) < len(trace_ids).
+            Tuple of (traces, partial_info) where:
+            - traces: List of TraceTree objects. Network failures and individual
+              trace fetch failures are silently omitted from results, so order
+              may not match trace_ids.
+            - partial_info: Metadata about whether results were truncated/partial.
 
         Raises:
             ValueError: If trace ID format validation fails (adapter-specific).
