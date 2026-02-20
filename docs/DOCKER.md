@@ -432,17 +432,24 @@ The production image startup follows this sequence:
 1. **Entrypoint initialization** (< 1 second)
    - Validate script syntax
    - Initialize color output
+   - Display startup message
 
 2. **Claude Code CLI update** (5-30 seconds typical)
+   - **Startup delay is logged before update begins** ("This process typically takes 5-30 seconds...")
    - Check for existing installation
-   - Attempt npm update (if installed) or npm install
-   - **Startup timing is logged before and after this step**
-   - If network fails, falls back to existing installation (if present)
+   - Test network connectivity before attempting update
+   - If network is offline and installation exists, skip update entirely
+   - If network is available, attempt npm update (if installed) or npm install
+   - **Update duration is logged after completion** ("Claude Code CLI updated in Xs")
+   - If network fails during update, falls back to existing installation (if present)
    - If no fallback available, exits with clear error message
 
-3. **Authentication verification** (< 1 second)
+3. **Authentication and functionality verification** (< 1-30 seconds)
    - Verify `ANTHROPIC_API_KEY` environment variable is set
-   - Confirm CLI is functional and responsive
+   - Confirm CLI is functional with `claude --version`
+   - **Test actual authentication and API connectivity** with a minimal Claude query
+   - If authentication test fails or times out, logs warning but continues startup
+   - This validates the CLI can perform actual diagnosis operations, not just --version
 
 4. **Directory creation** (< 1 second)
    - Create `/app/reports` for diagnosis output

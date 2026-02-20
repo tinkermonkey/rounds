@@ -31,6 +31,7 @@ echo "Starting Rounds container..."
 # Step 1: Update Claude Code CLI with Offline Fallback
 # ============================================================================
 echo -e "${YELLOW}Preparing Claude Code CLI...${NC}"
+echo "This process typically takes 5-30 seconds depending on network speed and whether updates are available."
 
 # Check if Claude Code is already installed
 if command -v claude &>/dev/null; then
@@ -39,6 +40,7 @@ if command -v claude &>/dev/null; then
   echo "Claude Code CLI already installed: $EXISTING_VERSION"
 else
   CLAUDE_INSTALLED="false"
+  echo "No existing Claude Code CLI installation detected"
 fi
 
 # Only attempt network operations if we have a version to install
@@ -58,45 +60,58 @@ if [ -n "$CLAUDE_CODE_VERSION" ]; then
     exit 1
   fi
 else
-  echo -e "${YELLOW}Updating Claude Code CLI to latest version...${NC}"
-  START_TIME=$(date +%s)
-
-  # Try to update first (if already installed), then fall back to install
-  UPDATE_SUCCESS="false"
-  if [ "$CLAUDE_INSTALLED" = "true" ]; then
-    if npm update -g "@anthropic-ai/claude-code" 2>/dev/null; then
-      UPDATE_SUCCESS="true"
-    fi
+  # Check network connectivity before attempting update
+  NETWORK_AVAILABLE="false"
+  if timeout 5 npm view "@anthropic-ai/claude-code" version &>/dev/null; then
+    NETWORK_AVAILABLE="true"
   fi
 
-  if [ "$UPDATE_SUCCESS" = "false" ]; then
-    if npm install -g "@anthropic-ai/claude-code" 2>/dev/null; then
-      UPDATE_SUCCESS="true"
-    fi
-  fi
-
-  if [ "$UPDATE_SUCCESS" = "true" ]; then
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
-    FINAL_VERSION=$(claude --version 2>/dev/null || echo "installed")
-    echo -e "${GREEN}Claude Code CLI ready in ${DURATION}s: $FINAL_VERSION${NC}"
+  # If we have an existing installation and no network, skip update
+  if [ "$CLAUDE_INSTALLED" = "true" ] && [ "$NETWORK_AVAILABLE" = "false" ]; then
+    echo -e "${YELLOW}Network is offline. Using existing Claude Code CLI installation: $EXISTING_VERSION${NC}"
+    echo "Skipping update to avoid unnecessary failures."
   else
-    echo -e "${RED}ERROR: Could not install or update Claude Code CLI${NC}"
+    # Network is available OR we need to install fresh
+    echo -e "${YELLOW}Updating Claude Code CLI to latest version...${NC}"
+    START_TIME=$(date +%s)
 
+    # Try to update first (if already installed), then fall back to install
+    UPDATE_SUCCESS="false"
     if [ "$CLAUDE_INSTALLED" = "true" ]; then
-      echo -e "${YELLOW}Network failure detected. Falling back to existing installation: $EXISTING_VERSION${NC}"
+      if npm update -g "@anthropic-ai/claude-code" 2>/dev/null; then
+        UPDATE_SUCCESS="true"
+      fi
+    fi
+
+    if [ "$UPDATE_SUCCESS" = "false" ]; then
+      if npm install -g "@anthropic-ai/claude-code" 2>/dev/null; then
+        UPDATE_SUCCESS="true"
+      fi
+    fi
+
+    if [ "$UPDATE_SUCCESS" = "true" ]; then
+      END_TIME=$(date +%s)
+      DURATION=$((END_TIME - START_TIME))
+      FINAL_VERSION=$(claude --version 2>/dev/null || echo "installed")
+      echo -e "${GREEN}Claude Code CLI updated in ${DURATION}s: $FINAL_VERSION${NC}"
     else
-      echo "No existing installation available for fallback."
-      echo "Check network connectivity and try again."
-      exit 1
+      echo -e "${RED}ERROR: Could not install or update Claude Code CLI${NC}"
+
+      if [ "$CLAUDE_INSTALLED" = "true" ]; then
+        echo -e "${YELLOW}Network failure detected. Falling back to existing installation: $EXISTING_VERSION${NC}"
+      else
+        echo "No existing installation available for fallback."
+        echo "Check network connectivity and try again."
+        exit 1
+      fi
     fi
   fi
 fi
 
 # ============================================================================
-# Step 2: Verify Claude Code CLI Installation and Authentication
+# Step 2: Verify Claude Code CLI Installation, Authentication, and Functionality
 # ============================================================================
-echo -e "${YELLOW}Verifying Claude Code CLI installation and authentication...${NC}"
+echo -e "${YELLOW}Verifying Claude Code CLI installation, authentication, and functionality...${NC}"
 
 # Verify CLI is available
 if ! command -v claude &>/dev/null; then
@@ -109,7 +124,7 @@ if ! CLAUDE_VERSION=$(claude --version 2>/dev/null); then
   echo -e "${RED}ERROR: Claude Code CLI not responding${NC}"
   exit 1
 fi
-echo -e "${GREEN}Claude Code CLI verified: $CLAUDE_VERSION${NC}"
+echo -e "${GREEN}✓ CLI installation verified: $CLAUDE_VERSION${NC}"
 
 # Verify authentication is configured
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -117,8 +132,39 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
   echo "Authentication is required for Claude Code to function."
   exit 1
 fi
+echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured${NC}"
 
-echo -e "${GREEN}ANTHROPIC_API_KEY is configured${NC}"
+# Verify authentication and basic functionality
+# Create a temporary workspace for the authentication test
+HEALTH_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "$HEALTH_TEST_DIR"' EXIT
+
+# Create a minimal test file
+echo "print('health check')" > "$HEALTH_TEST_DIR/test.py"
+
+# Try to authenticate with Claude Code by running a simple command
+# The 'claude --help' command validates the CLI works but doesn't validate auth
+# We need to run a minimal operation that requires API access
+echo -e "${YELLOW}Testing Claude Code authentication and API connectivity...${NC}"
+cd "$HEALTH_TEST_DIR"
+
+# Use a timeout to prevent hanging if API is unreachable
+# We'll run a very simple query that should complete quickly
+if timeout 30s claude query "What is 1+1?" --workspace . > /dev/null 2>&1; then
+  echo -e "${GREEN}✓ Claude Code authentication successful and API is reachable${NC}"
+elif [ $? -eq 124 ]; then
+  # Timeout occurred
+  echo -e "${YELLOW}WARNING: Claude Code authentication test timed out after 30 seconds${NC}"
+  echo "API may be slow or unreachable. Continuing with startup..."
+  echo "If diagnosis operations fail, check ANTHROPIC_API_KEY and network connectivity."
+else
+  # Command failed for other reasons
+  echo -e "${YELLOW}WARNING: Claude Code authentication test failed${NC}"
+  echo "This may indicate an invalid ANTHROPIC_API_KEY or API connectivity issues."
+  echo "Continuing with startup - diagnosis operations may fail until this is resolved."
+fi
+
+cd - > /dev/null
 
 # ============================================================================
 # Step 3: Create Required Directories
