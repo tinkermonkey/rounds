@@ -425,16 +425,89 @@ Monitor actual usage:
 docker stats rounds
 ```
 
-### Startup Optimization
+### Startup Sequence and Timing
 
-Production image startup sequence:
-1. Verify entrypoint script exists
-2. Update Claude Code CLI
-3. Create required directories (/app/data, /app/reports)
-4. Verify credentials
-5. Start daemon/cli/webhook mode
+The production image startup follows this sequence:
 
-**Typical startup time:** 10-30 seconds (includes Claude Code CLI update)
+1. **Entrypoint initialization** (< 1 second)
+   - Validate script syntax
+   - Initialize color output
+
+2. **Claude Code CLI update** (5-30 seconds typical)
+   - Check for existing installation
+   - Attempt npm update (if installed) or npm install
+   - **Startup timing is logged before and after this step**
+   - If network fails, falls back to existing installation (if present)
+   - If no fallback available, exits with clear error message
+
+3. **Authentication verification** (< 1 second)
+   - Verify `ANTHROPIC_API_KEY` environment variable is set
+   - Confirm CLI is functional and responsive
+
+4. **Directory creation** (< 1 second)
+   - Create `/app/reports` for diagnosis output
+   - Create `/app/data` for signature database
+   - Exit with error if permissions insufficient
+
+5. **Application startup** (varies by mode)
+   - Daemon: Begins polling for errors
+   - CLI: Displays interactive menu
+   - Webhook: Listens on configured port
+
+**Typical total startup time:** 10-30 seconds (mostly Claude Code CLI update)
+
+#### Startup Logging Examples
+
+**Normal update with timing information:**
+```
+Starting Rounds container...
+Preparing Claude Code CLI...
+Claude Code CLI already installed: Claude Code version 1.2.2
+Updating Claude Code CLI to latest version...
+Claude Code CLI ready in 12s: Claude Code version 1.2.3
+Verifying Claude Code CLI installation and authentication...
+Claude Code CLI verified: Claude Code version 1.2.3
+ANTHROPIC_API_KEY is configured
+Created reports directory: /app/reports
+Created data directory: /app/data
+Launching Rounds in daemon mode...
+Starting in daemon mode
+```
+
+**Offline fallback when network fails:**
+```
+Starting Rounds container...
+Preparing Claude Code CLI...
+Claude Code CLI already installed: Claude Code version 1.2.2
+Updating Claude Code CLI to latest version...
+ERROR: Could not install or update Claude Code CLI
+Network failure detected. Falling back to existing installation: Claude Code version 1.2.2
+Verifying Claude Code CLI installation and authentication...
+Claude Code CLI verified: Claude Code version 1.2.2
+ANTHROPIC_API_KEY is configured
+...continuing with daemon startup
+```
+
+**Authentication missing (hard failure):**
+```
+Starting Rounds container...
+Preparing Claude Code CLI...
+Claude Code CLI already installed: Claude Code version 1.2.3
+Updating Claude Code CLI to latest version...
+Claude Code CLI ready in 2s: Claude Code version 1.2.3
+Verifying Claude Code CLI installation and authentication...
+Claude Code CLI verified: Claude Code version 1.2.3
+ERROR: ANTHROPIC_API_KEY environment variable not set
+Authentication is required for Claude Code to function.
+[Container exits with status 1]
+```
+
+#### Deployment Notes
+
+- **Update delays are normal**: Network and npm operations add 5-30 seconds to first startup
+- **Successive restarts are faster**: Pre-installed Claude Code enables small diff updates instead of full installations
+- **Authentication is required**: Always provide `ANTHROPIC_API_KEY` environment variable
+- **Monitor startup logs**: Check container logs if startup exceeds 60 seconds, indicating potential issues
 
 ### Reduce Image Size
 

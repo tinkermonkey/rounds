@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, Union
+from typing import Any, Literal, Mapping, TypeAlias, Union
 
 
 @dataclass(frozen=True)
@@ -338,8 +338,8 @@ class StoreStats:
     """Statistics about the signature store."""
 
     total_signatures: int
-    by_status: dict[str, int]  # status -> count
-    by_service: dict[str, int]  # service -> count
+    by_status: Mapping[str, int]  # status -> count (immutable at runtime)
+    by_service: Mapping[str, int]  # service -> count (immutable at runtime)
     oldest_signature_age_hours: float | None  # None if no signatures
     avg_occurrence_count: float
 

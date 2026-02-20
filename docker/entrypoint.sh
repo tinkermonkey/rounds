@@ -28,43 +28,101 @@ NC='\033[0m' # No Color
 echo "Starting Rounds container..."
 
 # ============================================================================
-# Step 1: Update Claude Code CLI
+# Step 1: Update Claude Code CLI with Offline Fallback
 # ============================================================================
-echo -e "${YELLOW}Updating Claude Code CLI...${NC}"
+echo -e "${YELLOW}Preparing Claude Code CLI...${NC}"
 
+# Check if Claude Code is already installed
+if command -v claude &>/dev/null; then
+  CLAUDE_INSTALLED="true"
+  EXISTING_VERSION=$(claude --version 2>/dev/null || echo "unknown")
+  echo "Claude Code CLI already installed: $EXISTING_VERSION"
+else
+  CLAUDE_INSTALLED="false"
+fi
+
+# Only attempt network operations if we have a version to install
 if [ -n "$CLAUDE_CODE_VERSION" ]; then
-  echo "Installing Claude Code CLI version $CLAUDE_CODE_VERSION..."
+  echo -e "${YELLOW}Installing Claude Code CLI version $CLAUDE_CODE_VERSION...${NC}"
+  START_TIME=$(date +%s)
+
   if npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"; then
-    echo -e "${GREEN}Claude Code CLI version $CLAUDE_CODE_VERSION installed successfully${NC}"
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    echo -e "${GREEN}Claude Code CLI version $CLAUDE_CODE_VERSION installed in ${DURATION}s${NC}"
   else
     echo -e "${RED}ERROR: Failed to install Claude Code CLI version $CLAUDE_CODE_VERSION${NC}"
     echo "Requested version: $CLAUDE_CODE_VERSION"
-    exit 1
+
+    if [ "$CLAUDE_INSTALLED" = "true" ]; then
+      echo "Falling back to existing installation: $EXISTING_VERSION"
+    else
+      echo "No existing installation found. Network failure and no fallback available."
+      exit 1
+    fi
   fi
 else
-  echo "Installing latest Claude Code CLI..."
+  echo -e "${YELLOW}Updating Claude Code CLI to latest version...${NC}"
+  START_TIME=$(date +%s)
+
   # Try to update first (if already installed), then fall back to install
-  if npm update -g "@anthropic-ai/claude-code" || npm install -g "@anthropic-ai/claude-code"; then
-    echo -e "${GREEN}Claude Code CLI installed/updated successfully${NC}"
+  UPDATE_SUCCESS="false"
+  if [ "$CLAUDE_INSTALLED" = "true" ]; then
+    if npm update -g "@anthropic-ai/claude-code" 2>/dev/null; then
+      UPDATE_SUCCESS="true"
+    fi
+  fi
+
+  if [ "$UPDATE_SUCCESS" = "false" ]; then
+    if npm install -g "@anthropic-ai/claude-code" 2>/dev/null; then
+      UPDATE_SUCCESS="true"
+    fi
+  fi
+
+  if [ "$UPDATE_SUCCESS" = "true" ]; then
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    FINAL_VERSION=$(claude --version 2>/dev/null || echo "installed")
+    echo -e "${GREEN}Claude Code CLI ready in ${DURATION}s: $FINAL_VERSION${NC}"
   else
-    echo -e "${RED}ERROR: Could not install Claude Code CLI${NC}"
-    exit 1
+    echo -e "${RED}ERROR: Could not install or update Claude Code CLI${NC}"
+
+    if [ "$CLAUDE_INSTALLED" = "true" ]; then
+      echo -e "${YELLOW}Network failure detected. Falling back to existing installation: $EXISTING_VERSION${NC}"
+    else
+      echo "No existing installation available for fallback."
+      echo "Check network connectivity and try again."
+      exit 1
+    fi
   fi
 fi
 
 # ============================================================================
-# Step 2: Verify Claude Code CLI Installation
+# Step 2: Verify Claude Code CLI Installation and Authentication
 # ============================================================================
-echo -e "${YELLOW}Verifying Claude Code CLI installation...${NC}"
+echo -e "${YELLOW}Verifying Claude Code CLI installation and authentication...${NC}"
 
-if claude --version &>/dev/null; then
-  CLAUDE_VERSION=$(claude --version)
-  echo -e "${GREEN}Claude Code CLI verified: $CLAUDE_VERSION${NC}"
-else
-  echo -e "${RED}ERROR: Claude Code CLI not found or not working${NC}"
-  echo "Make sure ANTHROPIC_API_KEY environment variable is set"
+# Verify CLI is available
+if ! command -v claude &>/dev/null; then
+  echo -e "${RED}ERROR: Claude Code CLI not found in PATH${NC}"
   exit 1
 fi
+
+# Verify version command works (CLI is functional)
+if ! CLAUDE_VERSION=$(claude --version 2>/dev/null); then
+  echo -e "${RED}ERROR: Claude Code CLI not responding${NC}"
+  exit 1
+fi
+echo -e "${GREEN}Claude Code CLI verified: $CLAUDE_VERSION${NC}"
+
+# Verify authentication is configured
+if [ -z "$ANTHROPIC_API_KEY" ]; then
+  echo -e "${RED}ERROR: ANTHROPIC_API_KEY environment variable not set${NC}"
+  echo "Authentication is required for Claude Code to function."
+  exit 1
+fi
+
+echo -e "${GREEN}ANTHROPIC_API_KEY is configured${NC}"
 
 # ============================================================================
 # Step 3: Create Required Directories

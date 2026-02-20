@@ -63,16 +63,28 @@ ENV PATH=/home/nurse/.npm-global/bin:/home/nurse/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# ============================================================================
+# Stage 3: Claude Code Pre-installation
+# ============================================================================
+# Pre-install a recent Claude Code version to enable small diff updates
+# at runtime instead of full installations. This improves startup time
+# for container restarts.
+USER nurse
+WORKDIR /home/nurse
+
+RUN npm install -g "@anthropic-ai/claude-code" && \
+    claude --version && \
+    echo "Claude Code CLI pre-installed"
+
+# ============================================================================
+# Back to Runtime Configuration
+# ============================================================================
 # Copy entrypoint and healthcheck scripts
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/healthcheck.sh /healthcheck.sh
 
 # Ensure scripts are executable
 RUN chmod +x /entrypoint.sh /healthcheck.sh
-
-# Switch to non-root user
-USER nurse
-WORKDIR /home/nurse
 
 # Health check to verify service availability
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
