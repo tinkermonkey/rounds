@@ -130,7 +130,7 @@ class MarkdownNotificationAdapter(NotificationPort):
                     },
                 )
 
-            except IOError as e:
+            except OSError as e:
                 logger.error(
                     f"Failed to write markdown report: {e}",
                     extra={"path": str(date_dir / filename)},
@@ -162,7 +162,7 @@ class MarkdownNotificationAdapter(NotificationPort):
                     extra={"stats": stats},
                 )
 
-            except IOError as e:
+            except OSError as e:
                 logger.error(
                     f"Failed to write markdown summary: {e}",
                     extra={"path": str(summary_file)},
@@ -181,7 +181,7 @@ class MarkdownNotificationAdapter(NotificationPort):
             diagnosis: The diagnosis results.
 
         Returns:
-            Formatted markdown string ready to append to file.
+            Formatted markdown string ready to write to file.
         """
         lines = []
 

@@ -2,10 +2,10 @@
 # ============================================================================
 # Health Check Script for Rounds Production Container
 # ============================================================================
-# This script verifies that the Rounds daemon is running and responsive.
+# This script verifies that the Rounds daemon process is running.
 #
 # Return codes:
-# - 0: Service is healthy
+# - 0: Service is healthy (process running)
 # - 1: Service is unhealthy (process not running or other errors)
 #
 # Used by Docker HEALTHCHECK to monitor container status.

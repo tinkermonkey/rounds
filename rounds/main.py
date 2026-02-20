@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 import urllib.parse
-from typing import Any
+from typing import Any, Literal
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
@@ -90,8 +90,8 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
                     args = json.loads(args_str)
                 else:
                     args = {}
-            except json.JSONDecodeError:
-                logger.error("Invalid JSON arguments. Use 'help' for command syntax.")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON arguments: {e}. Input: {args_str!r}")
                 continue
 
             # Execute command
@@ -200,8 +200,13 @@ async def _execute_cli_command(
 async def _run_scan(poll_service: PollService) -> None:
     """Execute single poll cycle and output results as JSON.
 
+    Calls sys.exit(1) on error and never returns normally if scan fails.
+
     Args:
         poll_service: PollService instance for executing the poll cycle.
+
+    Raises:
+        SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
     """
     logger = logging.getLogger(__name__)
     try:
@@ -220,6 +225,16 @@ async def _run_scan(poll_service: PollService) -> None:
         }
         print(json.dumps(output, indent=2))
 
+    except ConnectionError as e:
+        # Telemetry backend unreachable
+        logger.error(f"Scan command failed: telemetry service unreachable: {e}", exc_info=True)
+        output = {
+            "status": "error",
+            "error_type": "connection_error",
+            "message": f"Telemetry service unreachable: {str(e)}"
+        }
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Scan command failed: {e}", exc_info=True)
         output = {"status": "error", "message": str(e)}
@@ -234,10 +249,15 @@ async def _run_diagnose(
 ) -> None:
     """Diagnose a specific signature and output results as JSON.
 
+    Calls sys.exit(1) on error and never returns normally if diagnosis fails.
+
     Args:
         signature_id: Unique identifier string of the signature to diagnose (e.g., "sig_12345").
         store: SignatureStorePort implementation.
         investigator: Investigator instance.
+
+    Raises:
+        SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
     """
     logger = logging.getLogger(__name__)
     try:
@@ -261,11 +281,6 @@ async def _run_diagnose(
         }
         print(json.dumps(output, indent=2))
 
-    except ValueError as e:
-        logger.error(f"Diagnose command failed: {e}", exc_info=True)
-        output = {"status": "error", "message": str(e)}
-        print(json.dumps(output, indent=2), file=sys.stderr)
-        sys.exit(1)
     except Exception as e:
         logger.error(f"Diagnose command failed: {e}", exc_info=True)
         output = {"status": "error", "message": str(e)}
@@ -383,7 +398,7 @@ Examples:
     return parser.parse_args()
 
 
-async def bootstrap(command: str | None = None, signature_id: str | None = None) -> None:
+async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signature_id: str | None = None) -> None:
     """Load configuration, wire adapters, and start the application.
 
     This is the composition root: the single place where all components

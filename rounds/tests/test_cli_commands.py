@@ -24,7 +24,7 @@ from rounds.core.models import (
 from rounds.tests.fakes.investigator import FakeInvestigator
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
-from rounds.main import _run_scan, _run_diagnose
+from rounds.main import _run_scan, _run_diagnose, _parse_arguments
 
 
 # ============================================================================
@@ -213,39 +213,24 @@ class TestDiagnoseCommand:
 class TestArgumentParsing:
     """Test command-line argument parsing."""
 
-    def test_argument_parser_accepts_scan(self) -> None:
-        """Verify argparse can accept 'scan' command."""
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
-        parser.add_argument("signature_id", nargs="?")
-
-        # Should not raise
-        args = parser.parse_args(["scan"])
+    def test_parse_arguments_with_scan_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test _parse_arguments with 'scan' command."""
+        monkeypatch.setattr(sys, "argv", ["main.py", "scan"])
+        args = _parse_arguments()
         assert args.command == "scan"
+        assert args.signature_id is None
 
-    def test_argument_parser_accepts_diagnose(self) -> None:
-        """Verify argparse can accept 'diagnose' command with signature_id."""
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
-        parser.add_argument("signature_id", nargs="?")
-
-        args = parser.parse_args(["diagnose", "sig-12345"])
+    def test_parse_arguments_with_diagnose_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test _parse_arguments with 'diagnose' command and signature_id."""
+        monkeypatch.setattr(sys, "argv", ["main.py", "diagnose", "sig-12345"])
+        args = _parse_arguments()
         assert args.command == "diagnose"
         assert args.signature_id == "sig-12345"
 
-    def test_argument_parser_accepts_no_command(self) -> None:
-        """Verify argparse supports interactive mode with no command."""
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("command", nargs="?", choices=["scan", "diagnose"])
-        parser.add_argument("signature_id", nargs="?")
-
-        args = parser.parse_args([])
+    def test_parse_arguments_with_no_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test _parse_arguments with no command (interactive mode)."""
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        args = _parse_arguments()
         assert args.command is None
         assert args.signature_id is None
 

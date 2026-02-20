@@ -19,7 +19,6 @@
 #   STORE_POSTGRESQL_URL=postgresql://rounds:password@postgres:5432/rounds
 # ============================================================================
 
-version: '3.8'
 
 services:
   # PostgreSQL Database
@@ -187,7 +186,7 @@ services:
     # Web interface configuration
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin-password-change-me  # Change in production!
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD must be set in .env or environment}
       SCRIPT_NAME: /pgadmin
 
     # Resource limits
@@ -224,7 +223,6 @@ volumes:
       # For better performance on some systems:
       # type: tmpfs
       # o: size=1g
-      pass_through: false
 
 # Networks
 networks:

@@ -32,7 +32,7 @@ services:
       WEBHOOK_HOST: 0.0.0.0
       WEBHOOK_PORT: 8080
       # Optional: Require API key authentication for incoming requests
-      WEBHOOK_API_KEY: rounds-webhook-secret-key-change-me
+      WEBHOOK_API_KEY: ${WEBHOOK_API_KEY:?WEBHOOK_API_KEY must be set in .env or environment}
       WEBHOOK_REQUIRE_AUTH: "true"
       # Optional: Verify webhook signatures from alert systems
       # WEBHOOK_SIGNATURE_ALGORITHM: hmac-sha256
