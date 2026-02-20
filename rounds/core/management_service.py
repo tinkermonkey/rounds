@@ -8,14 +8,22 @@ and auditable.
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
-from .models import Diagnosis, InvestigationContext, Signature, SignatureDetails, SignatureStatus, ErrorEvent
+
+from .models import (
+    Diagnosis,
+    InvestigationContext,
+    Signature,
+    SignatureDetails,
+    SignatureStatus,
+)
 from .ports import (
     DiagnosisPort,
     ManagementPort,
+    NotificationPort,
     SignatureStorePort,
     TelemetryPort,
 )
+from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +41,9 @@ class ManagementService(ManagementPort):
         store: SignatureStorePort,
         telemetry: TelemetryPort,
         diagnosis_engine: DiagnosisPort,
+        notification: NotificationPort,
+        triage: TriageEngine,
+        codebase_path: str,
     ):
         """Initialize the management service.
 
@@ -40,10 +51,16 @@ class ManagementService(ManagementPort):
             store: SignatureStorePort implementation for persistence.
             telemetry: TelemetryPort implementation for retrieving errors.
             diagnosis_engine: DiagnosisPort implementation for diagnosis.
+            notification: NotificationPort implementation for reporting diagnoses.
+            triage: TriageEngine for determining if notifications should be sent.
+            codebase_path: Path to the codebase for diagnosis context.
         """
         self.store = store
         self.telemetry = telemetry
         self.diagnosis_engine = diagnosis_engine
+        self.notification = notification
+        self.triage = triage
+        self.codebase_path = codebase_path
 
     async def mute_signature(
         self, signature_id: str, reason: str | None = None
@@ -201,7 +218,7 @@ class ManagementService(ManagementPort):
         signatures = await self.store.get_all(status=status)
 
         logger.debug(
-            f"Listed signatures" + (f" with status={status.value}" if status else ""),
+            "Listed signatures" + (f" with status={status.value}" if status else ""),
             extra={
                 "count": len(signatures),
             },
@@ -251,18 +268,23 @@ class ManagementService(ManagementPort):
             signature.fingerprint, limit=10
         )
 
+        # Fetch trace data and logs for higher-quality diagnosis
+        trace_ids = [e.trace_id for e in recent_events]
+        traces, _partial_info = await self.telemetry.get_traces(trace_ids)
+
+        # Fetch related logs using trace IDs
+        logs = await self.telemetry.get_correlated_logs(trace_ids, window_minutes=5)
+
         # Get similar signatures for context
         similar = await self.store.get_similar(signature, limit=5)
 
-        # Build investigation context with available data
-        # Trace data and logs could be fetched from telemetry for higher-quality diagnosis,
-        # but this adds latency. Current approach provides fast reinvestigation with recent events.
+        # Build investigation context with complete data
         context = InvestigationContext(
             signature=signature,
             recent_events=tuple(recent_events),
-            trace_data=(),
-            related_logs=(),
-            codebase_path=".",
+            trace_data=tuple(traces),
+            related_logs=tuple(logs),
+            codebase_path=self.codebase_path,
             historical_context=tuple(similar),
         )
 
@@ -299,5 +321,21 @@ class ManagementService(ManagementPort):
                 "cost_usd": diagnosis.cost_usd,
             },
         )
+
+        # Send notification if warranted (failure here should NOT revert the persisted diagnosis)
+        # Pass original status to should_notify for correct medium-confidence logic
+        try:
+            if self.triage.should_notify(signature, diagnosis, original_status=original_status):
+                await self.notification.report(signature, diagnosis)
+                logger.info(
+                    f"Notification sent for reinvestigated signature {signature_id}",
+                    extra={"signature_id": signature_id},
+                )
+        except Exception as e:
+            # Log notification failure but don't revert the successful diagnosis
+            logger.error(
+                f"Failed to notify about diagnosis for signature {signature_id}: {e}",
+                exc_info=True,
+            )
 
         return diagnosis

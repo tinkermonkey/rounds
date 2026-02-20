@@ -4,8 +4,9 @@ Verifies that state transitions are properly validated and that
 invalid transitions raise appropriate errors.
 """
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from rounds.core.models import (
     Diagnosis,
@@ -24,8 +25,8 @@ def signature() -> Signature:
         service="payment-service",
         message_template="Failed to connect to database: timeout",
         stack_hash="hash-stack-001",
-        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )
@@ -39,7 +40,7 @@ def diagnosis() -> Diagnosis:
         evidence=("Stack trace shows pool limit reached",),
         suggested_fix="Increase connection pool size",
         confidence="high",
-        diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
         model="claude-code",
         cost_usd=0.05,
     )
@@ -110,7 +111,7 @@ def test_mark_diagnosed_overwrites_previous_diagnosis(
         evidence=("New evidence",),
         suggested_fix="New fix",
         confidence="medium",
-        diagnosed_at=datetime(2024, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2024, 1, 1, 14, 0, 0, tzinfo=UTC),
         model="claude-code",
         cost_usd=0.03,
     )

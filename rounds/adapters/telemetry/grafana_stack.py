@@ -15,14 +15,16 @@ view of errors, traces, and logs.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
+    PartialResultsInfo,
     Severity,
     SpanNode,
     StackFrame,
@@ -157,7 +159,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
             # Convert timestamp to nanoseconds for Loki
             start_ns = int(since.timestamp() * 1e9)
-            end_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+            end_ns = int(datetime.now(UTC).timestamp() * 1e9)
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
@@ -181,7 +183,17 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                             error_event = self._parse_error_from_log(log_data)
                             if error_event:
                                 errors.append(error_event)
-                        except (json.JSONDecodeError, ValueError):
+                        except json.JSONDecodeError as e:
+                            logger.warning(
+                                f"Skipping unparseable log entry (invalid JSON): {e}. "
+                                f"Log line: {log_line[:200]}"
+                            )
+                            continue
+                        except ValueError as e:
+                            logger.warning(
+                                f"Skipping log entry with invalid data: {e}. "
+                                f"Log line: {log_line[:200]}"
+                            )
                             continue
 
             return errors
@@ -217,7 +229,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 )
 
             # Parse timestamp
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now(UTC)
             if "timestamp" in log_data:
                 try:
                     timestamp = datetime.fromisoformat(log_data["timestamp"])
@@ -426,25 +438,28 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Batch retrieve multiple traces.
 
         Args:
             trace_ids: List of trace IDs to retrieve.
 
         Returns:
-            List of TraceTree objects. Partial results may be returned if some
-            traces cannot be fetched.
+            Tuple of (traces, partial_info) where traces is the list of successfully
+            retrieved TraceTree objects and partial_info indicates if results are complete.
 
         Raises:
             ValueError: If any trace ID format is invalid.
         """
+        from rounds.core.models import PartialResultsInfo
+
         # Validate all trace IDs upfront
         for trace_id in trace_ids:
             if not _is_valid_trace_id(trace_id):
                 raise ValueError(f"Invalid trace ID format: {trace_id}")
 
         traces: list[TraceTree] = []
+        failed_count = 0
 
         for trace_id in trace_ids:
             try:
@@ -452,9 +467,18 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 traces.append(trace)
             except Exception as e:
                 logger.warning(f"Failed to fetch trace {trace_id}: {e}")
+                failed_count += 1
                 continue
 
-        return traces
+        is_partial = failed_count > 0
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(traces),
+            is_partial=is_partial,
+            reason=f"Failed to retrieve {failed_count} traces" if is_partial else None
+        )
+
+        return traces, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
@@ -499,7 +523,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 for stream in streams:
                     for timestamp, log_line in stream.get("values", []):
                         log_entry = LogEntry(
-                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=timezone.utc),
+                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=UTC),
                             severity=Severity.INFO,
                             body=log_line,
                             attributes={},
@@ -539,7 +563,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             Exception: If telemetry backend is unreachable.
         """
         # Fetch recent errors from last 24 hours
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        since = datetime.now(UTC) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
         # Filter by fingerprint using injected fingerprinter

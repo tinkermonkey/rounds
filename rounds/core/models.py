@@ -4,6 +4,7 @@ All models in this module use only Python standard library types,
 ensuring zero external dependencies in the core domain.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -56,7 +57,9 @@ class ErrorEvent:
     error_message: str  # raw message
     stack_frames: tuple[StackFrame, ...]  # immutable for frozen dataclass
     timestamp: datetime
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
+    # Union type accepts both dict and MappingProxyType for initialization flexibility.
+    # Runtime type is always MappingProxyType after __post_init__ conversion.
+    attributes: dict[str, Any] | MappingProxyType[str, Any]
     severity: Severity
 
     def __post_init__(self) -> None:
@@ -169,7 +172,22 @@ class Signature:
         self.status = SignatureStatus.INVESTIGATING
 
     def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
-        """Transition signature to diagnosed status with diagnosis."""
+        """Transition signature to diagnosed status with diagnosis.
+
+        Raises:
+            ValueError: If signature is already RESOLVED or MUTED, as these are
+                terminal states that should not transition to DIAGNOSED.
+        """
+        if self.status == SignatureStatus.RESOLVED:
+            raise ValueError(
+                f"Cannot diagnose a resolved signature (id={self.id}). "
+                "Use reset_to_new() first if re-diagnosis is needed."
+            )
+        if self.status == SignatureStatus.MUTED:
+            raise ValueError(
+                f"Cannot diagnose a muted signature (id={self.id}). "
+                "Unmute the signature first if diagnosis is needed."
+            )
         self.diagnosis = diagnosis
         self.status = SignatureStatus.DIAGNOSED
 
@@ -235,6 +253,10 @@ class Signature:
         self.diagnosis = diagnosis
 
 
+# Type alias for event tuples in SpanNode (runtime type after __post_init__ conversion)
+EventTuple: TypeAlias = tuple[MappingProxyType[str, Any], ...]
+
+
 @dataclass(frozen=True)
 class SpanNode:
     """A single span in a distributed trace."""
@@ -245,8 +267,8 @@ class SpanNode:
     operation: str
     duration_ms: float
     status: str
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
-    events: tuple[MappingProxyType[str, Any], ...]  # read-only event dicts
+    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
+    events: EventTuple  # converted to proxies in __post_init__
     children: tuple["SpanNode", ...] = ()  # immutable for frozen dataclass
 
     def __post_init__(self) -> None:
@@ -256,7 +278,7 @@ class SpanNode:
                 self, "attributes", MappingProxyType(self.attributes)
             )
         # Convert mutable dicts in events tuple to immutable proxies
-        if self.events and isinstance(self.events[0], dict):
+        if self.events and any(isinstance(e, dict) for e in self.events):
             events_proxies = tuple(
                 MappingProxyType(event) if isinstance(event, dict) else event
                 for event in self.events
@@ -280,7 +302,7 @@ class LogEntry:
     timestamp: datetime
     severity: Severity
     body: str
-    attributes: MappingProxyType[str, Any]  # read-only dict proxy for immutability
+    attributes: dict[str, Any] | MappingProxyType[str, Any]  # converted to proxy in __post_init__
     trace_id: str | None
     span_id: str | None
 
@@ -290,6 +312,25 @@ class LogEntry:
             object.__setattr__(
                 self, "attributes", MappingProxyType(self.attributes)
             )
+
+
+@dataclass(frozen=True)
+class PartialResultsInfo:
+    """Metadata about partial results returned from telemetry queries.
+
+    Telemetry adapters may return partial results when:
+    - Query timeout occurs before all results are retrieved
+    - Result set exceeds maximum size limits
+    - API rate limits are encountered
+
+    This model provides structured indication to callers that the
+    returned results may be incomplete.
+    """
+
+    total_requested: int  # Number of results requested
+    total_returned: int  # Number of results actually returned
+    is_partial: bool  # Whether results were truncated
+    reason: str | None = None  # Optional explanation for partial results
 
 
 @dataclass(frozen=True)
@@ -338,16 +379,20 @@ class StoreStats:
     """Statistics about the signature store."""
 
     total_signatures: int
-    by_status: MappingProxyType[str, int]  # status -> count (read-only)
-    by_service: MappingProxyType[str, int]  # service -> count (read-only)
+    by_status: Mapping[str, int]  # status -> count (immutable at runtime)
+    by_service: Mapping[str, int]  # service -> count (immutable at runtime)
     oldest_signature_age_hours: float | None  # None if no signatures
     avg_occurrence_count: float
 
     def __post_init__(self) -> None:
-        """Convert dicts to read-only proxies."""
-        if isinstance(self.by_status, dict):
+        """Convert mutable dicts to immutable proxies.
+
+        Checks isinstance() before wrapping to prevent double-wrapping when
+        deserializing or reconstructing StoreStats instances.
+        """
+        if not isinstance(self.by_status, MappingProxyType):
             object.__setattr__(self, "by_status", MappingProxyType(self.by_status))
-        if isinstance(self.by_service, dict):
+        if not isinstance(self.by_service, MappingProxyType):
             object.__setattr__(self, "by_service", MappingProxyType(self.by_service))
 
 

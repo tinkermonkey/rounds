@@ -9,7 +9,7 @@ This module provides centralized configuration management:
 
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     )
     notification_output_dir: str = Field(
         default="./notifications",
-        description="Output directory for markdown notifications",
+        description="Base directory for markdown reports. Reports written to YYYY-MM-DD subdirectories with individual diagnosis files. Summary written to parent directory.",
     )
     github_token: str = Field(
         default="",
@@ -247,6 +247,40 @@ class Settings(BaseSettings):
         if v <= 0 or v > 65535:
             raise ValueError("webhook_port must be between 1 and 65535")
         return v
+
+    @model_validator(mode="after")
+    def validate_backend_dependencies(self) -> "Settings":
+        """Ensure backend-specific API keys are set when required.
+
+        Cross-field validation for backend-specific configuration:
+        - OpenAI backend requires openai_api_key
+        - GitHub notification requires github_token and github_repo
+        - PostgreSQL store requires store_postgresql_url
+        """
+        # Validate diagnosis backend dependencies
+        if self.diagnosis_backend == "openai" and not self.openai_api_key:
+            raise ValueError(
+                "openai_api_key must be set when diagnosis_backend is 'openai'"
+            )
+
+        # Validate notification backend dependencies
+        if self.notification_backend == "github_issue":
+            if not self.github_token:
+                raise ValueError(
+                    "github_token must be set when notification_backend is 'github_issue'"
+                )
+            if not self.github_repo:
+                raise ValueError(
+                    "github_repo must be set when notification_backend is 'github_issue'"
+                )
+
+        # Validate store backend dependencies
+        if self.store_backend == "postgresql" and not self.store_postgresql_url:
+            raise ValueError(
+                "store_postgresql_url must be set when store_backend is 'postgresql'"
+            )
+
+        return self
 
 
 def load_settings(env_file: str | None = None) -> Settings:

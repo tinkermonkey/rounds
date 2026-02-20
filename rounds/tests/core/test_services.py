@@ -4,42 +4,32 @@ Tests verify that Fingerprinter, TriageEngine, Investigator, and PollService
 implement the core diagnostic logic correctly.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
-from typing import Any
 
 from rounds.core.fingerprint import Fingerprinter
-from rounds.core.triage import TriageEngine
 from rounds.core.investigator import Investigator
-from rounds.core.poll_service import PollService
 from rounds.core.management_service import ManagementService
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
-    LogEntry,
     PollResult,
     Severity,
     Signature,
     SignatureStatus,
     StackFrame,
     TraceTree,
-    SpanNode,
 )
-from rounds.core.ports import (
-    TelemetryPort,
-    SignatureStorePort,
-    DiagnosisPort,
-    NotificationPort,
-)
+from rounds.core.poll_service import PollService
+from rounds.core.triage import TriageEngine
 from rounds.tests.fakes import (
-    FakeTelemetryPort,
-    FakeSignatureStorePort,
     FakeDiagnosisPort,
     FakeNotificationPort,
+    FakeSignatureStorePort,
+    FakeTelemetryPort,
 )
-
 
 # ============================================================================
 # Test Fixtures
@@ -69,7 +59,7 @@ def error_event() -> ErrorEvent:
                 lineno=15,
             ),
         ),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         attributes={"user_id": "123", "amount": "99.99"},
         severity=Severity.ERROR,
     )
@@ -85,8 +75,8 @@ def signature() -> Signature:
         service="payment-service",
         message_template="Failed to connect to database: timeout",
         stack_hash="hash-stack-001",
-        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )
@@ -100,7 +90,7 @@ def diagnosis() -> Diagnosis:
         evidence=("Stack trace shows pool limit reached",),
         suggested_fix="Increase connection pool size",
         confidence="high",
-        diagnosed_at=datetime(2024, 1, 1, 12, 30, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2024, 1, 1, 12, 30, 0, tzinfo=UTC),
         model="claude-opus-4",
         cost_usd=0.45,
     )
@@ -381,7 +371,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Should not investigate if within cooldown period."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -410,7 +400,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Should investigate if cooldown period has expired."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -517,7 +507,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase with occurrence count."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -550,7 +540,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase for recent signatures."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -583,7 +573,7 @@ class TestTriageEngine:
         self, triage_engine: TriageEngine
     ) -> None:
         """Priority should increase with critical tag."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -741,7 +731,7 @@ class TestPollService:
         telemetry = FakeTelemetryPort()
         store = FakeSignatureStorePort()
         notification = FakeNotificationPort()
-        investigator_calls = []
+        investigator_calls: list[str] = []
 
         # Create a diagnosis engine that fails on the first signature
         class PartiallyFailingDiagnosisPort(FakeDiagnosisPort):
@@ -762,7 +752,7 @@ class TestPollService:
         )
 
         # Create two pending signatures
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sig1 = Signature(
             id="sig-1",
             fingerprint="fp-1",
@@ -817,7 +807,7 @@ class TestDatetimeAwareness:
 
     def test_triage_uses_aware_datetimes(self, triage_engine: TriageEngine) -> None:
         """TriageEngine should use timezone-aware datetimes."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diagnosis = Diagnosis(
             root_cause="root",
             evidence=(),
@@ -884,7 +874,7 @@ class TestDatetimeAwareness:
                 error_type="TestError",
                 error_message=f"Error {i}",
                 stack_frames=(),
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 attributes={},
                 severity=Severity.ERROR,
             )
@@ -927,26 +917,17 @@ class TestPollCycleErrorHandling:
     ) -> None:
         """Poll cycle should continue processing after individual error processing fails."""
 
-        class PartiallyBrokenFingerprinter:
+        class PartiallyBrokenFingerprinter(Fingerprinter):
             def __init__(self, broken_on_count: int = 2):
+                super().__init__()
                 self.call_count = 0
                 self.broken_on_count = broken_on_count
-                self.base = Fingerprinter()
 
             def fingerprint(self, error):
                 self.call_count += 1
                 if self.call_count == self.broken_on_count:
                     raise RuntimeError("Fingerprinter broke")
-                return self.base.fingerprint(error)
-
-            def normalize_stack(self, frames):
-                return self.base.normalize_stack(frames)
-
-            def templatize_message(self, msg):
-                return self.base.templatize_message(msg)
-
-            def hash_stack(self, frames):
-                return self.base.hash_stack(frames)
+                return super().fingerprint(error)
 
         error1 = ErrorEvent(
             trace_id="trace-1",
@@ -955,7 +936,7 @@ class TestPollCycleErrorHandling:
             error_type="Error1",
             error_message="Error 1",
             stack_frames=(),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             attributes={},
             severity=Severity.ERROR,
         )
@@ -966,7 +947,7 @@ class TestPollCycleErrorHandling:
             error_type="Error2",
             error_message="Error 2",
             stack_frames=(),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             attributes={},
             severity=Severity.ERROR,
         )
@@ -1011,8 +992,8 @@ class TestDiagnosisParsingValidation:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )
@@ -1050,8 +1031,8 @@ class TestDiagnosisParsingValidation:
             service="service",
             message_template="msg",
             stack_hash="hash",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )
@@ -1096,7 +1077,7 @@ class TestPartialTraceRetrieval:
                 error_type="Error",
                 error_message="Error",
                 stack_frames=(),
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 attributes={},
                 severity=Severity.ERROR,
             )
@@ -1148,9 +1129,10 @@ class TestNotificationFailureHandling:
         )
 
         # Despite notification failure, diagnosis should be recorded
-        diagnosis = await investigator.investigate(signature)
+        # But the notification error should be exposed to the caller
+        with pytest.raises(RuntimeError, match="Notification service is unavailable"):
+            await investigator.investigate(signature)
 
-        assert diagnosis is not None
         # Status should be DIAGNOSED (not reverted to NEW)
         assert signature.status == SignatureStatus.DIAGNOSED
         assert signature.diagnosis is not None
@@ -1196,14 +1178,15 @@ class TestNotificationFailureHandling:
             telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
         )
 
-        # Investigate - notification will fail
-        diagnosis = await investigator.investigate(signature)
+        # Investigate - notification will fail and error should be exposed
+        with pytest.raises(RuntimeError, match="Notification service is unavailable"):
+            await investigator.investigate(signature)
 
         # Check that diagnosis was persisted before notification was attempted
         # Should have two updates: INVESTIGATING, then DIAGNOSED
         assert len(store.update_calls) >= 2
         # Last update should show DIAGNOSED status with diagnosis set
-        last_fingerprint, last_status, last_diagnosis = store.update_calls[-1]
+        _last_fingerprint, last_status, last_diagnosis = store.update_calls[-1]
         assert last_status == SignatureStatus.DIAGNOSED
         assert last_diagnosis is not None
 
@@ -1257,8 +1240,8 @@ class TestManagementService:
             service="api",
             message_template="Connection timeout",
             stack_hash="stack-hash-001",
-            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
             occurrence_count=5,
             status=SignatureStatus.DIAGNOSED,
             diagnosis=diagnosis,
@@ -1270,11 +1253,16 @@ class TestManagementService:
 
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
 
         management_service = ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
         # Retriage the signature
@@ -1292,11 +1280,16 @@ class TestManagementService:
         store = FakeSignatureStorePort()
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
 
         management_service = ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
         # Attempt to retriage non-existent signature

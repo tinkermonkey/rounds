@@ -4,33 +4,32 @@ These tests verify that the core services (Fingerprinter, TriageEngine,
 Investigator, PollService) work together correctly using fake adapters.
 """
 
-import pytest
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 # Add the rounds directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rounds.core.fingerprint import Fingerprinter
-from rounds.core.triage import TriageEngine
 from rounds.core.investigator import Investigator
-from rounds.core.poll_service import PollService
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
     Severity,
     SignatureStatus,
     StackFrame,
 )
+from rounds.core.poll_service import PollService
+from rounds.core.triage import TriageEngine
 from tests.fakes import (
-    FakeTelemetryPort,
-    FakeSignatureStorePort,
     FakeDiagnosisPort,
     FakeNotificationPort,
+    FakeSignatureStorePort,
+    FakeTelemetryPort,
 )
-
 
 # ============================================================================
 # Test Fixtures
@@ -94,7 +93,7 @@ def error_event() -> ErrorEvent:
                 lineno=42,
             ),
         ),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         attributes={"user_id": "user-123", "endpoint": "/api/orders"},
         severity=Severity.ERROR,
     )
@@ -287,7 +286,6 @@ class TestInvestigationWorkflow:
         store_port.mark_pending(sig)
 
         # Configure diagnosis to return HIGH confidence so it gets reported
-        from rounds.core.models import Diagnosis
 
         diagnosis_port.set_default_diagnosis(
             Diagnosis(

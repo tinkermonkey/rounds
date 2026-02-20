@@ -1,10 +1,12 @@
 """Tests for DaemonScheduler budget enforcement."""
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
+from rounds.core.models import PollResult
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -49,7 +51,6 @@ async def test_budget_resets_on_date_change(
     await scheduler.record_diagnosis_cost(8.00)
     assert scheduler._daily_cost_usd == 8.00
 
-    original_cost = scheduler._daily_cost_usd
     original_date = scheduler._budget_date
 
     # Simulate date change by modifying the internal budget date to yesterday
@@ -98,6 +99,103 @@ async def test_no_budget_limit_allows_unlimited_costs(
     assert await scheduler._is_budget_exceeded() is False
 
 
+# --- _run_loop Tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_loop_executes_poll_cycles(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that _run_loop executes poll cycles until stopped."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,  # Use integer for type safety
+        budget_limit=1000.0,
+    )
+    scheduler.running = True  # Start the scheduler
+
+    # Run for a short time then stop
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    # Should have executed at least one cycle
+    assert poll_port.poll_cycle_count > 0
+
+
+@pytest.mark.asyncio
+async def test_run_loop_exits_on_stop_called(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that _run_loop exits when stop() is called."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=10,  # Use integer for type safety
+        budget_limit=1000.0,
+    )
+    scheduler.running = True  # Start the scheduler
+
+    async def stop_after_delay() -> None:
+        await asyncio.sleep(0.01)
+        await scheduler.stop()
+
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_delay(),
+    )
+
+    # Should exit quickly despite long poll interval
+    assert not scheduler.running
+
+
+@pytest.mark.asyncio
+async def test_run_loop_investigation_failure_tracking(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that _run_loop tracks investigation cycle failures."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,  # Use integer for type safety
+        budget_limit=1000.0,
+    )
+    scheduler.running = True  # Start the scheduler
+
+    # Configure poll port to return a result with investigations queued
+    # so that investigation cycle will be triggered
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+
+    # Make investigation cycle fail
+    poll_port.should_fail_investigation = True
+
+    # Run a few cycles
+    async def stop_after_cycles() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    # Run both concurrently so stop_task can interrupt _run_loop
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_cycles(),
+    )
+
+    # Failure counter should have incremented
+    assert scheduler._investigation_failure_count > 0
+
 @pytest.mark.asyncio
 async def test_concurrent_cost_recording_is_thread_safe(
     poll_port: FakePollPort,
@@ -117,3 +215,16 @@ async def test_concurrent_cost_recording_is_thread_safe(
 
     # Should have recorded all costs correctly
     assert scheduler._daily_cost_usd == 10.0
+
+
+@pytest.mark.asyncio
+async def test_start_without_poll_port_raises_value_error() -> None:
+    """Test that start() raises ValueError when poll_port is None."""
+    scheduler = DaemonScheduler(
+        poll_port=None,
+        poll_interval_seconds=1,
+        budget_limit=100.00,
+    )
+
+    with pytest.raises(ValueError, match="poll_port must be set"):
+        await scheduler.start()

@@ -366,28 +366,32 @@ class SQLiteSignatureStore(SignatureStorePort):
                 try:
                     diagnosis = self._deserialize_diagnosis(diagnosis_json)
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
-                    # Log with full traceback to help debug schema/data corruption issues
+                    # Data corruption is a critical error - raise to surface the issue
                     logger.error(
                         f"Data corruption detected: Failed to deserialize diagnosis JSON "
-                        f"for signature {sig_id}. The diagnosis record will be lost. "
+                        f"for signature {sig_id}. Database integrity compromised. "
                         f"Root cause: {type(e).__name__}: {e}",
                         exc_info=True,
                     )
-                    diagnosis = None
+                    raise ValueError(
+                        f"Data corruption in signature {sig_id}: Failed to deserialize diagnosis. "
+                        f"Database may require repair or restoration from backup."
+                    ) from e
 
             # Parse tags
             try:
                 tags = frozenset(json.loads(tags_json))
             except (json.JSONDecodeError, TypeError) as e:
-                # Tags are user-assigned data; corruption means data loss
-                # Log at ERROR level (not warning) since this indicates data integrity issue
+                # Data corruption is a critical error - raise to surface the issue
                 logger.error(
-                    f"Data corruption detected: Failed to parse tags for signature {sig_id}: {e}. "
-                    f"User-assigned tags will be lost. Manual retriage may be needed. "
-                    f"Tags JSON: {tags_json!r}",
+                    f"Data corruption detected: Failed to parse tags for signature {sig_id}. "
+                    f"Database integrity compromised. Tags JSON: {tags_json!r}",
                     exc_info=True,
                 )
-                tags = frozenset()
+                raise ValueError(
+                    f"Data corruption in signature {sig_id}: Failed to parse tags. "
+                    f"Database may require repair or restoration from backup."
+                ) from e
 
             return Signature(
                 id=sig_id,

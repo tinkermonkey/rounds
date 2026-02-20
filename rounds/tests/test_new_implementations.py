@@ -9,13 +9,10 @@ Covers:
 - GrafanaStackTelemetryAdapter (Grafana Stack backend)
 """
 
-import asyncio
-import json
 import tempfile
-from datetime import datetime, timezone
+from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,17 +23,17 @@ from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.core.management_service import ManagementService
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
-    Severity,
     Signature,
+    SignatureDetails,
     SignatureStatus,
-    StackFrame,
 )
+from rounds.core.triage import TriageEngine
+from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
+from rounds.tests.fakes.management import FakeManagementPort
+from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.store import FakeSignatureStorePort
 from rounds.tests.fakes.telemetry import FakeTelemetryPort
-from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
-
 
 # --- ManagementService Tests ---
 
@@ -55,10 +52,15 @@ class TestManagementService:
         """Create a ManagementService with fake dependencies."""
         telemetry = FakeTelemetryPort()
         diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
         return ManagementService(
             store=store,
             telemetry=telemetry,
             diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
         )
 
     @pytest.fixture
@@ -71,8 +73,8 @@ class TestManagementService:
             service="auth-service",
             message_template="Connection timeout after {duration}ms",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.NEW,
         )
@@ -122,7 +124,7 @@ class TestManagementService:
             evidence=("Pool size 10", "Concurrent requests 15"),
             suggested_fix="Increase pool size",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -150,7 +152,7 @@ class TestManagementService:
             evidence=("Pool exhausted",),
             suggested_fix="Increase pool size",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
@@ -195,8 +197,8 @@ class TestManagementService:
             service="api",
             message_template="Invalid value",
             stack_hash="hash-1",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
         )
@@ -207,8 +209,8 @@ class TestManagementService:
             service="api",
             message_template="Timeout",
             stack_hash="hash-2",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=2,
             status=SignatureStatus.DIAGNOSED,
         )
@@ -236,8 +238,8 @@ class TestManagementService:
             service="worker",
             message_template="Runtime error",
             stack_hash="hash-diagnosed",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.DIAGNOSED,
         )
@@ -248,8 +250,8 @@ class TestManagementService:
             service="legacy",
             message_template="Deprecated",
             stack_hash="hash-muted",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=3,
             status=SignatureStatus.MUTED,
         )
@@ -326,39 +328,60 @@ class TestCLICommandHandler:
     """Test suite for CLICommandHandler."""
 
     @pytest.fixture
-    def mock_management(self) -> AsyncMock:
-        """Create a mock ManagementPort."""
-        return AsyncMock()
+    def mock_management(self) -> FakeManagementPort:
+        """Create a fake ManagementPort for testing."""
+        return FakeManagementPort()
 
     @pytest.fixture
-    def handler(self, mock_management: AsyncMock) -> CLICommandHandler:
-        """Create a CLICommandHandler with mock management."""
+    def handler(self, mock_management: FakeManagementPort) -> CLICommandHandler:
+        """Create a CLICommandHandler with fake management."""
         return CLICommandHandler(mock_management)
 
     @pytest.fixture
-    def sample_details(self) -> dict[str, Any]:
+    def sample_details(self) -> SignatureDetails:
         """Create sample signature details."""
-        return {
-            "id": "sig-123",
-            "fingerprint": "abc123",
-            "service": "api-service",
-            "error_type": "ValueError",
-            "status": "new",
-            "occurrence_count": 5,
-            "first_seen": "2024-01-01T00:00:00",
-            "last_seen": "2024-01-02T00:00:00",
-            "message_template": "Invalid value: {value}",
-            "diagnosis": {
-                "root_cause": "Missing validation",
-                "confidence": "high",
-                "suggested_fix": "Add input validation",
-            },
-            "related_signatures": [
-                {"id": "sig-456", "service": "api-service", "occurrence_count": 3}
-            ],
-        }
+        signature = Signature(
+            id="sig-123",
+            fingerprint="abc123",
+            error_type="ValueError",
+            service="api-service",
+            message_template="Invalid value: {value}",
+            stack_hash="stack-123",
+            first_seen=datetime(2024, 1, 1, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 2, tzinfo=UTC),
+            occurrence_count=5,
+            status=SignatureStatus.NEW,
+            diagnosis=Diagnosis(
+                root_cause="Missing validation",
+                evidence=("No input checks",),
+                suggested_fix="Add input validation",
+                confidence="high",
+                diagnosed_at=datetime.now(tz=UTC),
+                model="claude-3",
+                cost_usd=0.25,
+            ),
+        )
 
-    async def test_mute_signature_command(self, handler: CLICommandHandler, mock_management: AsyncMock) -> None:
+        related_sig = Signature(
+            id="sig-456",
+            fingerprint="def456",
+            error_type="ValueError",
+            service="api-service",
+            message_template="Invalid value",
+            stack_hash="stack-456",
+            first_seen=datetime(2024, 1, 1, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 2, tzinfo=UTC),
+            occurrence_count=3,
+            status=SignatureStatus.NEW,
+        )
+
+        return SignatureDetails(
+            signature=signature,
+            recent_events=(),
+            related_signatures=(related_sig,),
+        )
+
+    async def test_mute_signature_command(self, handler: CLICommandHandler, mock_management: FakeManagementPort) -> None:
         """Test mute signature command."""
         result = await handler.mute_signature("sig-123", "Fixed in v2.0", verbose=False)
 
@@ -366,11 +389,13 @@ class TestCLICommandHandler:
         assert result["operation"] == "mute"
         assert result["signature_id"] == "sig-123"
         assert result["reason"] == "Fixed in v2.0"
-        mock_management.mute_signature.assert_called_once_with("sig-123", "Fixed in v2.0")
+        assert "sig-123" in mock_management.muted_signatures
+        assert mock_management.muted_signatures["sig-123"] == "Fixed in v2.0"
 
-    async def test_mute_signature_error(self, handler: CLICommandHandler, mock_management: AsyncMock) -> None:
+    async def test_mute_signature_error(self, handler: CLICommandHandler, mock_management: FakeManagementPort) -> None:
         """Test mute command with error."""
-        mock_management.mute_signature.side_effect = ValueError("Signature not found")
+        mock_management.should_fail = True
+        mock_management.fail_message = "Signature not found"
 
         result = await handler.mute_signature("nonexistent")
 
@@ -378,7 +403,7 @@ class TestCLICommandHandler:
         assert "not found" in result["message"]
 
     async def test_resolve_signature_command(
-        self, handler: CLICommandHandler, mock_management: AsyncMock
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort
     ) -> None:
         """Test resolve signature command."""
         result = await handler.resolve_signature("sig-123", "Upgraded connection pool")
@@ -388,7 +413,7 @@ class TestCLICommandHandler:
         assert result["fix_applied"] == "Upgraded connection pool"
 
     async def test_retriage_signature_command(
-        self, handler: CLICommandHandler, mock_management: AsyncMock
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort
     ) -> None:
         """Test retriage signature command."""
         result = await handler.retriage_signature("sig-123")
@@ -397,24 +422,24 @@ class TestCLICommandHandler:
         assert result["operation"] == "retriage"
 
     async def test_get_details_json_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details in JSON format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="json")
 
         assert result["status"] == "success"
         assert result["operation"] == "get_details"
-        assert result["data"]["id"] == "sig-123"
+        assert result["data"].signature.id == "sig-123"
 
     async def test_get_details_text_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details in text format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="text")
 
@@ -425,11 +450,11 @@ class TestCLICommandHandler:
         assert "Status: new" in text
 
     async def test_get_details_invalid_format(
-        self, handler: CLICommandHandler, mock_management: AsyncMock,
-        sample_details: dict[str, Any]
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort,
+        sample_details: SignatureDetails
     ) -> None:
         """Test getting details with invalid format."""
-        mock_management.get_signature_details.return_value = sample_details
+        mock_management.set_signature_details("sig-123", sample_details)
 
         result = await handler.get_signature_details("sig-123", output_format="invalid")
 
@@ -445,18 +470,18 @@ class TestMarkdownNotificationAdapter:
     """Test suite for MarkdownNotificationAdapter."""
 
     @pytest.fixture
-    def temp_file(self) -> Path:
-        """Create a temporary markdown file."""
-        fd, path = tempfile.mkstemp(suffix=".md")
-        import os
-        os.close(fd)
-        yield Path(path)
-        Path(path).unlink()
+    def temp_dir(self) -> Generator[Path, None, None]:
+        """Create a temporary directory for markdown reports."""
+        temp_dir = Path(tempfile.mkdtemp())
+        yield temp_dir
+        # Cleanup: recursively remove temp directory
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     @pytest.fixture
-    def adapter(self, temp_file: Path) -> MarkdownNotificationAdapter:
+    def adapter(self, temp_dir: Path) -> MarkdownNotificationAdapter:
         """Create a MarkdownNotificationAdapter."""
-        return MarkdownNotificationAdapter(str(temp_file))
+        return MarkdownNotificationAdapter(str(temp_dir))
 
     @pytest.fixture
     def sample_signature(self) -> Signature:
@@ -468,8 +493,8 @@ class TestMarkdownNotificationAdapter:
             service="api-service",
             message_template="Connection timeout",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=5,
             status=SignatureStatus.NEW,
         )
@@ -482,28 +507,44 @@ class TestMarkdownNotificationAdapter:
             evidence=("10 concurrent requests", "Pool size 5"),
             suggested_fix="Increase pool size to 20",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.50,
         )
 
-    async def test_report_appends_to_file(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path,
+    async def test_report_creates_individual_file(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that report is appended to file."""
+        """Test that each report is written to an individual file in date-based directory."""
         await adapter.report(sample_signature, sample_diagnosis)
 
-        content = temp_file.read_text()
+        # Get the date from diagnosis
+        date_str = sample_diagnosis.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
+
+        # Verify date directory was created
+        assert date_dir.exists(), f"Date directory not found at {date_dir}"
+
+        # Check for individual report file with HH-MM-SS_service_ErrorType_sigID.md format
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 1, f"Expected 1 report file, found {len(report_files)}"
+
+        report_file = report_files[0]
+        # Verify filename format: HH-MM-SS_service_ErrorType_sigID.md
+        # Signature ID is included to prevent collisions when multiple diagnoses complete in the same second
+        assert report_file.name.endswith("_api-service_TimeoutError_sig-123.md"), f"Unexpected filename: {report_file.name}"
+
+        content = report_file.read_text()
         assert "Diagnosis Report" in content
         assert "TimeoutError" in content
         assert "api-service" in content
         assert "Connection pool exhausted" in content
 
-    async def test_report_summary_appends_to_file(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path
+    async def test_report_summary_writes_to_separate_file(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path
     ) -> None:
-        """Test that summary report is appended to file."""
+        """Test that summary report is written to separate summary.md file outside reports directory."""
         stats = {
             "total_signatures": 42,
             "total_errors_seen": 150,
@@ -513,22 +554,93 @@ class TestMarkdownNotificationAdapter:
 
         await adapter.report_summary(stats)
 
-        content = temp_file.read_text()
+        # Summary should be written to parent directory
+        summary_file = temp_dir.parent / "summary.md"
+
+        assert summary_file.exists(), f"Summary file not found at {summary_file}"
+        content = summary_file.read_text()
         assert "Summary Report" in content
         assert "**Total Signatures**: 42" in content
         assert "**NEW**: 10" in content
 
-    async def test_multiple_reports_appended(
-        self, adapter: MarkdownNotificationAdapter, temp_file: Path,
+    async def test_multiple_reports_create_separate_files(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
         sample_signature: Signature, sample_diagnosis: Diagnosis
     ) -> None:
-        """Test that multiple reports are appended."""
-        await adapter.report(sample_signature, sample_diagnosis)
-        await adapter.report(sample_signature, sample_diagnosis)
+        """Test that multiple reports create separate files in same date directory."""
+        # Create two diagnoses with different timestamps
+        from datetime import timedelta
 
-        content = temp_file.read_text()
-        # Should have two report headers
-        assert content.count("Diagnosis Report") == 2
+        diagnosis1 = sample_diagnosis
+        diagnosis2 = Diagnosis(
+            root_cause="Connection pool exhausted",
+            evidence=("10 concurrent requests", "Pool size 5"),
+            suggested_fix="Increase pool size to 20",
+            confidence="high",
+            diagnosed_at=diagnosis1.diagnosed_at + timedelta(seconds=5),  # Different timestamp
+            model="claude-3",
+            cost_usd=0.50,
+        )
+
+        await adapter.report(sample_signature, diagnosis1)
+        await adapter.report(sample_signature, diagnosis2)
+
+        # Get the date from diagnosis
+        date_str = diagnosis1.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
+
+        # Should have two separate report files
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 2, f"Expected 2 report files, found {len(report_files)}"
+
+        # Each file should contain exactly one "Diagnosis Report" header
+        for report_file in report_files:
+            content = report_file.read_text()
+            assert content.count("Diagnosis Report") == 1
+
+    async def test_filename_sanitization(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path
+    ) -> None:
+        """Test that service names and error types are sanitized in filenames."""
+        # Create signature with spaces and special characters in service/error type
+        sig_with_special_chars = Signature(
+            id="sig-456",
+            fingerprint="def456",
+            error_type="Invalid/Value Error",  # Contains slash
+            service="api-gateway/v2",  # Contains slash
+            message_template="Invalid input",
+            stack_hash="stack-456",
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
+            occurrence_count=3,
+            status=SignatureStatus.NEW,
+        )
+
+        diagnosis = Diagnosis(
+            root_cause="Bad input",
+            evidence=("Test",),
+            suggested_fix="Validate",
+            confidence="high",
+            diagnosed_at=datetime.now(tz=UTC),
+            model="claude-3",
+            cost_usd=0.50,
+        )
+
+        await adapter.report(sig_with_special_chars, diagnosis)
+
+        # Get the date from diagnosis
+        date_str = diagnosis.diagnosed_at.strftime("%Y-%m-%d")
+        date_dir = temp_dir / date_str
+
+        # Verify that special characters were sanitized
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 1
+
+        filename = report_files[0].name
+        # Should not contain slashes or other special characters
+        assert "/" not in filename
+        assert "api-gateway_v2" in filename or "api_gateway_v2" in filename
+        assert "Invalid_Value_Error" in filename or "Invalid_Value_Error" in filename
 
 
 # --- GitHubIssueNotificationAdapter Tests ---
@@ -556,8 +668,8 @@ class TestGitHubIssueNotificationAdapter:
             service="payment-service",
             message_template="Connection refused",
             stack_hash="stack-123",
-            first_seen=datetime.now(tz=timezone.utc),
-            last_seen=datetime.now(tz=timezone.utc),
+            first_seen=datetime.now(tz=UTC),
+            last_seen=datetime.now(tz=UTC),
             occurrence_count=10,
             status=SignatureStatus.NEW,
         )
@@ -570,7 +682,7 @@ class TestGitHubIssueNotificationAdapter:
             evidence=("100 open connections", "CPU at 95%"),
             suggested_fix="Scale database vertically or add replicas",
             confidence="high",
-            diagnosed_at=datetime.now(tz=timezone.utc),
+            diagnosed_at=datetime.now(tz=UTC),
             model="claude-3",
             cost_usd=0.75,
         )
@@ -662,11 +774,11 @@ class TestRunCommand:
     """Test suite for CLI command runner."""
 
     @pytest.fixture
-    def mock_management(self) -> AsyncMock:
-        """Create a mock ManagementPort."""
-        return AsyncMock()
+    def mock_management(self) -> FakeManagementPort:
+        """Create a fake ManagementPort for testing."""
+        return FakeManagementPort()
 
-    async def test_run_mute_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_mute_command(self, mock_management: FakeManagementPort) -> None:
         """Test running mute command."""
         result = await run_command(
             mock_management,
@@ -675,9 +787,9 @@ class TestRunCommand:
         )
 
         assert result["status"] == "success"
-        mock_management.mute_signature.assert_called_once()
+        assert "sig-123" in mock_management.muted_signatures
 
-    async def test_run_resolve_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_resolve_command(self, mock_management: FakeManagementPort) -> None:
         """Test running resolve command."""
         result = await run_command(
             mock_management,
@@ -687,7 +799,7 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_retriage_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_retriage_command(self, mock_management: FakeManagementPort) -> None:
         """Test running retriage command."""
         result = await run_command(
             mock_management,
@@ -697,13 +809,9 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_details_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_details_command(self, mock_management: FakeManagementPort) -> None:
         """Test running details command."""
-        mock_management.get_signature_details.return_value = {
-            "id": "sig-123",
-            "service": "test",
-        }
-
+        # FakeManagementPort returns default details for any signature_id
         result = await run_command(
             mock_management,
             "details",
@@ -712,7 +820,7 @@ class TestRunCommand:
 
         assert result["status"] == "success"
 
-    async def test_run_unknown_command(self, mock_management: AsyncMock) -> None:
+    async def test_run_unknown_command(self, mock_management: FakeManagementPort) -> None:
         """Test running unknown command."""
         with pytest.raises(ValueError, match="Unknown command"):
             await run_command(mock_management, "unknown", {})

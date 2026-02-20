@@ -146,7 +146,7 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                 json={
                     "title": issue_title,
                     "body": issue_body,
-                    "labels": self.labels + ["type:report"],
+                    "labels": [*self.labels, "type:report"],
                 },
             )
 
@@ -205,24 +205,24 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         lines.append("")
 
         lines.append("## Failure Pattern")
-        lines.append(f"```")
+        lines.append("```")
         lines.append(f"{signature.message_template}")
-        lines.append(f"```")
+        lines.append("```")
         lines.append("")
 
         lines.append("## Root Cause Analysis")
         lines.append(f"**Confidence**: {diagnosis.confidence.upper()}")
         lines.append("")
-        lines.append(f"### Root Cause")
+        lines.append("### Root Cause")
         lines.append(f"{diagnosis.root_cause}")
         lines.append("")
 
-        lines.append(f"### Evidence")
+        lines.append("### Evidence")
         for i, evidence in enumerate(diagnosis.evidence, 1):
             lines.append(f"{i}. {evidence}")
         lines.append("")
 
-        lines.append(f"### Suggested Fix")
+        lines.append("### Suggested Fix")
         lines.append(f"{diagnosis.suggested_fix}")
         lines.append("")
 

@@ -1,0 +1,97 @@
+# ============================================================================
+# Rounds Docker Compose - Target Project Deployment
+# ============================================================================
+# USAGE:
+#   1. Place this file in the ROOT of your target project directory (the application being monitored)
+#   2. Copy .env.rounds.template to .env.rounds and configure
+#   3. Run: docker-compose -f docker-compose.rounds.yml up -d
+#
+# The current directory (.) will be mounted as /workspace/target inside the container
+# so Rounds can access your target project's codebase for diagnosis.
+#
+# See docs/QUICK_START_TARGET_PROJECT.md for detailed deployment instructions.
+#
+# Requirements:
+#   - .env.rounds file with configuration (created from .env.rounds.template)
+#   - rounds:dist image available (pull from Docker Hub or build locally)
+#
+# Volumes:
+#   - Current directory (your project root) mounted read-only as /workspace/target
+#   - .rounds/reports/ for diagnosis output
+#   - rounds-data volume for signature database
+# ============================================================================
+
+services:
+  rounds:
+    image: rounds:dist
+    container_name: rounds-diagnosis
+    user: nurse
+    restart: unless-stopped
+
+    # Environment configuration from file
+    env_file:
+      - .env.rounds
+
+    # Environment variable overrides
+    environment:
+      CODEBASE_PATH: /workspace/target
+      STORE_SQLITE_PATH: /app/data/signatures.db
+      NOTIFICATION_OUTPUT_DIR: /app/reports
+      NOTIFICATION_BACKEND: markdown
+      RUN_MODE: daemon
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Volume mounts
+    volumes:
+      # Target codebase (read-only)
+      - .:/workspace/target:ro
+
+      # Reports output directory
+      - ./.rounds/reports:/app/reports:rw
+
+      # Persistent data storage (SQLite database)
+      - rounds-data:/app/data:rw
+
+      # Optional: Claude Code CLI credentials (development/testing only)
+      # Uncomment if running with Claude authentication from host
+      # - ~/.config/claude-code:/home/nurse/.config/claude-code:ro
+
+    # Network configuration
+    networks:
+      - rounds-network
+
+    # Allow container to reach Docker host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rounds-data:
+    name: rounds-data
+    driver: local
+
+networks:
+  rounds-network:
+    driver: bridge

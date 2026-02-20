@@ -254,6 +254,46 @@ Roots causes are hypotheses from LLM analysis, not absolute truth. Confidence le
 - **SQLite queries**: Use indexes on status, service for common filters
 - **Blocking I/O**: Run in thread pool to avoid event loop stalls
 
+## Docker Deployment
+
+### Container Images
+
+**Production** (`rounds:dist`):
+- Minimal runtime with auto-updating Claude Code CLI
+- Runs as `nurse` user
+- Auto-starts in daemon mode
+- Resource limits: 1 CPU core, 512MB RAM
+
+**Development** (`rounds:dev`):
+- Full dev environment with git and pytest
+- Interactive shell access
+- Live code editing via mounted volumes
+- No auto-restart for development workflow
+
+### Quick Start
+
+From target project root:
+```bash
+docker-compose -f docker-compose.rounds.yml up -d
+```
+
+### Configuration
+
+All settings via `.env.rounds` environment file. See `.env.rounds.template` for options.
+
+### Volume Mappings
+
+| Host Path | Container Path | Purpose |
+|-----------|---------------|---------|
+| `.` | `/workspace/target` (ro) | Target codebase |
+| `./.rounds/reports` | `/app/reports` (rw) | Diagnosis reports |
+| `rounds-data` | `/app/data` (rw) | Signature database |
+
+### Reports
+
+- Individual diagnoses: `.rounds/reports/YYYY-MM-DD/HH-MM-SS_service_ErrorType.md`
+- Summary statistics: `.rounds/summary.md`
+
 ## Security
 
 - Configuration containing secrets (API keys, tokens) comes from environment

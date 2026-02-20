@@ -1,17 +1,18 @@
 """Integration tests for Claude Code diagnosis adapter."""
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import pytest
+
+from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.core.models import (
-    InvestigationContext,
     ErrorEvent,
+    InvestigationContext,
     Severity,
-    StackFrame,
     Signature,
     SignatureStatus,
+    StackFrame,
 )
-from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def investigation_context() -> InvestigationContext:
                 lineno=42,
             ),
         ),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         attributes={},
         severity=Severity.ERROR,
     )
@@ -52,8 +53,8 @@ def investigation_context() -> InvestigationContext:
         service="api-service",
         message_template="Request timed out",
         stack_hash="stack-001",
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
+        first_seen=datetime.now(UTC),
+        last_seen=datetime.now(UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
     )

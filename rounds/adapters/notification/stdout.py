@@ -73,7 +73,7 @@ class StdoutNotificationAdapter(NotificationPort):
             f"Fingerprint: {signature.fingerprint}",
             f"Message Template: {signature.message_template}",
             f"Stack Hash: {signature.stack_hash}",
-            f"",
+            "",
             f"Occurrences: {signature.occurrence_count}",
             f"First Seen: {signature.first_seen}",
             f"Last Seen: {signature.last_seen}",

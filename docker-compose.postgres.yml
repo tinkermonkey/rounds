@@ -1,0 +1,266 @@
+# ============================================================================
+# Docker Compose Configuration for Rounds with PostgreSQL
+# ============================================================================
+# Production setup with PostgreSQL database for multi-instance deployments
+# and vector similarity search capability.
+#
+# Usage:
+#   docker-compose -f docker-compose.postgres.yml up -d
+#
+# Features:
+#   - Persistent PostgreSQL database
+#   - Multiple Rounds instances supported
+#   - Database backups and monitoring
+#   - pgAdmin for database management (optional)
+#
+# Environment Configuration:
+#   Copy .env.rounds.template to .env.rounds and set:
+#   STORE_BACKEND=postgresql
+#   STORE_POSTGRESQL_URL=postgresql://rounds:password@postgres:5432/rounds
+# ============================================================================
+
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: rounds-postgres
+    restart: unless-stopped
+
+    # Database configuration
+    environment:
+      POSTGRES_DB: rounds
+      POSTGRES_USER: rounds
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env or environment}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # Performance tuning (adjust for your hardware)
+      POSTGRES_INITDB_ARGS: >
+        -c max_connections=100
+        -c shared_buffers=256MB
+        -c effective_cache_size=1GB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Volume mounts
+    volumes:
+      # Database data directory
+      - postgres-data:/var/lib/postgresql/data
+      # Optional: PostgreSQL configuration overrides
+      # - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # Optional: Custom initialization scripts
+      # - ./postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+
+    # Network configuration
+    networks:
+      - rounds-network
+
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rounds"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Rounds Instance 1
+  rounds-1:
+    image: rounds:dist
+    container_name: rounds-1
+    restart: unless-stopped
+
+    # Environment configuration
+    env_file:
+      - .env.rounds
+
+    # PostgreSQL-specific overrides
+    environment:
+      STORE_BACKEND: postgresql
+      STORE_POSTGRESQL_URL: postgresql://rounds:${POSTGRES_PASSWORD}@postgres:5432/rounds
+      INSTANCE_ID: rounds-1  # For distributed tracing
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Volume mounts
+    volumes:
+      # Reports output directory
+      - ./.rounds/reports:/app/reports:rw
+      # Optional: Claude Code CLI credentials
+      # - ~/.config/claude-code:/home/nurse/.config/claude-code:ro
+
+    # Network configuration
+    networks:
+      - rounds-network
+
+    # Dependency ordering
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # Allow container to reach Docker host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Rounds Instance 2 (optional, for load balancing)
+  rounds-2:
+    image: rounds:dist
+    container_name: rounds-2
+    restart: unless-stopped
+
+    env_file:
+      - .env.rounds
+
+    environment:
+      STORE_BACKEND: postgresql
+      STORE_POSTGRESQL_URL: postgresql://rounds:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/rounds
+      INSTANCE_ID: rounds-2
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    volumes:
+      - ./.rounds/reports:/app/reports:rw
+
+    networks:
+      - rounds-network
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # pgAdmin - PostgreSQL Web Management (Optional)
+  # Useful for development and monitoring. Remove for production if not needed.
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rounds-pgadmin
+    restart: unless-stopped
+
+    # Web interface configuration
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD must be set in .env or environment}
+      SCRIPT_NAME: /pgadmin
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+    # Port mapping (change port if needed)
+    ports:
+      - "5050:80"
+
+    # Network configuration
+    networks:
+      - rounds-network
+
+    # Dependency ordering
+    depends_on:
+      - postgres
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Volumes
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      # For better performance on some systems:
+      # type: tmpfs
+      # o: size=1g
+
+# Networks
+networks:
+  rounds-network:
+    driver: bridge
+
+# ============================================================================
+# SECURITY NOTES
+# ============================================================================
+#
+# PRODUCTION CHECKLIST:
+#
+# 1. Change database passwords:
+#    - POSTGRES_PASSWORD in postgres service
+#    - STORE_POSTGRESQL_URL in rounds services
+#    - pgadmin credentials (if using pgadmin)
+#
+# 2. Remove pgAdmin for production (not needed in production)
+#
+# 3. Use strong passwords (32+ characters with mixed case, numbers, symbols)
+#
+# 4. Restrict network access:
+#    - Don't expose port 5050 (pgAdmin)
+#    - Use Docker networks to isolate services
+#    - Consider network policies in Kubernetes
+#
+# 5. Enable PostgreSQL SSL:
+#    - Generate certificates
+#    - Update connection string: postgresql://...?sslmode=require
+#
+# 6. Regular backups:
+#    - Use pg_dump or automated backup tools
+#    - Store backups off-cluster
+#    - Test restore procedures regularly
+#
+# 7. Monitor database performance:
+#    - Set up alerting for connection count
+#    - Monitor disk usage
+#    - Track query performance
+#
+# ============================================================================

@@ -1,8 +1,8 @@
 """Fake TelemetryPort implementation for testing."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from rounds.core.models import ErrorEvent, LogEntry, SpanNode, TraceTree
+from rounds.core.models import ErrorEvent, LogEntry, PartialResultsInfo, TraceTree
 from rounds.core.ports import TelemetryPort
 
 
@@ -24,6 +24,7 @@ class FakeTelemetryPort(TelemetryPort):
         self.get_traces_call_count = 0
         self.get_correlated_logs_call_count = 0
         self.get_events_for_signature_call_count = 0
+        self._error_to_raise: Exception | None = None
 
     def add_error(self, error: ErrorEvent) -> None:
         """Add an error event to the fake telemetry backend."""
@@ -57,6 +58,14 @@ class FakeTelemetryPort(TelemetryPort):
         """Add events for a specific signature fingerprint."""
         self.signature_events[fingerprint] = events
 
+    def set_error(self, error: Exception) -> None:
+        """Configure the fake to raise an error on the next query.
+
+        Args:
+            error: Exception to raise when any query method is called.
+        """
+        self._error_to_raise = error
+
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
@@ -65,13 +74,16 @@ class FakeTelemetryPort(TelemetryPort):
         Returns all errors with timestamp >= since.
         Filters by service if services list is provided.
         """
+        if self._error_to_raise:
+            raise self._error_to_raise
+
         self.get_recent_errors_call_count += 1
 
         result = []
         for ts, errors in self.errors.items():
             # Normalize both timestamps to timezone-aware UTC for comparison
-            ts_normalized = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
-            since_normalized = since if since.tzinfo is not None else since.replace(tzinfo=timezone.utc)
+            ts_normalized = ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+            since_normalized = since if since.tzinfo is not None else since.replace(tzinfo=UTC)
             if ts_normalized >= since_normalized:
                 result.extend(errors)
 
@@ -92,13 +104,14 @@ class FakeTelemetryPort(TelemetryPort):
 
         return self.traces[trace_id]
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Get multiple traces by ID.
 
-        Returns only traces that exist. Matches real telemetry behavior where
-        missing traces are silently omitted (caller detects partial results by
-        comparing len(result) < len(trace_ids)).
+        Returns only traces that exist along with partial results metadata.
+        Matches real telemetry behavior where missing traces are silently omitted.
         """
+        from rounds.core.models import PartialResultsInfo
+
         self.get_traces_call_count += 1
 
         result = []
@@ -106,7 +119,15 @@ class FakeTelemetryPort(TelemetryPort):
             if trace_id in self.traces:
                 result.append(self.traces[trace_id])
 
-        return result
+        is_partial = len(result) < len(trace_ids)
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(result),
+            is_partial=is_partial,
+            reason=f"{len(trace_ids) - len(result)} traces not found" if is_partial else None
+        )
+
+        return result, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
@@ -150,3 +171,4 @@ class FakeTelemetryPort(TelemetryPort):
         self.get_traces_call_count = 0
         self.get_correlated_logs_call_count = 0
         self.get_events_for_signature_call_count = 0
+        self._error_to_raise = None
