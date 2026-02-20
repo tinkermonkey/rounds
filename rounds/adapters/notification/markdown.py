@@ -28,9 +28,15 @@ class MarkdownNotificationAdapter(NotificationPort):
             report_dir: Base directory where date-based subdirectories will be created.
                        Reports will be organized as: report_dir/YYYY-MM-DD/HH-MM-SS_service_ErrorType.md
                        Summary will be written to: report_dir/../summary.md
+
+        Raises:
+            OSError: If base directory cannot be created (permission denied, invalid path, etc.)
         """
         self.base_dir = Path(report_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Failed to create base directory {report_dir}: {e}") from e
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -56,6 +62,9 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         Returns:
             Path to the individual markdown report file.
+
+        Raises:
+            OSError: If date subdirectory cannot be created (permission denied, disk full, etc.)
         """
         # Get timestamp from diagnosis
         timestamp = diagnosis.diagnosed_at
@@ -68,7 +77,10 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         # Create date directory
         date_dir = self.base_dir / date_str
-        date_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            date_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Failed to create date directory {date_dir}: {e}") from e
 
         # Generate filename: HH-MM-SS_service_ErrorType.md
         filename = f"{time_str}_{service}_{error_type}.md"
@@ -104,12 +116,22 @@ class MarkdownNotificationAdapter(NotificationPort):
                 raise
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
-        """Write summary statistics to separate markdown file."""
+        """Write summary statistics to separate markdown file.
+
+        Raises:
+            OSError: If parent directory cannot be created or file cannot be written.
+        """
         summary = self._format_summary(stats)
 
         async with self._lock:
             try:
                 summary_file = self.base_dir.parent / "summary.md"
+                # Ensure parent directory exists
+                try:
+                    summary_file.parent.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    raise OSError(f"Failed to create summary directory {summary_file.parent}: {e}") from e
+
                 await asyncio.to_thread(summary_file.write_text, summary, encoding='utf-8')
 
                 logger.info(

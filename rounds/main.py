@@ -113,8 +113,17 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
             # Ctrl+C
             logger.info("Interrupted by user")
             continue
+        except (MemoryError, SystemError, SystemExit) as e:
+            # Re-raise critical system errors
+            logger.error(f"Critical system error: {e}", exc_info=True)
+            raise
         except Exception as e:
+            # Log other errors and provide user feedback
             logger.error(f"CLI error: {e}", exc_info=True)
+            print(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }, indent=2))
 
 
 async def _execute_cli_command(
@@ -464,9 +473,9 @@ async def bootstrap(command: str | None = None, signature_id: str | None = None)
         from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 
         # Parse PostgreSQL connection URL or use individual parameters
-        if settings.database_url:
+        if settings.store_postgresql_url:
             # Parse connection URL (postgresql://user:password@host:port/database)
-            parsed = urllib.parse.urlparse(settings.database_url)
+            parsed = urllib.parse.urlparse(settings.store_postgresql_url)
             store = PostgreSQLSignatureStore(
                 host=parsed.hostname or "localhost",
                 port=parsed.port or 5432,
@@ -485,7 +494,7 @@ async def bootstrap(command: str | None = None, signature_id: str | None = None)
     # Diagnosis adapter - select based on config
     if settings.diagnosis_backend == "claude_code":
         diagnosis_engine = ClaudeCodeDiagnosisAdapter(
-            model=settings.claude_code_model,
+            model=settings.claude_model,
             budget_usd=settings.claude_code_budget_usd,
         )
         logger.info("Diagnosis adapter: Claude Code")
