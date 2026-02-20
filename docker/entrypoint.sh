@@ -6,10 +6,10 @@
 # 1. Auto-update of Claude Code CLI
 # 2. Claude authentication verification
 # 3. Directory creation for reports and data persistence
-# 4. Launch of the Rounds daemon or CLI
+# 4. Launch of the Rounds daemon, CLI, or webhook
 #
 # Environment variables expected:
-# - RUN_MODE: "daemon" (production) or "cli" (manual operations)
+# - RUN_MODE: "daemon" (production), "cli" (manual operations), or "webhook" (HTTP server)
 # - CLAUDE_CODE_VERSION: Optional specific version to install
 # - All ROUNDS_ prefixed configuration variables
 # ============================================================================
@@ -19,7 +19,7 @@ set -e
 # Enable error output
 trap 'echo "ERROR: entrypoint.sh failed at line $LINENO"' ERR
 
-# Colors for output (if terminal is available)
+# Colors for output (unconditionally emitted for compatibility with log parsing)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -73,12 +73,20 @@ echo -e "${YELLOW}Creating required directories...${NC}"
 
 # Create reports directory (default: /app/reports)
 REPORTS_DIR="${NOTIFICATION_OUTPUT_DIR:-/app/reports}"
-mkdir -p "$REPORTS_DIR"
+if ! mkdir -p "$REPORTS_DIR" 2>/dev/null; then
+  echo -e "${RED}ERROR: Failed to create reports directory at $REPORTS_DIR${NC}"
+  echo "Check that parent directories exist and you have write permissions"
+  exit 1
+fi
 echo -e "${GREEN}Created reports directory: $REPORTS_DIR${NC}"
 
 # Create data directory for SQLite database (default: /app/data)
 DATA_DIR="$(dirname "${STORE_SQLITE_PATH:-/app/data/signatures.db}")"
-mkdir -p "$DATA_DIR"
+if ! mkdir -p "$DATA_DIR" 2>/dev/null; then
+  echo -e "${RED}ERROR: Failed to create data directory at $DATA_DIR${NC}"
+  echo "Check that parent directories exist and you have write permissions"
+  exit 1
+fi
 echo -e "${GREEN}Created data directory: $DATA_DIR${NC}"
 
 # ============================================================================

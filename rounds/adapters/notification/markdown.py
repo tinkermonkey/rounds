@@ -26,8 +26,9 @@ class MarkdownNotificationAdapter(NotificationPort):
 
         Args:
             report_dir: Base directory where date-based subdirectories will be created.
-                       Reports will be organized as: report_dir/YYYY-MM-DD/HH-MM-SS_service_ErrorType.md
-                       Summary will be written to: report_dir/../summary.md
+                       Paths are created by _get_report_file_path() - see that method
+                       for the exact format to avoid comment drift from implementation changes.
+                       Summary reports are written to report_dir/../summary.md.
 
         Raises:
             ValueError: If report_dir is a filesystem root or invalid path.
@@ -49,11 +50,23 @@ class MarkdownNotificationAdapter(NotificationPort):
     def _sanitize_filename(text: str) -> str:
         """Sanitize a string for use in filenames.
 
+        Replaces all non-alphanumeric characters (except underscores and hyphens)
+        with underscores. This ensures the output is filesystem-safe across
+        platforms and prevents directory traversal or special character issues.
+
         Args:
             text: The text to sanitize.
 
         Returns:
-            Sanitized string with spaces and problematic characters replaced.
+            Sanitized string containing only alphanumeric characters, underscores,
+            and hyphens. No spaces or special characters. Safe for use in filenames
+            on any filesystem.
+
+        Examples:
+            >>> _sanitize_filename("My Service")
+            'My_Service'
+            >>> _sanitize_filename("Error@Type:123")
+            'Error_Type_123'
         """
         # Replace any character that's not alphanumeric, underscore, or hyphen
         sanitized = re.sub(r'[^\w\-]', '_', text)

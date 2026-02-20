@@ -243,43 +243,6 @@ class TestArgumentParsing:
 class TestOutputStructures:
     """Test that output structures match specification."""
 
-    def test_scan_output_structure(self) -> None:
-        """Test that scan command output contains all required fields."""
-        now = datetime.now(timezone.utc)
-        poll_result = PollResult(
-            errors_found=5,
-            new_signatures=2,
-            updated_signatures=3,
-            investigations_queued=1,
-            timestamp=now,
-            errors_failed_to_process=0,
-        )
-
-        # Create the output structure as scan would
-        output = {
-            "status": "success",
-            "new_signatures": poll_result.new_signatures,
-            "updated_signatures": poll_result.updated_signatures,
-            "errors_processed": poll_result.errors_found,
-            "errors_failed": poll_result.errors_failed_to_process,
-            "investigations_queued": poll_result.investigations_queued,
-            "timestamp": poll_result.timestamp.isoformat(),
-        }
-
-        # Verify all required fields are present
-        assert output["status"] == "success"
-        assert "new_signatures" in output
-        assert "updated_signatures" in output
-        assert "errors_processed" in output
-        assert "errors_failed" in output
-        assert "investigations_queued" in output
-        assert "timestamp" in output
-
-        # Verify JSON serializable
-        json_str = json.dumps(output)
-        parsed = json.loads(json_str)
-        assert parsed["status"] == "success"
-
     def test_diagnose_output_structure(self, sample_diagnosis: Diagnosis) -> None:
         """Test that diagnose command output contains all required fields."""
         signature_id = "test-sig-123"

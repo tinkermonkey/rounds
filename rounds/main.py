@@ -9,7 +9,7 @@ Module Structure:
 - Adapter instantiation
 - Core service initialization
 - Dependency injection
-- Entry point selection (daemon, CLI, webhook, etc.)
+- Entry point selection (daemon, CLI, webhook, scan, diagnose)
 """
 
 import argparse
@@ -134,16 +134,24 @@ async def _execute_cli_command(
 ) -> dict[str, Any]:
     """Execute a CLI command.
 
+    Command-specific argument requirements:
+    - 'list': Optional status (str), format (str, default "json")
+    - 'details': Required signature_id (str), format (str, default "json")
+    - 'mute': Required signature_id (str), optional reason (str), verbose (bool)
+    - 'resolve': Required signature_id (str), optional fix_applied (str), verbose (bool)
+    - 'retriage': Required signature_id (str), optional verbose (bool)
+    - 'reinvestigate': Required signature_id (str), optional verbose (bool)
+
     Args:
         cli_handler: CLICommandHandler instance.
-        command: Command name.
-        args: Command arguments.
+        command: Command name (list, details, mute, resolve, retriage, reinvestigate).
+        args: Command arguments dictionary. Structure depends on command type.
 
     Returns:
-        Command result dictionary.
+        Command result dictionary with status and data.
 
     Raises:
-        ValueError: If command is not recognized.
+        ValueError: If command is not recognized or required parameters are missing.
     """
     if command == "list":
         return await cli_handler.list_signatures(
