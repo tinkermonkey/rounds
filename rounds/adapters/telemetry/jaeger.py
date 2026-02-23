@@ -9,7 +9,7 @@ Jaeger provides distributed tracing and can integrate with various backends
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -17,6 +17,7 @@ import httpx
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
+    PartialResultsInfo,
     Severity,
     SpanNode,
     StackFrame,
@@ -118,7 +119,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         try:
             # Calculate time range
-            end_time_us = int(datetime.now(timezone.utc).timestamp() * 1e6)
+            end_time_us = int(datetime.now(UTC).timestamp() * 1e6)
             start_time_us = int(since.timestamp() * 1e6)
 
             # If no services specified, query each service separately
@@ -225,7 +226,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 error_message=error_message,
                 stack_frames=stack_frames,
                 timestamp=datetime.fromtimestamp(
-                    span.get("startTime", 0) / 1e6, tz=timezone.utc
+                    span.get("startTime", 0) / 1e6, tz=UTC
                 ),
                 attributes=tags,
                 severity=Severity.ERROR,
@@ -478,25 +479,28 @@ class JaegerTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Batch retrieve multiple traces.
 
         Args:
             trace_ids: List of trace IDs to retrieve.
 
         Returns:
-            List of TraceTree objects. Partial results may be returned if some
-            traces cannot be fetched.
+            Tuple of (traces, partial_info) where traces is the list of successfully
+            retrieved TraceTree objects and partial_info indicates if results are complete.
 
         Raises:
             ValueError: If any trace ID format is invalid.
         """
+        from rounds.core.models import PartialResultsInfo
+
         # Validate all trace IDs upfront
         for trace_id in trace_ids:
             if not _is_valid_trace_id(trace_id):
                 raise ValueError(f"Invalid trace ID format: {trace_id}")
 
         traces: list[TraceTree] = []
+        failed_count = 0
 
         for trace_id in trace_ids:
             try:
@@ -504,9 +508,18 @@ class JaegerTelemetryAdapter(TelemetryPort):
                 traces.append(trace)
             except Exception as e:
                 logger.warning(f"Failed to fetch trace {trace_id}: {e}")
+                failed_count += 1
                 continue
 
-        return traces
+        is_partial = failed_count > 0
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(traces),
+            is_partial=is_partial,
+            reason=f"Failed to retrieve {failed_count} traces" if is_partial else None
+        )
+
+        return traces, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
@@ -586,10 +599,10 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         timestamp_us = log.get("timestamp", 0)
                         if timestamp_us:
                             timestamp = datetime.fromtimestamp(
-                                timestamp_us / 1e6, tz=timezone.utc
+                                timestamp_us / 1e6, tz=UTC
                             )
                         else:
-                            timestamp = datetime.now(timezone.utc)
+                            timestamp = datetime.now(UTC)
 
                         # Extract message and other fields
                         message = ""
@@ -652,7 +665,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                     # Build tag query for fingerprint and error status
                     tags = f"error=true AND fingerprint={fingerprint}"
 
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                     end_time_us = int(now.timestamp() * 1e6)
                     # Look back 24 hours for events matching this fingerprint
                     start_time_us = int((now - timedelta(hours=24)).timestamp() * 1e6)

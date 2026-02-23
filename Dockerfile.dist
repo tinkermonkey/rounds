@@ -1,0 +1,92 @@
+# ============================================================================
+# Dockerfile.dist - Rounds Production Image
+# ============================================================================
+# Production Docker image for the Rounds continuous error diagnosis system
+# with Python 3.11+, Claude Code CLI integration, and auto-update capability
+#
+# Image: rounds:dist
+# User: nurse (non-root, UID 1000)
+# Entrypoint: Auto-updates Claude Code CLI, then starts daemon mode
+# ============================================================================
+
+# ============================================================================
+# Stage 1: Builder
+# ============================================================================
+FROM python:3.11-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory and copy rounds package
+WORKDIR /app
+COPY rounds/ /app/rounds/
+
+# Install the rounds package in user site-packages
+RUN pip install --user --no-cache-dir /app/rounds
+
+# ============================================================================
+# Stage 2: Runtime
+# ============================================================================
+FROM python:3.11-slim
+
+# Install runtime dependencies
+# - git: Required for Claude Code CLI and codebase context
+# - nodejs npm: Required for Claude Code CLI package
+# - sqlite3: For signature database operations
+# - curl: For health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    sqlite3 \
+    nodejs \
+    npm \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (nurse)
+RUN useradd -m -u 1000 -s /bin/bash nurse
+
+# Configure npm to use user-local prefix (allows npm install -g as non-root)
+# This creates ~/.npm-global directory and adds it to PATH
+RUN mkdir -p /home/nurse/.npm-global && \
+    chown -R nurse:nurse /home/nurse/.npm-global && \
+    su - nurse -c "npm config set prefix /home/nurse/.npm-global"
+
+# Copy installed Python packages from builder stage
+COPY --from=builder /root/.local /home/nurse/.local
+
+# Set environment for user-installed packages and npm
+ENV PATH=/home/nurse/.npm-global/bin:/home/nurse/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Copy entrypoint and healthcheck scripts (must be before USER switch)
+COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/healthcheck.sh /healthcheck.sh
+
+# Ensure scripts are executable
+RUN chmod +x /entrypoint.sh /healthcheck.sh
+
+# ============================================================================
+# Claude Code Pre-installation
+# ============================================================================
+# Pre-install a recent Claude Code version to enable small diff updates
+# at runtime instead of full installations. This improves startup time
+# for container restarts.
+USER nurse
+WORKDIR /home/nurse
+
+RUN npm install -g "@anthropic-ai/claude-code" && \
+    claude --version && \
+    echo "Claude Code CLI pre-installed"
+
+# Health check to verify service availability
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /healthcheck.sh
+
+# Entrypoint: Auto-update Claude Code CLI, then start daemon
+# Default mode (daemon) is set via RUN_MODE env var in entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

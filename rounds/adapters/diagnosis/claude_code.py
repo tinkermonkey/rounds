@@ -10,8 +10,7 @@ import asyncio
 import json
 import logging
 import subprocess
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, InvestigationContext
@@ -65,7 +64,7 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
                 evidence=diagnosis.evidence,
                 suggested_fix=diagnosis.suggested_fix,
                 confidence=diagnosis.confidence,
-                diagnosed_at=datetime.now(timezone.utc),
+                diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
             )
@@ -224,20 +223,48 @@ Respond with a JSON object in exactly this format:
             output = await asyncio.to_thread(_run_claude_code)
 
             # Parse the JSON output
-            # Claude Code returns json format, so we need to extract the content
+            # First try parsing the entire output as JSON
+            try:
+                parsed: dict[str, Any] = json.loads(output)
+                return parsed
+            except json.JSONDecodeError:
+                # If full parse fails, try line-by-line and multi-line approaches
+                pass
+
+            # Try to find JSON block in output (handles pretty-printed JSON)
             lines = output.split("\n")
+            json_buffer: list[str] = []
+            in_json = False
+            brace_count = 0
+
             for line in lines:
-                if line.startswith("{"):
-                    try:
-                        parsed: dict[str, Any] = json.loads(line)
-                        return parsed
-                    except json.JSONDecodeError as e:
-                        logger.warning(
-                            f"Failed to parse JSON line from Claude Code output: {e}. "
-                            f"Line: {line[:200]}",
-                            exc_info=True,
-                        )
-                        continue
+                stripped = line.strip()
+
+                # Start of JSON object
+                if stripped.startswith("{"):
+                    in_json = True
+                    brace_count = 0
+
+                if in_json:
+                    json_buffer.append(line)
+                    # Count braces to track nesting
+                    brace_count += line.count("{") - line.count("}")
+
+                    # Complete JSON object found
+                    if brace_count == 0:
+                        json_str = "\n".join(json_buffer)
+                        try:
+                            parsed = json.loads(json_str)
+                            return parsed
+                        except json.JSONDecodeError as e:
+                            logger.warning(
+                                f"Failed to parse multi-line JSON from Claude Code output: {e}. "
+                                f"Content: {json_str[:200]}",
+                                exc_info=True,
+                            )
+                            # Reset and continue searching
+                            json_buffer = []
+                            in_json = False
 
             # No valid JSON found - raise exception instead of returning synthetic data
             raise ValueError(
@@ -297,7 +324,7 @@ Respond with a JSON object in exactly this format:
             evidence=evidence,
             suggested_fix=suggested_fix,
             confidence=confidence_lower,
-            diagnosed_at=datetime.now(timezone.utc),
+            diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be filled in by diagnose()
         )

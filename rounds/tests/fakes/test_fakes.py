@@ -4,16 +4,16 @@ These tests verify that fake adapters work correctly as test doubles
 and can be used confidently in tests of core domain logic.
 """
 
-import pytest
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-import sys
+
+import pytest
 
 # Add the rounds directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from rounds.core.models import (
-    Confidence,
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
@@ -27,14 +27,13 @@ from rounds.core.models import (
     TraceTree,
 )
 from tests.fakes import (
-    FakeTelemetryPort,
-    FakeSignatureStorePort,
     FakeDiagnosisPort,
+    FakeManagementPort,
     FakeNotificationPort,
     FakePollPort,
-    FakeManagementPort,
+    FakeSignatureStorePort,
+    FakeTelemetryPort,
 )
-
 
 # ============================================================================
 # Test Fixtures
@@ -214,8 +213,11 @@ class TestFakeTelemetryPort:
 
         port.add_traces([trace1, trace2])
 
-        traces = await port.get_traces(["trace-1", "trace-2"])
+        traces, partial_info = await port.get_traces(["trace-1", "trace-2"])
         assert len(traces) == 2
+        assert not partial_info.is_partial
+        assert partial_info.total_requested == 2
+        assert partial_info.total_returned == 2
 
     @pytest.mark.asyncio
     async def test_get_correlated_logs(self, log_entry: LogEntry) -> None:
@@ -744,7 +746,7 @@ class TestFakeManagementPort:
         port = FakeManagementPort()
         port.set_should_fail(True, "Test error")
 
-        with pytest.raises(RuntimeError, match="Test error"):
+        with pytest.raises(ValueError, match="Test error"):
             await port.mute_signature("sig-001")
 
     @pytest.mark.asyncio

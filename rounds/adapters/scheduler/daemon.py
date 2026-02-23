@@ -7,7 +7,8 @@ triggers poll cycles at configurable intervals.
 import asyncio
 import logging
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import cast
 
 from rounds.core.ports import PollPort
 
@@ -36,7 +37,7 @@ class DaemonScheduler:
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
-        self._budget_date = datetime.now(timezone.utc).date()
+        self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0  # Track consecutive investigation cycle failures
 
@@ -94,7 +95,15 @@ class DaemonScheduler:
 
             def _handle_signal(sig: int) -> None:
                 logger.info(f"Received signal {sig}, initiating graceful shutdown...")
-                asyncio.create_task(self.stop())
+                # Store task reference to prevent garbage collection
+                task = asyncio.create_task(self.stop())
+                # Log any exceptions from stop() to prevent silent failures
+                def _log_task_exception(t: asyncio.Task[None]) -> None:
+                    try:
+                        t.result()  # Retrieve result to raise any exception
+                    except Exception as e:
+                        logger.error(f"Error during signal-triggered shutdown: {e}", exc_info=True)
+                task.add_done_callback(_log_task_exception)
 
             # Register handlers for SIGTERM and SIGINT
             loop.add_signal_handler(
@@ -108,7 +117,20 @@ class DaemonScheduler:
             logger.warning(f"Failed to set up signal handlers: {e}")
 
     async def _run_loop(self) -> None:
-        """Main daemon loop."""
+        """Main daemon loop.
+
+        Raises:
+            ValueError: If poll_port is not set (should be caught by start()).
+        """
+        # Design pattern: Optional field with runtime validation + cast.
+        # The poll_port field is Optional to allow deferred initialization (set in start()),
+        # but guaranteed non-None here by construction (start() must be called first).
+        # Runtime check validates the invariant; cast() informs type checker for downstream code.
+        if self.poll_port is None:
+            raise ValueError("poll_port must be set before _run_loop is called")
+
+        poll_port = cast(PollPort, self.poll_port)
+
         cycle_number = 0
         loop = asyncio.get_running_loop()
 
@@ -125,12 +147,12 @@ class DaemonScheduler:
                         f"${self.budget_limit:.2f}), skipping investigation cycles"
                     )
                     # Still poll for errors, but don't diagnose
-                    result = await self.poll_port.execute_poll_cycle()
+                    result = await poll_port.execute_poll_cycle()
                 else:
                     start_time = loop.time()
 
                     # Execute poll cycle
-                    result = await self.poll_port.execute_poll_cycle()
+                    result = await poll_port.execute_poll_cycle()
 
                     elapsed = loop.time() - start_time
 
@@ -146,7 +168,7 @@ class DaemonScheduler:
                     if result.investigations_queued > 0:
                         logger.debug(f"Starting investigation cycle #{cycle_number}")
                         try:
-                            inv_result = await self.poll_port.execute_investigation_cycle()
+                            inv_result = await poll_port.execute_investigation_cycle()
                             # Reset failure counter on successful cycle
                             self._investigation_failure_count = 0
                             logger.info(
@@ -162,13 +184,17 @@ class DaemonScheduler:
                                 f"(consecutive failures: {self._investigation_failure_count})",
                                 exc_info=True
                             )
-                            # Log alert if too many consecutive failures
+                            # Raise exception if too many consecutive failures
                             if self._investigation_failure_count >= 5:
                                 logger.critical(
                                     f"Investigation cycle has failed {self._investigation_failure_count} "
-                                    f"consecutive times. This may indicate a persistent issue. "
-                                    f"Manual intervention may be required."
+                                    f"consecutive times. This indicates a persistent issue requiring "
+                                    f"manual intervention. Stopping daemon."
                                 )
+                                raise RuntimeError(
+                                    f"Investigation cycle failed {self._investigation_failure_count} "
+                                    f"consecutive times. Last error: {e}"
+                                ) from e
 
             except asyncio.CancelledError:
                 raise
@@ -198,7 +224,7 @@ class DaemonScheduler:
 
         async with self._budget_lock:
             # Reset daily cost if date has changed
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._budget_date = today
@@ -216,7 +242,7 @@ class DaemonScheduler:
         """
         async with self._budget_lock:
             # Reset daily cost if date has changed
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._budget_date = today
@@ -231,6 +257,9 @@ class DaemonScheduler:
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""
+        if self.poll_port is None:
+            raise ValueError("poll_port must be set to run investigation cycle")
+
         try:
             logger.info("Starting on-demand investigation cycle")
             result = await self.poll_port.execute_investigation_cycle()

@@ -7,11 +7,16 @@ investigations.
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .fingerprint import Fingerprinter
 from .investigator import Investigator
-from .models import Diagnosis, ErrorEvent, InvestigationResult, PollResult, Signature, SignatureStatus
+from .models import (
+    InvestigationResult,
+    PollResult,
+    Signature,
+    SignatureStatus,
+)
 from .ports import PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
@@ -56,7 +61,7 @@ class PollService(PollPort):
         Raises:
             Exception: If telemetry fetch fails. Errors are not silenced.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         since = now - timedelta(minutes=self.lookback_minutes)
 
         try:
@@ -119,6 +124,9 @@ class PollService(PollPort):
                 if self.triage.should_investigate(signature):
                     investigations_queued += 1
 
+            except (MemoryError, SystemExit, KeyboardInterrupt):
+                # Don't catch system errors - let them propagate
+                raise
             except Exception as e:
                 logger.error(
                     f"Failed to process error event {error.trace_id}: {e}",
@@ -142,12 +150,13 @@ class PollService(PollPort):
             Exception: If signature store fetch fails. Errors are not silenced.
         """
         try:
-            pending = await self.store.get_pending_investigation()
+            pending_seq = await self.store.get_pending_investigation()
         except Exception as e:
             logger.error(f"Failed to fetch pending signatures: {e}", exc_info=True)
             raise
 
-        # Sort by priority
+        # Convert to list and sort by priority
+        pending = list(pending_seq)
         pending.sort(
             key=lambda s: self.triage.calculate_priority(s), reverse=True
         )
@@ -163,11 +172,23 @@ class PollService(PollPort):
                     diagnosis = await self.investigator.investigate(signature)
                     diagnoses.append(diagnosis)
                 except Exception as e:
-                    logger.error(
-                        f"Failed to investigate signature {signature.fingerprint}: {e}",
-                        exc_info=True,
-                    )
-                    investigations_failed += 1
+                    # Check if diagnosis was persisted despite the error
+                    # (e.g., notification failure after successful diagnosis)
+                    if signature.status == SignatureStatus.DIAGNOSED and signature.diagnosis is not None:
+                        # Diagnosis succeeded, only notification failed
+                        logger.warning(
+                            f"Investigation succeeded for signature {signature.fingerprint} "
+                            f"but post-diagnosis step failed: {e}",
+                            exc_info=True,
+                        )
+                        diagnoses.append(signature.diagnosis)
+                    else:
+                        # Actual investigation failure
+                        logger.error(
+                            f"Failed to investigate signature {signature.fingerprint}: {e}",
+                            exc_info=True,
+                        )
+                        investigations_failed += 1
 
         return InvestigationResult(
             diagnoses_produced=tuple(diagnoses),

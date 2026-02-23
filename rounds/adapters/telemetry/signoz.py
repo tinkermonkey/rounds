@@ -5,14 +5,16 @@ Normalizes SigNoz-specific data structures into core domain models.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
 from rounds.core.models import (
     ErrorEvent,
     LogEntry,
+    PartialResultsInfo,
     Severity,
     SpanNode,
     StackFrame,
@@ -265,21 +267,21 @@ class SigNozTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
-    async def get_traces(self, trace_ids: list[str]) -> list[TraceTree]:
+    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Batch trace retrieval.
 
         Attempts to fetch all traces. If any traces fail to fetch, logs warnings
-        for each failure. The caller can detect partial results by comparing the
-        number of returned traces to the number of trace IDs requested.
+        for each failure and returns partial results metadata.
 
         Args:
             trace_ids: List of trace IDs to retrieve.
 
         Returns:
-            List of successfully retrieved TraceTree objects. May be shorter than
-            trace_ids if some fetches failed. Use len(result) < len(trace_ids)
-            to detect incomplete results.
+            Tuple of (traces, partial_info) where traces is the list of successfully
+            retrieved TraceTree objects and partial_info indicates if results are complete.
         """
+        from rounds.core.models import PartialResultsInfo
+
         traces = []
         failed_trace_ids = []
 
@@ -292,14 +294,22 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 failed_trace_ids.append(trace_id)
 
         # Log summary if there were failures
-        if failed_trace_ids:
+        is_partial = len(failed_trace_ids) > 0
+        if is_partial:
             logger.warning(
                 f"Batch trace retrieval incomplete: "
                 f"retrieved {len(traces)}/{len(trace_ids)} traces. "
                 f"Failed trace IDs: {failed_trace_ids}"
             )
 
-        return traces
+        partial_info = PartialResultsInfo(
+            total_requested=len(trace_ids),
+            total_returned=len(traces),
+            is_partial=is_partial,
+            reason=f"Failed to retrieve {len(failed_trace_ids)} traces" if is_partial else None
+        )
+
+        return traces, partial_info
 
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
@@ -375,7 +385,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             May be empty if no recent matches found.
         """
         # Fetch recent errors from last 24 hours
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        since = datetime.now(UTC) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
         # Filter by fingerprint using injected fingerprinter
@@ -401,7 +411,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(span_data.get("timestamp", 0))
-            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc)
+            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
             severity_text = span_data.get("severityText", "ERROR")
 
             if not error_type:
@@ -456,7 +466,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
             # SigNoz timestamps are in nanoseconds, convert to seconds
             timestamp_ns = int(log_data.get("timestamp", 0))
             return LogEntry(
-                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc),
+                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC),
                 severity=self._parse_severity(log_data.get("severityText", "INFO")),
                 body=log_data.get("body", ""),
                 attributes=log_data.get("attributes", {}),

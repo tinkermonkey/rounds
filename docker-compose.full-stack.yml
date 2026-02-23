@@ -1,0 +1,356 @@
+# ============================================================================
+# Docker Compose Configuration for Full Stack with SigNoz
+# ============================================================================
+# Complete observability stack with SigNoz, Rounds diagnosis engine,
+# and sample applications generating telemetry.
+#
+# This demonstrates the full integration between:
+# - OTEL Collector (receives traces from apps)
+# - SigNoz (stores and queries traces)
+# - Rounds (diagnoses errors from SigNoz)
+#
+# Usage:
+#   docker-compose -f docker-compose.full-stack.yml up -d
+#
+# Components:
+#   - Clickhouse: Time-series database for SigNoz
+#   - SigNoz Query Service: Query API for traces
+#   - SigNoz Otel Collector: Receives OTLP data from applications
+#   - Rounds: Diagnosis service
+#
+# Access:
+#   - SigNoz UI: http://localhost:3301
+#   - Rounds CLI: docker-compose exec rounds bash (then 'help' for commands)
+# ============================================================================
+
+
+services:
+  # ========================================================================
+  # SigNoz Backend - Time-Series Database and Traces Storage
+  # ========================================================================
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: signoz-clickhouse
+    restart: unless-stopped
+
+    # ClickHouse configuration
+    environment:
+      CLICKHOUSE_DB: signoz
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in .env or environment}
+
+    # Resource limits (adjust for your hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Volumes
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      # Optional: Custom ClickHouse config
+      # - ./clickhouse/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
+
+    # Network
+    networks:
+      - rounds-stack-network
+
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8123 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========================================================================
+  # SigNoz Query Service - REST API for Querying Traces
+  # ========================================================================
+
+  signoz-query:
+    image: signoz/query-service:latest
+    container_name: signoz-query
+    restart: unless-stopped
+
+    # Configuration
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:9000
+      CLICKHOUSE_USERNAME: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      STORAGE: clickhouse
+      GODEBUG: madvdontneed=1
+
+    # Ports
+    ports:
+      - "6060:6060"    # gRPC API (internal)
+      - "8080:8080"    # HTTP API (used by Rounds)
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # Network
+    networks:
+      - rounds-stack-network
+
+    # Dependencies
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/v1/get_trace?traceId=test || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========================================================================
+  # SigNoz Frontend - Web UI for Browsing Traces
+  # ========================================================================
+
+  signoz-frontend:
+    image: signoz/frontend:latest
+    container_name: signoz-frontend
+    restart: unless-stopped
+
+    # Configuration
+    environment:
+      REACT_APP_API_URL: http://localhost:3301
+      REACT_APP_API_PATH_PREFIX: ""
+
+    # Ports
+    ports:
+      - "3301:3301"
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+    # Network
+    networks:
+      - rounds-stack-network
+
+    # Dependencies
+    depends_on:
+      - signoz-query
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========================================================================
+  # OTEL Collector - Receives Telemetry from Applications
+  # ========================================================================
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: signoz-otel-collector
+    restart: unless-stopped
+
+    # Configuration
+    command: ["--config=/etc/otel-collector-config.yml"]
+
+    environment:
+      GOGC: 80
+
+    # Ports (OTLP receivers)
+    ports:
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+
+    # Configuration file
+    volumes:
+      - ./config/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # Network
+    networks:
+      - rounds-stack-network
+
+    # Dependencies
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========================================================================
+  # Rounds Diagnosis Service
+  # ========================================================================
+
+  rounds:
+    image: rounds:dist
+    container_name: rounds
+    restart: unless-stopped
+
+    # Environment configuration
+    env_file:
+      - .env.rounds
+
+    # Service-specific overrides
+    environment:
+      TELEMETRY_BACKEND: signoz
+      SIGNOZ_API_URL: http://signoz-query:8080
+      RUN_MODE: daemon
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Volumes
+    volumes:
+      # Data persistence
+      - rounds-data:/app/data
+      # Reports
+      - ./.rounds/reports:/app/reports:rw
+
+    # Network
+    networks:
+      - rounds-stack-network
+
+    # Dependencies
+    depends_on:
+      signoz-query:
+        condition: service_healthy
+
+    # Allow container to reach Docker host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================================================
+# Volumes
+# ============================================================================
+
+volumes:
+  clickhouse-data:
+    driver: local
+  rounds-data:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+
+networks:
+  rounds-stack-network:
+    driver: bridge
+
+# ============================================================================
+# QUICK START INSTRUCTIONS
+# ============================================================================
+#
+# 1. Create configuration directory:
+#    mkdir -p config
+#
+# 2. Create OTEL Collector config (config/otel-collector-config.yml):
+#    See docs/OTEL_COLLECTOR_CONFIG.md for example
+#
+# 3. Create .env.rounds from template:
+#    cp .env.rounds.template .env.rounds
+#    # Edit to configure diagnosis engine
+#
+# 4. Start the stack:
+#    docker-compose -f docker-compose.full-stack.yml up -d
+#
+# 5. Access:
+#    - SigNoz UI: http://localhost:3301
+#    - OTEL Collector: localhost:4317 (gRPC), localhost:4318 (HTTP)
+#    - Rounds: docker-compose exec rounds bash
+#
+# 6. Send test traces to OTEL Collector:
+#    # Example using telemetry-client (Python)
+#    pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
+#    # Then send traces to localhost:4318 (or 4317 for gRPC)
+#
+# 7. View traces in SigNoz and check Rounds diagnosis in ./.rounds/reports
+#
+# ============================================================================
+#
+# PRODUCTION CONSIDERATIONS:
+#
+# 1. Scale ClickHouse for high volume
+#    - Increase resource limits
+#    - Consider cluster mode (multiple nodes)
+#
+# 2. Data retention
+#    - Configure ClickHouse retention policy
+#    - Balance between storage and analysis window
+#
+# 3. OTLP authentication
+#    - Enable OTLP auth in otel-collector config
+#    - Use secrets for API keys
+#
+# 4. Backup strategy
+#    - Regular ClickHouse backups
+#    - Off-cluster storage
+#    - Test restore procedures
+#
+# 5. Monitoring
+#    - Monitor ClickHouse queries and memory
+#    - Alert on OTEL Collector drops
+#    - Track Rounds diagnosis latency
+#
+# ============================================================================

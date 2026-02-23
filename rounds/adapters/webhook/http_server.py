@@ -11,8 +11,9 @@ import asyncio
 import hmac
 import json
 import logging
+from collections.abc import Coroutine
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Coroutine
+from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
 
@@ -94,8 +95,8 @@ def make_webhook_handler(
             content_length = int(self.headers.get("Content-Length", 0))
 
             # Add 1MB body size limit to prevent DoS
-            MAX_BODY_SIZE = 1024 * 1024
-            if content_length > MAX_BODY_SIZE:
+            max_body_size = 1024 * 1024
+            if content_length > max_body_size:
                 self.send_error(413, "Request body too large")
                 return
 
@@ -151,6 +152,16 @@ def make_webhook_handler(
             try:
                 # Wait for result with timeout
                 future.result(timeout=30)
+            except TimeoutError as e:
+                # Log timeout error
+                logger.error(f"Timeout handling webhook request: {e}", exc_info=True)
+                # Return 504 Gateway Timeout
+                self.send_error(504, "Gateway timeout")
+            except ValueError as e:
+                # Log validation error
+                logger.error(f"Validation error handling webhook request: {e}", exc_info=True)
+                # Return 400 Bad Request
+                self.send_error(400, "Bad request")
             except Exception as e:
                 # Log full exception server-side for debugging
                 logger.error(f"Error handling webhook request: {e}", exc_info=True)
@@ -262,6 +273,9 @@ class WebhookHTTPServer:
             api_key: Optional API key for authentication.
             require_auth: Whether to require authentication (default False).
                          If True, api_key must be provided.
+
+        Raises:
+            ValueError: If require_auth=True but api_key is not provided.
         """
         self.webhook_receiver = webhook_receiver
         self.host = host
@@ -271,11 +285,11 @@ class WebhookHTTPServer:
         self.server: HTTPServer | None = None
         self._server_task: asyncio.Task[None] | None = None
 
-        # Validate auth configuration
-        if require_auth and not api_key:
-            logger.warning(
-                "Authentication required but no API key provided. "
-                "Webhook endpoints will reject all authenticated requests."
+        # Validate auth configuration - fail fast at startup
+        if require_auth and (not api_key or api_key.strip() == ""):
+            raise ValueError(
+                "Authentication is required (require_auth=True) but no API key provided. "
+                "Please set WEBHOOK_API_KEY environment variable or disable authentication."
             )
 
     async def start(self) -> None:
@@ -321,7 +335,7 @@ class WebhookHTTPServer:
         """Stop the HTTP server."""
         if self.server:
             self.server.shutdown()
-            self.server.close()
+            self.server.server_close()
         if self._server_task:
             self._server_task.cancel()
             try:

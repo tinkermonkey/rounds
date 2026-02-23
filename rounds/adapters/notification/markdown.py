@@ -1,12 +1,14 @@
 """Markdown file notification adapter.
 
-Implements NotificationPort by appending findings to a markdown report file.
+Implements NotificationPort by appending findings to markdown report files
+organized in date-based directories (YYYY-MM-DD).
 Useful for creating audit trails and persistent diagnostic records.
 """
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,72 +19,213 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownNotificationAdapter(NotificationPort):
-    """Appends findings to a markdown report file."""
+    """Appends findings to markdown report files organized by date.
 
-    def __init__(self, report_path: str):
+    Thread-safety: This adapter uses an asyncio.Lock (_lock) to ensure thread-safe
+    concurrent access to file I/O operations. Multiple coroutines can call report()
+    and report_summary() concurrently without risking file corruption or race conditions.
+    """
+
+    def __init__(self, report_dir: str):
         """Initialize markdown notification adapter.
 
         Args:
-            report_path: Path to the markdown file where reports will be appended.
+            report_dir: Base directory where date-based subdirectories will be created.
+                       Paths are created by _get_report_file_path() - see that method
+                       for the exact format to avoid comment drift from implementation changes.
+                       Summary reports are written to report_dir/../summary.md.
+
+        Raises:
+            ValueError: If report_dir is a filesystem root or invalid path.
+            OSError: If base directory cannot be created (permission denied, invalid path, etc.)
         """
-        self.report_path = Path(report_path)
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.base_dir = Path(report_dir).resolve()
+
+        # Validate that report_dir is not a filesystem root
+        # Use parts to detect roots: POSIX "/" has 1 part, Windows "C:\" has 2 parts (drive + root)
+        if len(self.base_dir.parts) <= 2 and self.base_dir.parent == self.base_dir:
+            raise ValueError(f"report_dir cannot be a filesystem root: {report_dir}")
+
+        # Validate that parent directory exists or can be created (needed for summary.md)
+        if not self.base_dir.parent.exists():
+            try:
+                self.base_dir.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise OSError(f"Failed to create parent directory {self.base_dir.parent}: {e}") from e
+
+        # Validate parent directory is writable (for summary.md)
+        if not self.base_dir.parent.is_dir():
+            raise ValueError(f"Parent path is not a directory: {self.base_dir.parent}")
+
+        try:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Failed to create base directory {report_dir}: {e}") from e
         self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _sanitize_filename(text: str) -> str:
+        """Sanitize a string for use in filenames.
+
+        Replaces all non-alphanumeric ASCII characters (except underscores and hyphens)
+        with underscores. This ensures the output is filesystem-safe across
+        platforms and prevents directory traversal or special character issues.
+
+        Uses ASCII-only character class to avoid Unicode compatibility issues on
+        network shares, Windows compatibility mode, or tools with limited encoding support.
+
+        Truncates to 100 characters to prevent OS filename length errors (most
+        filesystems support up to 255 bytes, leaving room for timestamps and
+        extensions in the full filename).
+
+        Args:
+            text: The text to sanitize.
+
+        Returns:
+            Sanitized string containing only ASCII alphanumeric characters, underscores,
+            and hyphens. No spaces, Unicode, or special characters. Maximum 100 characters.
+            Safe for use in filenames on any filesystem.
+
+        Examples:
+            >>> _sanitize_filename("My Service")
+            'My_Service'
+            >>> _sanitize_filename("Error@Type:123")
+            'Error_Type_123'
+        """
+        # Replace any character that's not ASCII alphanumeric, underscore, or hyphen
+        sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '_', text)
+        # Truncate to prevent OS filename length errors (255 byte limit on most filesystems)
+        return sanitized[:100]
+
+    async def _ensure_date_dir(self, date_str: str) -> Path:
+        """Ensure date directory exists, creating it if necessary.
+
+        Args:
+            date_str: Directory name in YYYY-MM-DD format.
+
+        Returns:
+            Path to the date directory.
+
+        Raises:
+            ValueError: If date_str contains directory traversal sequences or invalid format.
+            OSError: If directory cannot be created.
+        """
+        # Validate date_str format to prevent directory traversal
+        # Expected format: YYYY-MM-DD (e.g., "2026-02-20")
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            raise ValueError(f"Invalid date_str format (expected YYYY-MM-DD): {date_str}")
+
+        date_dir = self.base_dir / date_str
+
+        # Additional safety check: ensure resolved path is under base_dir
+        if not date_dir.resolve().is_relative_to(self.base_dir):
+            raise ValueError(f"date_str would create path outside base_dir: {date_str}")
+        try:
+            await asyncio.to_thread(date_dir.mkdir, parents=True, exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Failed to create date directory {date_dir}: {e}") from e
+        return date_dir
+
+    def _get_report_file_path(self, signature: Signature, diagnosis: Diagnosis) -> tuple[Path, str]:
+        """Get the report file path components for a specific diagnosis.
+
+        This is a synchronous helper that computes paths without I/O.
+
+        Args:
+            signature: The signature being diagnosed.
+            diagnosis: The diagnosis results.
+
+        Returns:
+            Tuple of (date_directory_path, filename) where date_directory_path is not yet created.
+        """
+        # Get timestamp from diagnosis
+        timestamp = diagnosis.diagnosed_at
+        date_str = timestamp.strftime("%Y-%m-%d")
+        time_str = timestamp.strftime("%H-%M-%S")
+
+        # Extract and sanitize service name and error type
+        service = self._sanitize_filename(signature.service or "unknown")
+        error_type = self._sanitize_filename(signature.error_type or "UnknownError")
+
+        # Include signature ID to prevent filename collisions when multiple
+        # diagnoses for the same service/error complete in the same second
+        sig_id_short = self._sanitize_filename(signature.id[:12] if signature.id else "unknown")
+
+        # Generate filename: HH-MM-SS_service_ErrorType_sigID.md
+        date_dir = self.base_dir / date_str
+        filename = f"{time_str}_{service}_{error_type}_{sig_id_short}.md"
+        return date_dir, filename
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
     ) -> None:
-        """Report a diagnosed signature to markdown file."""
+        """Report a diagnosed signature to markdown file.
+
+        Thread-safe: Uses asyncio.Lock to serialize file writes and prevent
+        concurrent modification issues when multiple diagnoses complete simultaneously.
+        """
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
 
-        # Append to file
+        # Get report file path components (synchronous, no I/O)
+        date_dir, filename = self._get_report_file_path(signature, diagnosis)
+
+        # Write to individual file
         async with self._lock:
             try:
-                await asyncio.to_thread(self._write_to_file, entry)
+                # Ensure date directory exists
+                await self._ensure_date_dir(date_dir.name)
+                report_file = date_dir / filename
+                await asyncio.to_thread(report_file.write_text, entry, encoding='utf-8')
 
                 logger.info(
-                    f"Appended diagnosis report to {self.report_path}",
+                    f"Wrote diagnosis report to {report_file}",
                     extra={
                         "signature_id": signature.id,
                         "fingerprint": signature.fingerprint,
                     },
                 )
 
-            except IOError as e:
+            except OSError as e:
                 logger.error(
                     f"Failed to write markdown report: {e}",
-                    extra={"path": str(self.report_path)},
+                    extra={"path": str(date_dir / filename)},
                     exc_info=True,
                 )
                 raise
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
-        """Periodic summary report appended to markdown file."""
+        """Write summary statistics to separate markdown file.
+
+        Raises:
+            OSError: If parent directory cannot be created or file cannot be written.
+        """
         summary = self._format_summary(stats)
 
         async with self._lock:
             try:
-                await asyncio.to_thread(self._write_to_file, summary)
+                summary_file = self.base_dir.parent / "summary.md"
+                # Ensure parent directory exists
+                try:
+                    await asyncio.to_thread(summary_file.parent.mkdir, parents=True, exist_ok=True)
+                except OSError as e:
+                    raise OSError(f"Failed to create summary directory {summary_file.parent}: {e}") from e
+
+                await asyncio.to_thread(summary_file.write_text, summary, encoding='utf-8')
 
                 logger.info(
-                    f"Appended summary report to {self.report_path}",
+                    f"Wrote summary report to {summary_file}",
                     extra={"stats": stats},
                 )
 
-            except IOError as e:
+            except OSError as e:
                 logger.error(
                     f"Failed to write markdown summary: {e}",
-                    extra={"path": str(self.report_path)},
+                    extra={"path": str(summary_file)},
                     exc_info=True,
                 )
                 raise
 
-    def _write_to_file(self, content: str) -> None:
-        """Write content to file (blocking operation)."""
-        with open(self.report_path, "a") as f:
-            f.write(content)
-            f.write("\n")
 
     def _format_report_entry(
         self, signature: Signature, diagnosis: Diagnosis
@@ -94,12 +237,12 @@ class MarkdownNotificationAdapter(NotificationPort):
             diagnosis: The diagnosis results.
 
         Returns:
-            Formatted markdown string ready to append to file.
+            Formatted markdown string ready to write to file.
         """
         lines = []
 
         # Timestamp
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         lines.append(f"## Diagnosis Report - {timestamp}")
         lines.append("")
 
@@ -165,7 +308,7 @@ class MarkdownNotificationAdapter(NotificationPort):
         lines = []
 
         # Timestamp
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         lines.append(f"## Summary Report - {timestamp}")
         lines.append("")
 

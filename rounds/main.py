@@ -9,32 +9,37 @@ Module Structure:
 - Adapter instantiation
 - Core service initialization
 - Dependency injection
-- Entry point selection (daemon, CLI, webhook, etc.)
+- Entry point selection (daemon, CLI, webhook, scan, diagnose)
 """
 
+import argparse
 import asyncio
+import json
 import logging
 import sys
 import urllib.parse
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import ValidationError
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
+from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
-from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
+from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
-from rounds.adapters.webhook.receiver import WebhookReceiver
 from rounds.adapters.webhook.http_server import WebhookHTTPServer
+from rounds.adapters.webhook.receiver import WebhookReceiver
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
 from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
+from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
 
 
@@ -46,8 +51,6 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
     Args:
         cli_handler: CLICommandHandler instance for executing commands.
     """
-    import json
-
     logger = logging.getLogger(__name__)
     logger.info("Starting interactive CLI. Type 'help' for available commands or 'exit' to quit.")
 
@@ -89,8 +92,8 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
                     args = json.loads(args_str)
                 else:
                     args = {}
-            except json.JSONDecodeError:
-                logger.error("Invalid JSON arguments. Use 'help' for command syntax.")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON arguments: {e}. Input: {args_str!r}")
                 continue
 
             # Execute command
@@ -98,7 +101,12 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
                 result = await _execute_cli_command(cli_handler, command, args)
                 # Print result
                 print(json.dumps(result, indent=2, default=str))
+            except (MemoryError, SystemError, SystemExit):
+                # Re-raise critical system errors to outer handler
+                raise
             except Exception as e:
+                # Catch all other exceptions to keep CLI alive
+                # Interactive CLI should survive individual command failures
                 logger.error(f"Command execution error: {e}", exc_info=True)
                 print(json.dumps({
                     "status": "error",
@@ -113,8 +121,18 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
             # Ctrl+C
             logger.info("Interrupted by user")
             continue
+        except (MemoryError, SystemError, SystemExit) as e:
+            # Re-raise critical system errors
+            logger.error(f"Critical system error: {e}", exc_info=True)
+            raise
         except Exception as e:
+            # Catch all other exceptions to keep CLI alive
+            # Interactive CLI should survive input parsing and prompt errors
             logger.error(f"CLI error: {e}", exc_info=True)
+            print(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }, indent=2))
 
 
 async def _execute_cli_command(
@@ -124,16 +142,24 @@ async def _execute_cli_command(
 ) -> dict[str, Any]:
     """Execute a CLI command.
 
+    Command-specific argument requirements:
+    - 'list': Optional status (str), format (str, default "json")
+    - 'details': Required signature_id (str), format (str, default "json")
+    - 'mute': Required signature_id (str), optional reason (str), verbose (bool)
+    - 'resolve': Required signature_id (str), optional fix_applied (str), verbose (bool)
+    - 'retriage': Required signature_id (str), optional verbose (bool)
+    - 'reinvestigate': Required signature_id (str), optional verbose (bool)
+
     Args:
         cli_handler: CLICommandHandler instance.
-        command: Command name.
-        args: Command arguments.
+        command: Command name (list, details, mute, resolve, retriage, reinvestigate).
+        args: Command arguments dictionary. Structure depends on command type.
 
     Returns:
-        Command result dictionary.
+        Command result dictionary with status and data.
 
     Raises:
-        ValueError: If command is not recognized.
+        ValueError: If command is not recognized or required parameters are missing.
     """
     if command == "list":
         return await cli_handler.list_signatures(
@@ -185,6 +211,100 @@ async def _execute_cli_command(
 
     else:
         raise ValueError(f"Unknown command: {command}. Use 'help' for available commands.")
+
+
+async def _run_scan(poll_service: PollService) -> None:
+    """Execute single poll cycle and output results as JSON.
+
+    Calls sys.exit(1) on error and never returns normally if scan fails.
+
+    Args:
+        poll_service: PollService instance for executing the poll cycle.
+
+    Returns:
+        None: Returns normally on success (no explicit return value).
+
+    Raises:
+        SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        # Execute single poll cycle
+        result = await poll_service.execute_poll_cycle()
+
+        # Output JSON to stdout
+        output = {
+            "status": "success",
+            "new_signatures": result.new_signatures,
+            "updated_signatures": result.updated_signatures,
+            "errors_processed": result.errors_found,
+            "errors_failed": result.errors_failed_to_process,
+            "investigations_queued": result.investigations_queued,
+            "timestamp": result.timestamp.isoformat(),
+        }
+        print(json.dumps(output, indent=2))
+
+    except ConnectionError as e:
+        # Telemetry backend unreachable
+        logger.error(f"Scan command failed: telemetry service unreachable: {e}", exc_info=True)
+        output = {
+            "status": "error",
+            "error_type": "connection_error",
+            "message": f"Telemetry service unreachable: {e!s}"
+        }
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Scan command failed: {e}", exc_info=True)
+        output = {"status": "error", "message": str(e)}
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+
+async def _run_diagnose(
+    signature_id: str,
+    store: SignatureStorePort,
+    investigator: Investigator,
+) -> None:
+    """Diagnose a specific signature and output results as JSON.
+
+    Calls sys.exit(1) on error and never returns normally if diagnosis fails.
+
+    Args:
+        signature_id: Unique identifier string of the signature to diagnose (e.g., "sig_12345").
+        store: SignatureStorePort implementation.
+        investigator: Investigator instance.
+
+    Raises:
+        SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        # Retrieve signature
+        signature = await store.get_by_id(signature_id)
+        if not signature:
+            raise ValueError(f"Signature not found: {signature_id}")
+
+        # Investigate
+        diagnosis = await investigator.investigate(signature)
+
+        # Output JSON to stdout
+        output = {
+            "status": "success",
+            "signature_id": signature_id,
+            "root_cause": diagnosis.root_cause,
+            "confidence": diagnosis.confidence,
+            "cost_usd": diagnosis.cost_usd,
+            "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
+            "model": diagnosis.model,
+        }
+        print(json.dumps(output, indent=2))
+
+    except Exception as e:
+        logger.error(f"Diagnose command failed: {e}", exc_info=True)
+        output = {"status": "error", "message": str(e)}
+        print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
 
 
 def _print_cli_help() -> None:
@@ -252,7 +372,6 @@ def configure_logging(log_level: str, log_format: str) -> None:
     # Map string level to logging constant
     level = getattr(logging, log_level, logging.INFO)
 
-    # Simple text format for now (json format can be added later)
     if log_format == "json":
         format_str = '{"time": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
     else:
@@ -267,7 +386,37 @@ def configure_logging(log_level: str, log_format: str) -> None:
     )
 
 
-async def bootstrap() -> None:
+def _parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments containing command and optional signature_id.
+    """
+    parser = argparse.ArgumentParser(
+        description="Rounds continuous error diagnosis system",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m rounds.main                      # Start interactive CLI
+  python -m rounds.main scan                 # Execute single poll cycle
+  python -m rounds.main diagnose sig_12345   # Diagnose specific signature
+        """,
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["scan", "diagnose"],
+        help="Non-interactive command to execute",
+    )
+    parser.add_argument(
+        "signature_id",
+        nargs="?",
+        help="Signature ID for diagnose command (required if command=diagnose)",
+    )
+    return parser.parse_args()
+
+
+async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signature_id: str | None = None) -> None:
     """Load configuration, wire adapters, and start the application.
 
     This is the composition root: the single place where all components
@@ -280,12 +429,49 @@ async def bootstrap() -> None:
     4. Initialize core services
     5. Select and start run mode
 
+    Args:
+        command: Optional command to execute (scan or diagnose).
+        signature_id: Optional signature ID for diagnose command.
+
+    Design note: The invariant "diagnose requires signature_id" is enforced at runtime
+    (validation in _run_diagnose function) rather than via type system (e.g., overloads
+    or discriminated union). This keeps the API simple for callers and avoids requiring
+    complex type narrowing at all call sites. The runtime check provides clear error messages.
+
     Raises:
         SystemExit: On fatal errors (configuration, adapter initialization)
         asyncio.CancelledError: On graceful shutdown signal
     """
     # Step 1: Load configuration
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except (ValueError, ValidationError) as e:
+        # Sanitize error message to avoid leaking sensitive values
+        import re
+        error_msg = str(e)
+
+        # Redact common API key patterns (e.g., sk-*, ghp-*, Bearer *, etc.)
+        # Note: We don't redact generic hex strings to preserve UUIDs and trace IDs
+        patterns = [
+            (r'sk-[a-zA-Z0-9_-]{20,}', '[REDACTED_OPENAI_KEY]'),
+            (r'ghp_[a-zA-Z0-9]{36,}', '[REDACTED_GITHUB_TOKEN]'),
+            (r'Bearer\s+[a-zA-Z0-9_\-\.=]+', 'Bearer [REDACTED]'),
+            (r'[A-Za-z0-9+/]{40,}={0,2}', '[REDACTED_BASE64]'),  # Base64 encoded secrets
+        ]
+
+        sanitized_msg = error_msg
+        for pattern, replacement in patterns:
+            sanitized_msg = re.sub(pattern, replacement, sanitized_msg)
+
+        # Also redact any environment variable values from error messages
+        # by removing quoted values that might contain secrets
+        sanitized_msg = re.sub(r"'[^']{20,}'", "'[REDACTED]'", sanitized_msg)
+
+        print(f"ERROR: Configuration validation failed.")
+        print(f"Details: {sanitized_msg}")
+        print("Please check your .env.rounds file and ensure all required variables are set.")
+        print("See .env.rounds.template for required configuration options.")
+        sys.exit(1)
 
     # Step 2: Configure logging
     configure_logging(settings.log_level, settings.log_format)
@@ -296,6 +482,7 @@ async def bootstrap() -> None:
     logger.info("Initializing adapters...")
 
     # Telemetry adapter - select based on config
+    telemetry: TelemetryPort
     if settings.telemetry_backend == "signoz":
         telemetry = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
@@ -319,6 +506,7 @@ async def bootstrap() -> None:
         sys.exit(1)
 
     # Signature store - select based on config
+    store: SignatureStorePort
     if settings.store_backend == "sqlite":
         store = SQLiteSignatureStore(
             db_path=settings.store_sqlite_path,
@@ -329,9 +517,9 @@ async def bootstrap() -> None:
         from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 
         # Parse PostgreSQL connection URL or use individual parameters
-        if settings.database_url:
+        if settings.store_postgresql_url:
             # Parse connection URL (postgresql://user:password@host:port/database)
-            parsed = urllib.parse.urlparse(settings.database_url)
+            parsed = urllib.parse.urlparse(settings.store_postgresql_url)
             store = PostgreSQLSignatureStore(
                 host=parsed.hostname or "localhost",
                 port=parsed.port or 5432,
@@ -348,9 +536,10 @@ async def bootstrap() -> None:
         sys.exit(1)
 
     # Diagnosis adapter - select based on config
+    diagnosis_engine: DiagnosisPort
     if settings.diagnosis_backend == "claude_code":
         diagnosis_engine = ClaudeCodeDiagnosisAdapter(
-            model=settings.claude_code_model,
+            model=settings.claude_model,
             budget_usd=settings.claude_code_budget_usd,
         )
         logger.info("Diagnosis adapter: Claude Code")
@@ -372,11 +561,12 @@ async def bootstrap() -> None:
         sys.exit(1)
 
     # Notification adapter - select based on config
+    notification: NotificationPort
     if settings.notification_backend == "stdout":
         notification = StdoutNotificationAdapter(verbose=settings.debug)
         logger.info("Notification adapter: Stdout")
     elif settings.notification_backend == "markdown":
-        notification = MarkdownNotificationAdapter(report_path=settings.notification_output_dir)
+        notification = MarkdownNotificationAdapter(report_dir=settings.notification_output_dir)
         logger.info("Notification adapter: Markdown")
     elif settings.notification_backend == "github_issue":
         notification = GitHubIssueNotificationAdapter(
@@ -437,65 +627,122 @@ async def bootstrap() -> None:
         store=store,
         telemetry=telemetry,
         diagnosis_engine=diagnosis_engine,
+        notification=notification,
+        triage=triage,
+        codebase_path=settings.codebase_path,
     )
 
-    # Step 5: Select run mode and start
-    logger.info(f"Starting in {settings.run_mode} mode...")
-
+    # Step 5: Handle non-interactive commands or select run mode
     try:
-        if settings.run_mode == "daemon":
-            # Start daemon polling loop
-            assert scheduler is not None
-            await scheduler.start()
+        # Check for non-interactive commands first
+        if command == "scan":
+            logger.info("Executing scan command...")
+            await _run_scan(poll_service=poll_service)
 
-        elif settings.run_mode == "cli":
-            # CLI mode handles interactive commands via CLICommandHandler
-            logger.info("CLI mode - Ready for interactive commands")
-            # Create CLI command handler with the management service
-            cli_handler = CLICommandHandler(management_service)
-            # Run interactive CLI loop
-            await _run_cli_interactive(cli_handler)
-
-        elif settings.run_mode == "webhook":
-            # Webhook mode starts an HTTP server for external triggers
-            logger.info("Starting in webhook mode")
-
-            # Create webhook receiver
-            webhook_receiver = WebhookReceiver(
-                poll_port=poll_service,
-                management_port=management_service,
-                host=settings.webhook_host,
-                port=settings.webhook_port,
+        elif command == "diagnose":
+            if not signature_id:
+                logger.error("diagnose command requires signature_id argument")
+                output = {
+                    "status": "error",
+                    "message": "diagnose command requires signature_id argument",
+                }
+                print(json.dumps(output, indent=2), file=sys.stderr)
+                sys.exit(1)
+            logger.info(f"Executing diagnose command for signature {signature_id}...")
+            await _run_diagnose(
+                signature_id=signature_id,
+                store=store,
+                investigator=investigator,
             )
-
-            # Start HTTP server
-            http_server = WebhookHTTPServer(
-                webhook_receiver=webhook_receiver,
-                host=settings.webhook_host,
-                port=settings.webhook_port,
-                api_key=settings.webhook_api_key if settings.webhook_api_key else None,
-                require_auth=settings.webhook_require_auth,
-            )
-            await http_server.start()
-
-            # Keep the server running
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                await http_server.stop()
 
         else:
-            logger.error(f"Unknown run mode: {settings.run_mode}")
-            sys.exit(1)
+            # No non-interactive command, use run_mode
+            logger.info(f"Starting in {settings.run_mode} mode...")
+
+            if settings.run_mode == "daemon":
+                # Start daemon polling loop
+                assert scheduler is not None
+                await scheduler.start()
+
+            elif settings.run_mode == "cli":
+                # CLI mode handles interactive commands via CLICommandHandler
+                logger.info("CLI mode - Ready for interactive commands")
+                # Create CLI command handler with the management service
+                cli_handler = CLICommandHandler(management_service)
+                # Run interactive CLI loop
+                await _run_cli_interactive(cli_handler)
+
+            elif settings.run_mode == "webhook":
+                # Webhook mode starts an HTTP server for external triggers
+                logger.info("Starting in webhook mode")
+
+                # Create webhook receiver
+                webhook_receiver = WebhookReceiver(
+                    poll_port=poll_service,
+                    management_port=management_service,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                )
+
+                # Start HTTP server
+                http_server = WebhookHTTPServer(
+                    webhook_receiver=webhook_receiver,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                    api_key=settings.webhook_api_key if settings.webhook_api_key else None,
+                    require_auth=settings.webhook_require_auth,
+                )
+                await http_server.start()
+
+                # Keep the server running
+                try:
+                    while True:
+                        await asyncio.sleep(1)
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    await http_server.stop()
+
+            else:
+                logger.error(f"Unknown run mode: {settings.run_mode}")
+                sys.exit(1)
 
     finally:
-        # Clean up resources
-        await telemetry.close()
-        await store.close_pool()
-        # Close notification adapter if it has a close method
-        if hasattr(notification, 'close'):
+        # Clean up resources with individual error handling
+        # Collect critical errors to re-raise after all cleanup attempts
+        cleanup_critical_error: BaseException | None = None
+
+        try:
+            await telemetry.close()
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during telemetry cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
+        except Exception:
+            logger.error("Failed to close telemetry adapter", exc_info=True)
+
+        try:
+            await store.close_pool()
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during store cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
+        except Exception:
+            logger.error("Failed to close signature store", exc_info=True)
+
+        try:
             await notification.close()
+        except (SystemExit, KeyboardInterrupt, MemoryError, SystemError) as e:
+            # Capture critical error but continue cleanup
+            logger.critical(f"Critical error during notification cleanup: {e}", exc_info=True)
+            if cleanup_critical_error is None:
+                cleanup_critical_error = e
+        except Exception:
+            logger.error("Failed to close notification adapter", exc_info=True)
+
+        # Re-raise first critical error after all cleanup attempts
+        if cleanup_critical_error is not None:
+            raise cleanup_critical_error
 
 
 def main() -> None:
@@ -503,6 +750,7 @@ def main() -> None:
 
     Loads configuration, wires adapters, initializes core services,
     and starts the appropriate run mode (daemon, CLI, or webhook).
+    Alternatively executes non-interactive commands (scan, diagnose).
 
     Exit codes:
         0: Successful shutdown
@@ -511,7 +759,17 @@ def main() -> None:
     """
     logger = logging.getLogger(__name__)
     try:
-        asyncio.run(bootstrap())
+        # Parse command-line arguments
+        args = _parse_arguments()
+
+        # Validate command-line arguments early to fail fast
+        if args.command == "diagnose" and not args.signature_id:
+            print("ERROR: diagnose command requires signature_id argument", file=sys.stderr)
+            print("Usage: python -m rounds.main diagnose SIGNATURE_ID", file=sys.stderr)
+            sys.exit(1)
+
+        # Run bootstrap with optional command and signature_id
+        asyncio.run(bootstrap(command=args.command, signature_id=args.signature_id))
     except KeyboardInterrupt:
         logger.warning("Shutdown requested by user (SIGINT)")
         sys.exit(130)
