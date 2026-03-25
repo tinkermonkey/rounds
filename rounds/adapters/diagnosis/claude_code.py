@@ -61,8 +61,10 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
             # Build the investigation prompt
             prompt = self._build_investigation_prompt(context)
 
-            # Invoke Claude Code
-            result = await self._invoke_claude_code(prompt)
+            # Invoke Claude Code with codebase path for file access
+            result = await self._invoke_claude_code(
+                prompt, codebase_path=context.codebase_path
+            )
 
             # Parse result
             diagnosis = self._parse_diagnosis_result(result, context)
@@ -120,87 +122,156 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
     def _build_investigation_prompt(self, context: InvestigationContext) -> str:
         """Build a comprehensive investigation prompt for Claude Code.
 
-        Constructs a detailed markdown prompt from an investigation context,
-        formatting all available telemetry data (error events, traces, logs)
-        and historical context into a format suitable for LLM analysis.
+        Instructs Claude to read source files from the mounted codebase using
+        its file-access tools, cross-referencing the full distributed trace
+        (service names, operation names, error spans) with actual code.
 
         Args:
             context: InvestigationContext containing signature, events, traces,
                     logs, codebase path, and historical signatures.
 
         Returns:
-            A formatted markdown prompt string ready for Claude Code invocation.
-            Includes signature details, recent error events, trace data, logs,
-            codebase context, and historical patterns, followed by analysis task.
+            Formatted markdown prompt for Claude Code invocation.
         """
-        prompt = f"""You are a expert software engineer analyzing a failure pattern in production code.
+        sig = context.signature
+        prompt = f"""You are an expert software engineer diagnosing a recurring production failure.
+You have file-system access to the codebase at: {context.codebase_path}
 
-## Signature Details
-Error Type: {context.signature.error_type}
-Service: {context.signature.service}
-Message Template: {context.signature.message_template}
-Status: {context.signature.status.value}
-Occurrence Count: {context.signature.occurrence_count}
-First Seen: {context.signature.first_seen}
-Last Seen: {context.signature.last_seen}
+Use your file reading tools (Read, Glob, Grep) to examine relevant source files \
+based on the service names and operation names in the trace below. \
+Read the actual code that is failing before drawing conclusions.
+
+---
+
+## Failure Signature
+Error Type: {sig.error_type}
+Service: {sig.service}
+Message: {sig.message_template}
+Occurrences: {sig.occurrence_count} (first: {sig.first_seen}, last: {sig.last_seen})
 
 ## Recent Error Events ({len(context.recent_events)} total)
 """
-
         for i, event in enumerate(context.recent_events[:5], 1):
-            prompt += f"""
-### Event {i}
-- Timestamp: {event.timestamp}
-- Service: {event.service}
-- Error: {event.error_type}: {event.error_message}
-- Stack Trace:
-"""
-            for frame in event.stack_frames[:10]:
-                prompt += f"  {frame.module}.{frame.function} ({frame.filename}:{frame.lineno})\n"
+            prompt += f"\n### Event {i} — {event.timestamp}\n"
+            prompt += f"Service: {event.service}\n"
+            prompt += f"Error: {event.error_type}: {event.error_message}\n"
+            if event.stack_frames:
+                prompt += "Stack:\n"
+                for frame in event.stack_frames[:10]:
+                    prompt += (
+                        f"  {frame.module}.{frame.function}"
+                        f" ({frame.filename}:{frame.lineno})\n"
+                    )
 
-        # Add trace information
+        # Full distributed trace trees
         if context.trace_data:
             prompt += f"\n## Distributed Traces ({len(context.trace_data)} traces)\n"
-            for trace in context.trace_data[:2]:
-                prompt += f"- Trace {trace.trace_id}: {len(trace.error_spans)} error spans\n"
+            prompt += (
+                "Each trace shows the complete call chain. "
+                "Spans marked [ERROR] are where failures occurred.\n"
+            )
+            for trace in context.trace_data[:3]:
+                prompt += f"\n### Trace {trace.trace_id}\n"
+                if trace.root_span:
+                    prompt += self._format_span_tree(trace.root_span)
+                if trace.error_spans:
+                    prompt += "\n**Error span details:**\n"
+                    for span in trace.error_spans[:5]:
+                        prompt += (
+                            f"- {span.service}: {span.operation} "
+                            f"({span.duration_ms:.1f}ms)\n"
+                        )
+                        relevant_attrs = {
+                            k: v
+                            for k, v in span.attributes.items()
+                            if any(
+                                kw in k.lower()
+                                for kw in (
+                                    "error", "exception", "message",
+                                    "status", "http", "db", "rpc",
+                                )
+                            )
+                        }
+                        for k, v in list(relevant_attrs.items())[:8]:
+                            prompt += f"  {k}: {v}\n"
 
-        # Add logs
+        # Correlated logs
         if context.related_logs:
-            prompt += f"\n## Related Logs ({len(context.related_logs)} logs)\n"
-            for log in context.related_logs[:10]:
-                prompt += f"- [{log.severity.value}] {log.timestamp}: {log.body}\n"
+            prompt += f"\n## Correlated Logs ({len(context.related_logs)} entries)\n"
+            for log in context.related_logs[:15]:
+                prompt += (
+                    f"[{log.severity.value}] {log.timestamp}"
+                    f"  {log.body[:200]}\n"
+                )
 
-        # Add codebase context
-        prompt += f"\n## Codebase Path: {context.codebase_path}\n"
-
-        # Add historical context
+        # Historical patterns
         if context.historical_context:
-            prompt += f"\n## Historical Context ({len(context.historical_context)} similar signatures)\n"
-            for sig in context.historical_context[:3]:
-                prompt += f"- {sig.error_type} in {sig.service} ({sig.occurrence_count} occurrences)\n"
+            prompt += (
+                f"\n## Historical Similar Signatures "
+                f"({len(context.historical_context)} patterns)\n"
+            )
+            for sig_h in context.historical_context[:3]:
+                prompt += (
+                    f"- {sig_h.error_type} in {sig_h.service} "
+                    f"({sig_h.occurrence_count} occurrences)\n"
+                )
 
-        prompt += """
-## Task
-Based on the error events, traces, logs, and codebase context above, provide:
+        prompt += f"""
+---
 
-1. **Root Cause**: The underlying cause of this error pattern. Be specific and cite evidence.
-2. **Evidence**: List 3-5 key pieces of evidence supporting your conclusion.
-3. **Suggested Fix**: A concrete, actionable fix that would prevent this error.
-4. **Confidence**: Rate your confidence as HIGH, MEDIUM, or LOW.
+## Investigation Steps
 
-Respond with a JSON object in exactly this format:
-{
-  "root_cause": "The root cause explanation",
-  "evidence": ["evidence point 1", "evidence point 2", "evidence point 3"],
-  "suggested_fix": "The suggested fix",
+1. Examine the trace to understand the call chain and where the failure originates.
+2. Use Glob/Grep to find the source files for the services and operations in the trace.
+3. Read the relevant code — especially the function or handler named in the error spans.
+4. Identify the root cause from the combination of trace data and source code.
+
+## Response Format
+
+After reading the relevant source files, respond with a JSON object in exactly this format:
+{{
+  "root_cause": "The precise root cause, citing specific code locations and trace evidence",
+  "evidence": [
+    "evidence point citing a specific file:line or span attribute",
+    "evidence point 2",
+    "evidence point 3"
+  ],
+  "suggested_fix": "Concrete actionable fix with file paths and code changes if applicable",
   "confidence": "HIGH|MEDIUM|LOW"
-}
-"""
+}}
 
+Codebase is at: {context.codebase_path}
+"""
         return prompt
 
-    async def _invoke_claude_code(self, prompt: str) -> dict[str, Any]:
+    def _format_span_tree(self, node: "Any", depth: int = 0) -> str:
+        """Recursively format a SpanNode tree into readable text.
+
+        Args:
+            node: SpanNode to format.
+            depth: Current indentation depth.
+
+        Returns:
+            Multi-line string showing the span hierarchy.
+        """
+        indent = "  " * depth
+        status = " [ERROR]" if node.status == "error" else ""
+        line = (
+            f"{indent}• {node.service}: {node.operation}"
+            f" ({node.duration_ms:.1f}ms){status}\n"
+        )
+        for child in node.children:
+            line += self._format_span_tree(child, depth + 1)
+        return line
+
+    async def _invoke_claude_code(
+        self, prompt: str, codebase_path: str = ""
+    ) -> dict[str, Any]:
         """Invoke Claude Code CLI with the investigation prompt asynchronously.
+
+        Sets the working directory to codebase_path so Claude Code's file-reading
+        tools can access the mounted project filesystem. Also passes --add-dir so
+        Claude Code explicitly trusts the directory even if cwd differs at startup.
 
         Raises:
             ValueError: If JSON parsing fails or no valid JSON found in output.
@@ -219,16 +290,30 @@ Respond with a JSON object in exactly this format:
                 env["ANTHROPIC_API_KEY"] = self.api_key
                 env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
 
+            # Resolve codebase path; fall back to None if not set or not a directory
+            resolved_path: str | None = None
+            if codebase_path:
+                expanded = os.path.abspath(os.path.expanduser(codebase_path))
+                if os.path.isdir(expanded):
+                    resolved_path = expanded
+
+            # Build CLI command. --add-dir grants Claude Code file-read access to
+            # the codebase directory even when the process was started elsewhere.
+            cmd = ["claude", "-p", prompt, "--output-format", "json"]
+            if resolved_path:
+                cmd += ["--add-dir", resolved_path]
+
             # Invoke Claude Code CLI in an executor to avoid blocking the event loop
             def _run_claude_code() -> str:
                 """Synchronous wrapper for subprocess call."""
                 try:
                     result = subprocess.run(
-                        ["claude", "-p", prompt, "--output-format", "json"],
+                        cmd,
                         capture_output=True,
                         text=True,
-                        timeout=60,
+                        timeout=120,
                         env=env,
+                        cwd=resolved_path,
                     )
 
                     if result.returncode != 0:
@@ -238,7 +323,7 @@ Respond with a JSON object in exactly this format:
                     return result.stdout.strip()
 
                 except subprocess.TimeoutExpired:
-                    raise TimeoutError("Claude Code CLI timed out after 60 seconds")
+                    raise TimeoutError("Claude Code CLI timed out after 120 seconds")
 
             # Run in executor to avoid blocking
             output = await asyncio.to_thread(_run_claude_code)
