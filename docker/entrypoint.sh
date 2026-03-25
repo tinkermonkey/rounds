@@ -148,13 +148,18 @@ if ! CLAUDE_VERSION=$(claude --version 2>/dev/null); then
 fi
 echo -e "${GREEN}✓ CLI installation verified: $CLAUDE_VERSION${NC}"
 
-# Verify authentication is configured
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-  echo -e "${RED}ERROR: ANTHROPIC_API_KEY environment variable not set${NC}"
-  echo "Authentication is required for Claude Code to function."
+# Verify authentication is configured — accept either API key or OAuth token.
+# OAuth token (CLAUDE_CODE_OAUTH_TOKEN): Claude.ai subscription access (Pro/Teams/Enterprise).
+# API key (ANTHROPIC_API_KEY): direct Anthropic API access (sk-ant-...).
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  echo -e "${GREEN}✓ CLAUDE_CODE_OAUTH_TOKEN is configured (OAuth authentication)${NC}"
+elif [ -n "$ANTHROPIC_API_KEY" ]; then
+  echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured (API key authentication)${NC}"
+else
+  echo -e "${RED}ERROR: No Claude authentication configured${NC}"
+  echo "Set either CLAUDE_CODE_OAUTH_TOKEN (Claude.ai subscription) or ANTHROPIC_API_KEY (Anthropic API key)."
   exit 1
 fi
-echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured${NC}"
 
 # Verify CLI functionality with --help (no API call required)
 # The --help command validates the CLI works but doesn't consume API credits
@@ -170,7 +175,7 @@ echo -e "${GREEN}✓ CLI functionality verified${NC}"
 # authentication failures when diagnosis is attempted.
 # For explicit auth testing, use: docker exec <container> claude --help
 echo -e "${YELLOW}⚠ Authentication will be validated on first diagnosis operation${NC}"
-echo "The first diagnosis attempt will fail if ANTHROPIC_API_KEY is invalid."
+echo "The first diagnosis attempt will fail if the configured credentials are invalid."
 
 # ============================================================================
 # Step 3: Create Required Directories

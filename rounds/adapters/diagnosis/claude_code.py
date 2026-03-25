@@ -9,6 +9,7 @@ Invocation format: claude -p <prompt> --output-format json
 import asyncio
 import json
 import logging
+import os
 import subprocess
 from datetime import UTC, datetime
 from typing import Any
@@ -26,15 +27,23 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
         self,
         model: str = "claude-opus",
         budget_usd: float = 2.0,
+        api_key: str = "",
+        oauth_token: str = "",
     ):
         """Initialize Claude Code diagnosis adapter.
 
         Args:
             model: Claude model to use (e.g., 'claude-opus', 'claude-sonnet')
             budget_usd: Budget per diagnosis in USD
+            api_key: Anthropic API key (sk-ant-...). Passed as ANTHROPIC_API_KEY to the CLI.
+            oauth_token: Claude Code OAuth token for Claude.ai subscription access.
+                Passed as CLAUDE_CODE_OAUTH_TOKEN to the CLI. Takes precedence over api_key
+                when both are provided.
         """
         self.model = model
         self.budget_usd = budget_usd
+        self.api_key = api_key
+        self.oauth_token = oauth_token
 
     async def diagnose(
         self, context: InvestigationContext
@@ -199,6 +208,17 @@ Respond with a JSON object in exactly this format:
             RuntimeError: If CLI returns non-zero exit code.
         """
         try:
+            # Build subprocess environment with exactly one auth method set.
+            # OAuth token takes precedence when both are configured; the other key
+            # is removed to prevent the CLI from picking up conflicting credentials.
+            env = os.environ.copy()
+            if self.oauth_token:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = self.oauth_token
+                env.pop("ANTHROPIC_API_KEY", None)
+            elif self.api_key:
+                env["ANTHROPIC_API_KEY"] = self.api_key
+                env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+
             # Invoke Claude Code CLI in an executor to avoid blocking the event loop
             def _run_claude_code() -> str:
                 """Synchronous wrapper for subprocess call."""
@@ -208,6 +228,7 @@ Respond with a JSON object in exactly this format:
                         capture_output=True,
                         text=True,
                         timeout=60,
+                        env=env,
                     )
 
                     if result.returncode != 0:

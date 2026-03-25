@@ -538,11 +538,14 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
     # Diagnosis adapter - select based on config
     diagnosis_engine: DiagnosisPort
     if settings.diagnosis_backend == "claude_code":
+        auth_method = "OAuth token" if settings.claude_code_oauth_token else "API key"
         diagnosis_engine = ClaudeCodeDiagnosisAdapter(
             model=settings.claude_model,
             budget_usd=settings.claude_code_budget_usd,
+            api_key=settings.anthropic_api_key,
+            oauth_token=settings.claude_code_oauth_token,
         )
-        logger.info("Diagnosis adapter: Claude Code")
+        logger.info(f"Diagnosis adapter: Claude Code ({auth_method})")
     elif settings.diagnosis_backend == "openai":
         # Lazy import for optional OpenAI dependency
         from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
