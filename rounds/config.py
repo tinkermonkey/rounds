@@ -87,6 +87,18 @@ class Settings(BaseSettings):
         default="claude-opus",
         description="Claude model to use for diagnosis",
     )
+    # Claude Code authentication — set exactly one of these two when using claude_code backend.
+    # API key (sk-ant-...): direct Anthropic API access.
+    # OAuth token: Claude.ai subscription access (Claude Pro/Teams/Enterprise).
+    # When both are set, oauth_token takes precedence.
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API key (sk-ant-...) for Claude Code authentication",
+    )
+    claude_code_oauth_token: str = Field(
+        default="",
+        description="Claude Code OAuth token for Claude.ai subscription authentication",
+    )
     openai_api_key: str = Field(
         default="",
         description="OpenAI API key for diagnosis",
@@ -258,6 +270,12 @@ class Settings(BaseSettings):
         - PostgreSQL store requires store_postgresql_url
         """
         # Validate diagnosis backend dependencies
+        if self.diagnosis_backend == "claude_code":
+            if not self.anthropic_api_key and not self.claude_code_oauth_token:
+                raise ValueError(
+                    "Either anthropic_api_key or claude_code_oauth_token must be set "
+                    "when diagnosis_backend is 'claude_code'"
+                )
         if self.diagnosis_backend == "openai" and not self.openai_api_key:
             raise ValueError(
                 "openai_api_key must be set when diagnosis_backend is 'openai'"
