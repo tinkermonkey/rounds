@@ -328,53 +328,65 @@ Codebase is at: {context.codebase_path}
             # Run in executor to avoid blocking
             output = await asyncio.to_thread(_run_claude_code)
 
-            # Parse the JSON output
-            # First try parsing the entire output as JSON
+            # Claude Code --output-format json wraps the response in an envelope:
+            # {"type": "result", "subtype": "success", "result": "<text>", ...}
+            # Unwrap that first; then find the diagnosis JSON inside the inner text.
+            text_to_search = output
             try:
-                parsed: dict[str, Any] = json.loads(output)
-                return parsed
+                outer: dict[str, Any] = json.loads(output)
+                if isinstance(outer, dict) and "type" in outer and "result" in outer:
+                    if outer.get("is_error"):
+                        raise RuntimeError(
+                            f"Claude Code returned error: {outer.get('result', 'unknown')}"
+                        )
+                    # The inner text is what Claude actually wrote
+                    text_to_search = outer.get("result", "") or output
             except json.JSONDecodeError:
-                # If full parse fails, try line-by-line and multi-line approaches
+                pass  # raw output, search as-is
+
+            # If the inner text is itself valid JSON with our expected fields, return it
+            try:
+                parsed: dict[str, Any] = json.loads(text_to_search)
+                if isinstance(parsed, dict) and "root_cause" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
                 pass
 
-            # Try to find JSON block in output (handles pretty-printed JSON)
-            lines = output.split("\n")
+            # Find JSON block by brace-counting (handles prose + embedded JSON)
+            lines = text_to_search.split("\n")
             json_buffer: list[str] = []
             in_json = False
             brace_count = 0
 
             for line in lines:
                 stripped = line.strip()
-
-                # Start of JSON object
                 if stripped.startswith("{"):
                     in_json = True
                     brace_count = 0
 
                 if in_json:
                     json_buffer.append(line)
-                    # Count braces to track nesting
                     brace_count += line.count("{") - line.count("}")
 
-                    # Complete JSON object found
                     if brace_count == 0:
                         json_str = "\n".join(json_buffer)
                         try:
                             parsed = json.loads(json_str)
-                            return parsed
+                            if isinstance(parsed, dict) and "root_cause" in parsed:
+                                return parsed
                         except json.JSONDecodeError as e:
                             logger.warning(
-                                f"Failed to parse multi-line JSON from Claude Code output: {e}. "
+                                f"Failed to parse JSON block from Claude output: {e}. "
                                 f"Content: {json_str[:200]}",
                                 exc_info=True,
                             )
-                            # Reset and continue searching
-                            json_buffer = []
-                            in_json = False
+                        # Reset and keep searching
+                        json_buffer = []
+                        in_json = False
 
-            # No valid JSON found - raise exception instead of returning synthetic data
             raise ValueError(
-                f"Claude Code CLI did not return valid JSON. Output: {output[:200]}"
+                f"Claude Code output contained no diagnosis JSON. "
+                f"Output: {text_to_search[:500]}"
             )
 
         except TimeoutError as e:

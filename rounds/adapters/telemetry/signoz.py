@@ -286,7 +286,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
                     parent_id=span_data.get("parentSpanID"),
                     service=span_data.get("serviceName", ""),
                     operation=span_data.get("name", ""),
-                    duration_ms=span_data.get("durationNano", 0) / 1e6,
+                    duration_ms=int(span_data.get("durationNano", 0) or 0) / 1e6,
                     status="error" if span_data.get("hasError") else "ok",
                     attributes=span_data.get("attributes", {}),
                     events=tuple(span_data.get("events", [])),
