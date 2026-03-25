@@ -32,8 +32,8 @@ class Settings(BaseSettings):
         description="Telemetry backend type",
     )
     signoz_api_url: str = Field(
-        default="http://localhost:4418",
-        description="SigNoz API endpoint URL",
+        default="http://localhost:3301",
+        description="SigNoz base URL (unified image: port 3301; API paths /api/v3/* are appended by the adapter)",
     )
     signoz_api_key: str = Field(
         default="",

@@ -2,6 +2,13 @@
 
 Implements TelemetryPort by querying SigNoz REST API for errors, traces, and logs.
 Normalizes SigNoz-specific data structures into core domain models.
+
+Compatible with SigNoz unified image (v0.88+) where UI and API are served on the same
+port (default 3301) via nginx routing: /api/* → backend query service.
+
+Auth header: SIGNOZ-API-KEY (not Authorization: Bearer)
+Query API: POST /api/v3/query_range with query builder format, millisecond timestamps
+Trace API: GET /api/v1/traces/{id} returns columnar format
 """
 
 import logging
@@ -37,8 +44,8 @@ class SigNozTelemetryAdapter(TelemetryPort):
         """Initialize SigNoz adapter.
 
         Args:
-            api_url: Base URL for SigNoz API (e.g., http://localhost:4418)
-            api_key: Optional API key for authentication
+            api_url: Base URL for SigNoz API (e.g., http://localhost:3301)
+            api_key: Optional API key for SIGNOZ-API-KEY header authentication
             fingerprinter: Function to compute fingerprints from ErrorEvent.
                 If None, imported from core.fingerprint at runtime.
         """
@@ -52,22 +59,20 @@ class SigNozTelemetryAdapter(TelemetryPort):
         )
 
     def _get_fingerprinter(self) -> Callable[[ErrorEvent], str]:
-        """Lazy-load fingerprinter to avoid circular imports.
-
-        Returns:
-            Fingerprinter callable or injected function.
-        """
+        """Lazy-load fingerprinter to avoid circular imports."""
         if self._fingerprinter:
             return self._fingerprinter
-        # Lazy import to avoid circular dependency
         from rounds.core.fingerprint import Fingerprinter
         return Fingerprinter().fingerprint
 
     def _get_headers(self) -> dict[str, str]:
-        """Build request headers."""
+        """Build request headers.
+
+        SigNoz uses SIGNOZ-API-KEY header, not Authorization: Bearer.
+        """
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["SIGNOZ-API-KEY"] = self.api_key
         return headers
 
     async def __aenter__(self) -> "SigNozTelemetryAdapter":
@@ -79,7 +84,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
         await self.client.aclose()
 
     async def close(self) -> None:
-        """Close the httpx client and clean up resources.
+        """Close the httpx client.
 
         Must be called when done using the adapter if not using it as a context manager.
         """
@@ -90,11 +95,8 @@ class SigNozTelemetryAdapter(TelemetryPort):
     ) -> list[ErrorEvent]:
         """Return error events since the given timestamp.
 
-        Queries SigNoz ClickHouse backend for errors with validation-based
-        SQL construction. All service names are validated using _is_valid_identifier()
-        before string interpolation to prevent SQL injection. Only service names
-        matching the pattern [a-zA-Z0-9._-]+ are included in the query; invalid
-        names are logged and filtered out.
+        Queries SigNoz v3 query_range API with query builder format.
+        Filters spans where hasError=true.
 
         Args:
             since: Query errors with timestamp >= this value
@@ -108,54 +110,116 @@ class SigNozTelemetryAdapter(TelemetryPort):
             httpx.HTTPError: If the API request fails
         """
         try:
-            # Build ClickHouse query for errors
-            service_filter = ""
+            now = datetime.now(UTC)
+            start_ms = int(since.timestamp() * 1000)
+            end_ms = int(now.timestamp() * 1000)
+
+            # Build filter items: hasError=true plus optional service filters
+            filter_items: list[dict[str, Any]] = [
+                {
+                    "key": {
+                        "key": "hasError",
+                        "dataType": "bool",
+                        "type": "tag",
+                        "isColumn": True,
+                    },
+                    "op": "=",
+                    "value": True,
+                }
+            ]
+
             if services:
-                # Validate service names to prevent injection
-                # Services should be alphanumeric with dots/hyphens
-                invalid_services = [
-                    s for s in services if not self._is_valid_identifier(s)
-                ]
-                if invalid_services:
-                    logger.warning(
-                        f"Skipping invalid service names: {invalid_services}"
+                valid_services = [s for s in services if self._is_valid_identifier(s)]
+                invalid = [s for s in services if not self._is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if valid_services:
+                    filter_items.append(
+                        {
+                            "key": {
+                                "key": "serviceName",
+                                "dataType": "string",
+                                "type": "tag",
+                                "isColumn": True,
+                            },
+                            "op": "in",
+                            "value": valid_services,
+                        }
                     )
-                    services = [s for s in services if self._is_valid_identifier(s)]
 
-                if services:
-                    service_list = "','".join(services)
-                    service_filter = f"AND serviceName IN ('{service_list}')"
+            payload = {
+                "start": start_ms,
+                "end": end_ms,
+                "step": 60,
+                "variables": {},
+                "compositeQuery": {
+                    "queryType": "builder",
+                    "panelType": "list",
+                    "builderQueries": {
+                        "A": {
+                            "dataSource": "traces",
+                            "queryName": "A",
+                            "expression": "A",
+                            "aggregateOperator": "noop",
+                            "filters": {"op": "AND", "items": filter_items},
+                            "limit": 1000,
+                            "offset": 0,
+                            "pageSize": 1000,
+                            "orderBy": [
+                                {"columnName": "timestamp", "order": "desc"}
+                            ],
+                            "selectColumns": [
+                                {
+                                    "key": "serviceName",
+                                    "dataType": "string",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                                {
+                                    "key": "name",
+                                    "dataType": "string",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                                {
+                                    "key": "spanID",
+                                    "dataType": "string",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                                {
+                                    "key": "traceID",
+                                    "dataType": "string",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                                {
+                                    "key": "statusMessage",
+                                    "dataType": "string",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                                {
+                                    "key": "hasError",
+                                    "dataType": "bool",
+                                    "type": "tag",
+                                    "isColumn": True,
+                                },
+                            ],
+                        }
+                    },
+                },
+            }
 
-            query = f"""
-                SELECT
-                    traceID,
-                    spanID,
-                    serviceName,
-                    exceptionType,
-                    exceptionMessage,
-                    timestamp,
-                    attributes,
-                    severityText
-                FROM traces
-                WHERE timestamp > {int(since.timestamp() * 1e9)}
-                    AND exceptionType != ''
-                    {service_filter}
-                ORDER BY timestamp DESC
-                LIMIT 1000
-            """
-
-            response = await self.client.post(
-                "/api/v1/query_range",
-                json={"query": query},
-            )
+            response = await self.client.post("/api/v3/query_range", json=payload)
             response.raise_for_status()
 
             data = response.json()
             errors = []
 
-            for result in data.get("result", []):
-                for value in result.get("values", []):
-                    error = self._parse_error_event(value)
+            for result in data.get("data", {}).get("result", []):
+                for item in result.get("list", []):
+                    error = self._parse_error_event(item)
                     if error:
                         errors.append(error)
 
@@ -169,85 +233,80 @@ class SigNozTelemetryAdapter(TelemetryPort):
             raise
 
     async def get_trace(self, trace_id: str) -> TraceTree:
-        """Return the full span tree for a trace."""
+        """Return the full span tree for a trace.
+
+        Uses GET /api/v1/traces/{id} which returns spans in columnar format.
+        """
         try:
-            response = await self.client.get(
-                f"/api/v1/traces/{trace_id}",
-            )
+            response = await self.client.get(f"/api/v1/traces/{trace_id}")
             response.raise_for_status()
 
             data = response.json()
-            spans_data = data.get("spans", [])
+
+            # v1/traces returns a list with one element containing columns+events
+            spans_data = self._parse_trace_response(data)
 
             if not spans_data:
                 raise ValueError(f"No spans found for trace {trace_id}")
 
             # Build a mutable intermediate structure to handle parent-child relationships
-            span_dicts = {}
-            root_span_data = None
+            span_dicts: dict[str, dict[str, Any]] = {}
+            root_span_id: str | None = None
 
-            # First pass: create intermediate dicts with children lists
             for span_data in spans_data:
-                span_id = span_data["spanID"]
+                span_id = span_data.get("spanID", "")
+                if not span_id:
+                    continue
                 span_dicts[span_id] = {
                     "data": span_data,
                     "children": [],
                 }
-                if span_data.get("parentSpanID") is None:
-                    root_span_data = span_id
+                if not span_data.get("parentSpanID"):
+                    root_span_id = span_id
 
-            # Second pass: build parent-child relationships
+            # Build parent-child relationships
             for span_id, span_dict in span_dicts.items():
                 parent_id = span_dict["data"].get("parentSpanID")
                 if parent_id and parent_id in span_dicts:
                     span_dicts[parent_id]["children"].append(span_id)
 
-            # Third pass: construct SpanNode tree (bottom-up, leaves first)
+            # Recursively construct SpanNode tree
             span_node_map: dict[str, SpanNode] = {}
 
-            def build_span_node(span_id: str) -> SpanNode:
-                """Recursively build SpanNode with all children."""
-                if span_id in span_node_map:
-                    return span_node_map[span_id]
+            def build_span_node(sid: str) -> SpanNode:
+                if sid in span_node_map:
+                    return span_node_map[sid]
 
-                span_dict = span_dicts[span_id]
-                span_data = span_dict["data"]
-                child_ids = span_dict["children"]
-
-                # Recursively build children first
-                children = tuple(build_span_node(child_id) for child_id in child_ids)
+                sd = span_dicts[sid]
+                span_data = sd["data"]
+                children = tuple(build_span_node(cid) for cid in sd["children"])
 
                 node = SpanNode(
                     span_id=span_data.get("spanID", ""),
                     parent_id=span_data.get("parentSpanID"),
                     service=span_data.get("serviceName", ""),
-                    operation=span_data.get("operationName", ""),
-                    duration_ms=span_data.get("duration", 0) / 1e6,
-                    status=span_data.get("status", "unset"),
+                    operation=span_data.get("name", ""),
+                    duration_ms=span_data.get("durationNano", 0) / 1e6,
+                    status="error" if span_data.get("hasError") else "ok",
                     attributes=span_data.get("attributes", {}),
                     events=tuple(span_data.get("events", [])),
                     children=children,
                 )
-                span_node_map[span_id] = node
+                span_node_map[sid] = node
                 return node
 
-            # Build the tree from root
-            if not root_span_data:
-                root_span_data = next(iter(span_dicts.keys())) if span_dicts else None
+            if not root_span_id:
+                root_span_id = next(iter(span_dicts.keys())) if span_dicts else None
 
-            if not root_span_data:
+            if not root_span_id:
                 raise ValueError(f"Cannot determine root span for trace {trace_id}")
 
-            root_span = build_span_node(root_span_data)
+            root_span = build_span_node(root_span_id)
 
-            # Collect error spans
-            error_spans = []
+            error_spans: list[SpanNode] = []
 
             def collect_error_spans(node: SpanNode) -> None:
-                """Recursively collect spans with error status."""
-                if node.status == "error" or "error" in (
-                    node.attributes.get("otel.status_code") or ""
-                ):
+                if node.status == "error":
                     error_spans.append(node)
                 for child in node.children:
                     collect_error_spans(child)
@@ -267,21 +326,13 @@ class SigNozTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching trace: {e}", exc_info=True)
             raise
 
-    async def get_traces(self, trace_ids: list[str]) -> tuple[list[TraceTree], PartialResultsInfo]:
+    async def get_traces(
+        self, trace_ids: list[str]
+    ) -> tuple[list[TraceTree], PartialResultsInfo]:
         """Batch trace retrieval.
 
-        Attempts to fetch all traces. If any traces fail to fetch, logs warnings
-        for each failure and returns partial results metadata.
-
-        Args:
-            trace_ids: List of trace IDs to retrieve.
-
-        Returns:
-            Tuple of (traces, partial_info) where traces is the list of successfully
-            retrieved TraceTree objects and partial_info indicates if results are complete.
+        Attempts to fetch all traces. Returns partial results if any fail.
         """
-        from rounds.core.models import PartialResultsInfo
-
         traces = []
         failed_trace_ids = []
 
@@ -293,7 +344,6 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 logger.warning(f"Failed to fetch trace {trace_id}: {e}")
                 failed_trace_ids.append(trace_id)
 
-        # Log summary if there were failures
         is_partial = len(failed_trace_ids) > 0
         if is_partial:
             logger.warning(
@@ -306,7 +356,11 @@ class SigNozTelemetryAdapter(TelemetryPort):
             total_requested=len(trace_ids),
             total_returned=len(traces),
             is_partial=is_partial,
-            reason=f"Failed to retrieve {len(failed_trace_ids)} traces" if is_partial else None
+            reason=(
+                f"Failed to retrieve {len(failed_trace_ids)} traces"
+                if is_partial
+                else None
+            ),
         )
 
         return traces, partial_info
@@ -314,12 +368,14 @@ class SigNozTelemetryAdapter(TelemetryPort):
     async def get_correlated_logs(
         self, trace_ids: list[str], window_minutes: int = 5
     ) -> list[LogEntry]:
-        """Return logs correlated with the given traces."""
+        """Return logs correlated with the given traces.
+
+        Uses POST /api/v3/query_range with dataSource=logs and traceID filter.
+        """
         try:
             if not trace_ids:
                 return []
 
-            # Validate trace IDs to prevent injection
             valid_trace_ids = [
                 tid for tid in trace_ids if self._is_valid_trace_id(tid)
             ]
@@ -327,34 +383,65 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 logger.warning("No valid trace IDs provided")
                 return []
 
-            # Build ClickHouse query for logs
-            trace_list = "','".join(valid_trace_ids)
-            query = f"""
-                SELECT
-                    timestamp,
-                    severityText,
-                    body,
-                    attributes,
-                    traceID,
-                    spanID
-                FROM logs
-                WHERE traceID IN ('{trace_list}')
-                ORDER BY timestamp DESC
-                LIMIT 500
-            """
+            now = datetime.now(UTC)
+            since = now - timedelta(minutes=window_minutes)
+            start_ms = int(since.timestamp() * 1000)
+            end_ms = int(now.timestamp() * 1000)
 
-            response = await self.client.post(
-                "/api/v1/query_range",
-                json={"query": query},
-            )
+            # Build OR filter for each trace ID.
+            # trace_id is a core log column (type=""), not a tag attribute.
+            trace_filter_items = [
+                {
+                    "key": {
+                        "key": "trace_id",
+                        "dataType": "string",
+                        "type": "",
+                        "isColumn": True,
+                    },
+                    "op": "=",
+                    "value": tid,
+                }
+                for tid in valid_trace_ids
+            ]
+
+            payload = {
+                "start": start_ms,
+                "end": end_ms,
+                "step": 60,
+                "variables": {},
+                "compositeQuery": {
+                    "queryType": "builder",
+                    "panelType": "list",
+                    "builderQueries": {
+                        "A": {
+                            "dataSource": "logs",
+                            "queryName": "A",
+                            "expression": "A",
+                            "aggregateOperator": "noop",
+                            "filters": {
+                                "op": "OR",
+                                "items": trace_filter_items,
+                            },
+                            "limit": 500,
+                            "offset": 0,
+                            "pageSize": 500,
+                            "orderBy": [
+                                {"columnName": "timestamp", "order": "desc"}
+                            ],
+                        }
+                    },
+                },
+            }
+
+            response = await self.client.post("/api/v3/query_range", json=payload)
             response.raise_for_status()
 
             data = response.json()
             logs = []
 
-            for result in data.get("result", []):
-                for value in result.get("values", []):
-                    log = self._parse_log_entry(value)
+            for result in data.get("data", {}).get("result", []):
+                for item in result.get("list", []):
+                    log = self._parse_log_entry(item)
                     if log:
                         logs.append(log)
 
@@ -373,8 +460,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
         """Return recent events matching a known fingerprint.
 
         Filters errors by computing fingerprints locally and matching against
-        the requested fingerprint. This compensates for SigNoz not having
-        native fingerprint support.
+        the requested fingerprint.
 
         Args:
             fingerprint: Signature fingerprint to match against.
@@ -382,13 +468,10 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
         Returns:
             List of ErrorEvent objects with matching fingerprints.
-            May be empty if no recent matches found.
         """
-        # Fetch recent errors from last 24 hours
         since = datetime.now(UTC) - timedelta(hours=24)
         all_errors = await self.get_recent_errors(since)
 
-        # Filter by fingerprint using injected fingerprinter
         matching_errors = []
         fingerprinter = self._get_fingerprinter()
 
@@ -400,31 +483,43 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
         return matching_errors
 
-    def _parse_error_event(self, span_data: dict[str, Any]) -> ErrorEvent | None:
-        """Parse a span with exception into an ErrorEvent."""
+    def _parse_error_event(self, item: dict[str, Any]) -> ErrorEvent | None:
+        """Parse a v3 query_range list item into an ErrorEvent.
+
+        Item format: {"timestamp": "ISO8601", "data": {span fields}}
+        """
+        span_id = ""
         try:
-            trace_id = span_data.get("traceID", "")
+            span_data = item.get("data", {})
             span_id = span_data.get("spanID", "")
+            trace_id = span_data.get("traceID", "")
             service = span_data.get("serviceName", "")
-            error_type = span_data.get("exceptionType", "")
-            error_message = span_data.get("exceptionMessage", "")
+            operation = span_data.get("name", "")
+            status_message = span_data.get("statusMessage", "")
 
-            # SigNoz timestamps are in nanoseconds, convert to seconds
-            timestamp_ns = int(span_data.get("timestamp", 0))
-            timestamp = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
-            severity_text = span_data.get("severityText", "ERROR")
+            # ISO8601 timestamp from the list item envelope
+            ts_str = item.get("timestamp", "")
+            if ts_str:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            else:
+                timestamp = datetime.now(UTC)
 
-            if not error_type:
-                return None
+            # Use operation name as error_type when no exception.type attribute
+            attributes: dict[str, Any] = span_data.get("attributes", {}) or {}
+            error_type = attributes.get("exception.type") or operation or "UnknownError"
+            error_message = (
+                attributes.get("exception.message")
+                or status_message
+                or ""
+            )
 
-            # Parse stack frames from attributes
+            # Parse stack frames from exception.stacktrace if present
             stack_frames: tuple[StackFrame, ...] = ()
-            attributes = span_data.get("attributes", {})
+            stack_trace = attributes.get("exception.stacktrace", "")
+            if stack_trace:
+                stack_frames = self._parse_stack_trace(stack_trace)
 
-            if isinstance(attributes, dict):
-                stack_trace = attributes.get("exception.stacktrace", "")
-                if stack_trace:
-                    stack_frames = self._parse_stack_trace(stack_trace)
+            severity_text = span_data.get("severityText", "ERROR") or "ERROR"
 
             return ErrorEvent(
                 trace_id=trace_id,
@@ -434,103 +529,163 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 error_message=error_message,
                 stack_frames=stack_frames,
                 timestamp=timestamp,
-                attributes=attributes if isinstance(attributes, dict) else {},
+                attributes=attributes,
                 severity=self._parse_severity(severity_text),
             )
 
         except Exception as e:
             logger.warning(
                 f"Failed to parse error event from span {span_id}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise ValueError(
                 f"Cannot parse error event from span {span_id}: {e}"
             ) from e
 
-    def _parse_span(self, span_data: dict[str, Any]) -> SpanNode:
-        """Parse a SigNoz span into a SpanNode."""
-        return SpanNode(
-            span_id=span_data.get("spanID", ""),
-            parent_id=span_data.get("parentSpanID"),
-            service=span_data.get("serviceName", ""),
-            operation=span_data.get("operationName", ""),
-            duration_ms=span_data.get("duration", 0) / 1e6,  # Convert to ms
-            status=span_data.get("status", "unset"),
-            attributes=span_data.get("attributes", {}),
-            events=tuple(span_data.get("events", [])),
-        )
+    def _parse_log_entry(self, item: dict[str, Any]) -> LogEntry | None:
+        """Parse a v3 query_range list item into a LogEntry.
 
-    def _parse_log_entry(self, log_data: dict[str, Any]) -> LogEntry | None:
-        """Parse a SigNoz log into a LogEntry."""
+        Item format: {"timestamp": "ISO8601", "data": {log fields}}
+        Log data contains: body, severity_text, trace_id, span_id,
+        attributes_string, attributes_number, attributes_bool, resources_string.
+        """
         try:
-            # SigNoz timestamps are in nanoseconds, convert to seconds
-            timestamp_ns = int(log_data.get("timestamp", 0))
+            log_data = item.get("data", {})
+
+            ts_str = item.get("timestamp", "")
+            if ts_str:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            else:
+                timestamp = datetime.now(UTC)
+
+            # Merge attribute dicts into a single flat attributes dict
+            attributes: dict[str, Any] = {}
+            for attr_key in (
+                "attributes_string",
+                "attributes_number",
+                "attributes_bool",
+                "resources_string",
+            ):
+                val = log_data.get(attr_key)
+                if isinstance(val, dict):
+                    attributes.update(val)
+
             return LogEntry(
-                timestamp=datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC),
-                severity=self._parse_severity(log_data.get("severityText", "INFO")),
+                timestamp=timestamp,
+                severity=self._parse_severity(
+                    log_data.get("severity_text", "INFO") or "INFO"
+                ),
                 body=log_data.get("body", ""),
-                attributes=log_data.get("attributes", {}),
-                trace_id=log_data.get("traceID"),
-                span_id=log_data.get("spanID"),
+                attributes=attributes,
+                trace_id=log_data.get("trace_id") or log_data.get("traceID"),
+                span_id=log_data.get("span_id") or log_data.get("spanID"),
             )
         except Exception as e:
-            logger.warning(
-                f"Failed to parse log entry: {e}",
-                exc_info=True
-            )
-            raise ValueError(
-                f"Cannot parse log entry: {e}"
-            ) from e
+            logger.warning(f"Failed to parse log entry: {e}", exc_info=True)
+            raise ValueError(f"Cannot parse log entry: {e}") from e
+
+    @staticmethod
+    def _parse_trace_response(data: Any) -> list[dict[str, Any]]:
+        """Parse the columnar trace response from GET /api/v1/traces/{id}.
+
+        Response format:
+        [{"columns": ["__time", "SpanId", "TraceId", "ServiceName", "Name", "Kind",
+                       "DurationNano", "TagsKeys", "TagsValues", "References",
+                       "Events", "HasError", "StatusMessage", "StatusCodeString",
+                       "SpanKind"],
+          "events": [[col0_val, col1_val, ...], ...]}]
+
+        Returns list of span dicts with normalized field names.
+        """
+        if not isinstance(data, list) or not data:
+            return []
+
+        result_block = data[0]
+        columns: list[str] = result_block.get("columns", [])
+        events: list[list[Any]] = result_block.get("events", [])
+
+        if not columns or not events:
+            return []
+
+        # Build a column-name → index map (case-insensitive lookup)
+        col_index = {col.lower(): i for i, col in enumerate(columns)}
+
+        def get_col(row: list[Any], name: str, default: Any = None) -> Any:
+            idx = col_index.get(name.lower())
+            if idx is None or idx >= len(row):
+                return default
+            return row[idx]
+
+        spans = []
+        for row in events:
+            # TagsKeys and TagsValues are parallel arrays → merge into dict
+            tags_keys = get_col(row, "TagsKeys") or []
+            tags_values = get_col(row, "TagsValues") or []
+            attributes: dict[str, Any] = {}
+            if isinstance(tags_keys, list) and isinstance(tags_values, list):
+                for k, v in zip(tags_keys, tags_values):
+                    attributes[k] = v
+
+            # References encodes parent span ID
+            references = get_col(row, "References") or []
+            parent_span_id: str | None = None
+            if isinstance(references, list):
+                for ref in references:
+                    if isinstance(ref, dict) and ref.get("traceState") == "child_of":
+                        parent_span_id = ref.get("spanID")
+                        break
+
+            span = {
+                "spanID": get_col(row, "SpanId", ""),
+                "traceID": get_col(row, "TraceId", ""),
+                "serviceName": get_col(row, "ServiceName", ""),
+                "name": get_col(row, "Name", ""),
+                "durationNano": get_col(row, "DurationNano", 0),
+                "hasError": bool(get_col(row, "HasError", False)),
+                "statusMessage": get_col(row, "StatusMessage", ""),
+                "parentSpanID": parent_span_id,
+                "attributes": attributes,
+                "events": get_col(row, "Events") or [],
+            }
+            spans.append(span)
+
+        return spans
 
     @staticmethod
     def _parse_stack_trace(stack_trace: str) -> tuple[StackFrame, ...]:
         """Parse a stack trace string into StackFrame objects."""
         frames = []
-        lines = stack_trace.split("\n")
-
-        for line in lines:
+        for line in stack_trace.split("\n"):
             if not line.strip():
                 continue
-
-            # Simple heuristic: look for file:lineno patterns
             parts = line.split(":")
             if len(parts) >= 2:
                 try:
                     lineno = int(parts[-1])
                     filename = parts[-2]
                     module = ".".join(parts[:-2]) or "unknown"
-                    function = "unknown"
-
-                    frame = StackFrame(
-                        module=module,
-                        function=function,
-                        filename=filename,
-                        lineno=lineno,
+                    frames.append(
+                        StackFrame(
+                            module=module,
+                            function="unknown",
+                            filename=filename,
+                            lineno=lineno,
+                        )
                     )
-                    frames.append(frame)
                 except (ValueError, IndexError):
                     logger.debug(f"Skipped unparseable stack trace line: {line[:100]}")
-                    continue
-
         return tuple(frames)
 
     @staticmethod
     def _is_valid_identifier(name: str) -> bool:
-        """Validate that a name is a safe identifier (alphanumeric, dots, hyphens).
-
-        Used to prevent SQL injection in query construction.
-        """
+        """Validate that a name is a safe identifier (alphanumeric, dots, hyphens)."""
         if not name:
             return False
-        # Allow alphanumeric, dots, hyphens, underscores
         return all(c.isalnum() or c in "._-" for c in name)
 
     @staticmethod
     def _is_valid_trace_id(trace_id: str) -> bool:
-        """Validate that a trace ID is a safe hex string.
-
-        OpenTelemetry trace IDs are 128-bit hex strings (exactly 32 hex chars).
-        """
+        """Validate that a trace ID is a safe hex string (32 hex chars)."""
         if not trace_id or len(trace_id) != 32:
             return False
         return all(c in "0123456789abcdefABCDEF" for c in trace_id)

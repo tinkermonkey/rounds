@@ -25,13 +25,14 @@ class TestConfigurationLoading:
 
     def test_load_settings_with_defaults(self) -> None:
         """Load settings with default values."""
-        settings = load_settings()
-        assert settings.telemetry_backend == "signoz"
-        assert settings.store_backend == "sqlite"
-        assert settings.diagnosis_backend == "claude_code"
-        assert settings.run_mode == "daemon"
-        assert settings.poll_interval_seconds == 60
-        assert settings.log_level == "INFO"
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            settings = load_settings()
+            assert settings.telemetry_backend == "signoz"
+            assert settings.store_backend == "sqlite"
+            assert settings.diagnosis_backend == "claude_code"
+            assert settings.run_mode == "daemon"
+            assert settings.poll_interval_seconds == 60
+            assert settings.log_level == "INFO"
 
     def test_load_settings_from_env(self) -> None:
         """Load settings from environment variables."""
@@ -42,6 +43,7 @@ class TestConfigurationLoading:
                 "POLL_INTERVAL_SECONDS": "30",
                 "RUN_MODE": "cli",
                 "LOG_LEVEL": "DEBUG",
+                "ANTHROPIC_API_KEY": "sk-ant-test",
             },
         ):
             settings = load_settings()
@@ -160,7 +162,8 @@ class TestAdapterInstantiation:
         """Instantiate SigNoz telemetry adapter with configuration."""
         from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
 
-        settings = load_settings()
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            settings = load_settings()
         adapter = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
             api_key=settings.signoz_api_key,
@@ -185,7 +188,8 @@ class TestAdapterInstantiation:
             ClaudeCodeDiagnosisAdapter,
         )
 
-        settings = load_settings()
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            settings = load_settings()
         adapter = ClaudeCodeDiagnosisAdapter(
             model=settings.claude_model,
             budget_usd=settings.claude_code_budget_usd,
@@ -428,10 +432,11 @@ class TestConfigurationDefaults:
 
     def test_default_settings_reasonable_values(self) -> None:
         """Verify that default settings have reasonable values."""
-        settings = load_settings()
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            settings = load_settings()
 
         # Telemetry defaults
-        assert settings.signoz_api_url == "http://localhost:4418"
+        assert settings.signoz_api_url == "http://localhost:3301"
         assert settings.store_sqlite_path == "./data/signatures.db"
 
         # Polling defaults
