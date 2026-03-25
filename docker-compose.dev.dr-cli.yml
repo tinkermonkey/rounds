@@ -1,0 +1,98 @@
+# ============================================================================
+# Rounds Development Compose — documentation_robotics (dr-cli) target
+# ============================================================================
+#
+# Launches rounds from the local source tree against the documentation_robotics
+# project, providing a fully representative development environment.
+#
+# USAGE
+# -----
+# Run daemon (watches dr-cli traces, diagnoses errors):
+#   docker compose -f docker-compose.dev.dr-cli.yml up
+#
+# Interactive shell (run tests, type-check, invoke CLI manually):
+#   docker compose -f docker-compose.dev.dr-cli.yml run --rm rounds bash
+#
+# Attach to running container:
+#   docker compose -f docker-compose.dev.dr-cli.yml exec rounds bash
+#
+# LIVE EDITING
+# ------------
+# rounds/        → /workspace/rounds  (rw — installed in editable mode at startup)
+# ../documentation_robotics → /workspace/target  (ro — codebase under analysis)
+#
+# Changes to rounds Python source take effect on next restart/rerun.
+# No image rebuild needed.
+#
+# CONFIGURATION
+# -------------
+# All settings come from .env (copy from .env.rounds.template if missing).
+# Required: SIGNOZ_API_URL, SIGNOZ_API_KEY (or empty), CLAUDE_CODE_OAUTH_TOKEN
+#           or ANTHROPIC_API_KEY.
+# ============================================================================
+
+services:
+  rounds:
+    image: rounds-agent:latest
+    container_name: rounds-dr-cli-dev
+
+    # No auto-restart — fail fast during development
+    restart: "no"
+
+    # Keep stdin/tty open so `docker compose run --rm rounds bash` works
+    stdin_open: true
+    tty: true
+
+    # Load all config from .env; override deployment-specific paths below
+    env_file:
+      - .env
+
+    environment:
+      # Point at the mounted documentation_robotics project
+      CODEBASE_PATH: /workspace/target
+      # Write signatures DB and reports to host-visible local paths
+      STORE_SQLITE_PATH: /app/data/signatures.db
+      NOTIFICATION_OUTPUT_DIR: /app/reports
+      NOTIFICATION_BACKEND: markdown
+      # The rounds/ Python package lives inside the project root; adding the
+      # project root to PYTHONPATH makes `import rounds` resolve correctly.
+      PYTHONPATH: /workspace/rounds
+
+    # Ensure runtime dependencies are present, then start the application.
+    # PYTHONPATH makes the live source importable without an install step.
+    command:
+      - /bin/bash
+      - -c
+      - "set -e && mkdir -p /app/reports /app/data && pip install -q pydantic pydantic-settings httpx aiosqlite python-dotenv && exec python -m rounds.main"
+
+    volumes:
+      # Rounds project root — the rounds/ package lives one level inside here.
+      # PYTHONPATH=/workspace/rounds lets Python resolve `import rounds` from
+      # /workspace/rounds/rounds/__init__.py without any install step.
+      - .:/workspace/rounds:rw
+
+      # Target project codebase — read-only reference for diagnosis
+      - ../documentation_robotics:/workspace/target:ro
+
+      # Diagnosis reports — visible on host at ./reports/
+      - ./reports:/app/reports:rw
+
+      # Persistent signature database across restarts
+      - rounds-dr-cli-dev-data:/app/data:rw
+
+    working_dir: /workspace/rounds/rounds
+
+    # Reach the SigNoz instance running on the host (192.168.x.x / localhost)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rounds-dr-cli-dev-data:
+    name: rounds-dr-cli-dev-data
+    driver: local
