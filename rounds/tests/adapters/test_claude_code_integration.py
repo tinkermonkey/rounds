@@ -71,7 +71,7 @@ def investigation_context() -> InvestigationContext:
 
 @pytest.mark.asyncio
 async def test_adapter_initialization() -> None:
-    """Test Claude Code adapter initialization."""
+    """Test Claude Code adapter initialization with defaults."""
     adapter = ClaudeCodeDiagnosisAdapter(
         model="claude-sonnet",
         budget_usd=2.5,
@@ -79,6 +79,48 @@ async def test_adapter_initialization() -> None:
 
     assert adapter.model == "claude-sonnet"
     assert adapter.budget_usd == 2.5
+    assert adapter.api_key == ""
+    assert adapter.oauth_token == ""
+
+
+@pytest.mark.asyncio
+async def test_adapter_initialization_with_api_key() -> None:
+    """Test that api_key is stored and oauth_token remains empty."""
+    adapter = ClaudeCodeDiagnosisAdapter(
+        model="claude-opus",
+        budget_usd=2.0,
+        api_key="sk-ant-test-key",
+    )
+
+    assert adapter.api_key == "sk-ant-test-key"
+    assert adapter.oauth_token == ""
+
+
+@pytest.mark.asyncio
+async def test_adapter_initialization_with_oauth_token() -> None:
+    """Test that oauth_token is stored and api_key remains empty."""
+    adapter = ClaudeCodeDiagnosisAdapter(
+        model="claude-opus",
+        budget_usd=2.0,
+        oauth_token="oauth-test-token",
+    )
+
+    assert adapter.oauth_token == "oauth-test-token"
+    assert adapter.api_key == ""
+
+
+@pytest.mark.asyncio
+async def test_adapter_initialization_with_both_tokens() -> None:
+    """Test that both tokens can be stored simultaneously (precedence enforced at invocation)."""
+    adapter = ClaudeCodeDiagnosisAdapter(
+        model="claude-opus",
+        budget_usd=2.0,
+        api_key="sk-ant-test-key",
+        oauth_token="oauth-test-token",
+    )
+
+    assert adapter.api_key == "sk-ant-test-key"
+    assert adapter.oauth_token == "oauth-test-token"
 
 
 @pytest.mark.asyncio

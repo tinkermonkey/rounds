@@ -68,6 +68,65 @@ class TestConfigurationLoading:
             with pytest.raises(ValidationError):
                 load_settings()
 
+    def test_claude_code_auth_accepts_api_key_only(self) -> None:
+        """Claude Code backend accepts ANTHROPIC_API_KEY alone."""
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "claude_code",
+                "ANTHROPIC_API_KEY": "sk-ant-test",
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
+            },
+            clear=False,
+        ):
+            settings = load_settings()
+            assert settings.anthropic_api_key == "sk-ant-test"
+            assert settings.claude_code_oauth_token == ""
+
+    def test_claude_code_auth_accepts_oauth_token_only(self) -> None:
+        """Claude Code backend accepts CLAUDE_CODE_OAUTH_TOKEN alone."""
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "claude_code",
+                "ANTHROPIC_API_KEY": "",
+                "CLAUDE_CODE_OAUTH_TOKEN": "oauth-test-token",
+            },
+            clear=False,
+        ):
+            settings = load_settings()
+            assert settings.claude_code_oauth_token == "oauth-test-token"
+            assert settings.anthropic_api_key == ""
+
+    def test_claude_code_auth_accepts_both_tokens(self) -> None:
+        """Claude Code backend accepts both credentials (OAuth takes precedence at invocation)."""
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "claude_code",
+                "ANTHROPIC_API_KEY": "sk-ant-test",
+                "CLAUDE_CODE_OAUTH_TOKEN": "oauth-test-token",
+            },
+            clear=False,
+        ):
+            settings = load_settings()
+            assert settings.anthropic_api_key == "sk-ant-test"
+            assert settings.claude_code_oauth_token == "oauth-test-token"
+
+    def test_claude_code_auth_rejects_neither_token(self) -> None:
+        """Claude Code backend rejects config when neither credential is set."""
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "claude_code",
+                "ANTHROPIC_API_KEY": "",
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
+            },
+            clear=False,
+        ):
+            with pytest.raises(ValidationError, match="anthropic_api_key or claude_code_oauth_token"):
+                load_settings()
+
 
 class TestBootstrapErrorHandling:
     """Test bootstrap function error handling."""
