@@ -205,6 +205,24 @@ class Settings(BaseSettings):
         description="Enable debug mode with verbose logging",
     )
 
+    # Self-Telemetry configuration (for instrumenting rounds CLI itself)
+    enable_self_telemetry: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry instrumentation for rounds CLI operations",
+    )
+    self_telemetry_otlp_endpoint: str = Field(
+        default="",
+        description="OTLP HTTP endpoint URL for exporting rounds CLI telemetry (e.g., http://localhost:4318/v1/traces)",
+    )
+    self_telemetry_service_name: str = Field(
+        default="rounds-cli",
+        description="Service name for rounds CLI telemetry",
+    )
+    self_telemetry_console_export: bool = Field(
+        default=False,
+        description="Enable console export for rounds CLI telemetry (for debugging)",
+    )
+
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval(cls, v: int) -> int:

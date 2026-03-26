@@ -10,10 +10,14 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from rounds.core.models import Signature, SignatureDetails, TraceInvestigation
 from rounds.core.ports import ManagementPort
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class CLICommandHandler:
@@ -46,35 +50,50 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "mute", "signature_id": str, "message": str}
             - On error: {"status": "error", "operation": "mute", "signature_id": str, "message": str}
         """
-        try:
-            await self.management.mute_signature(signature_id, reason)
-
-            result = {
-                "status": "success",
-                "operation": "mute",
+        with tracer.start_as_current_span(
+            "cli.mute_signature",
+            attributes={
                 "signature_id": signature_id,
-                "message": f"Signature {signature_id} muted",
-            }
+                "reason": reason or "",
+                "verbose": verbose,
+            },
+        ) as span:
+            try:
+                await self.management.mute_signature(signature_id, reason)
 
-            if reason:
-                result["reason"] = reason
+                result = {
+                    "status": "success",
+                    "operation": "mute",
+                    "signature_id": signature_id,
+                    "message": f"Signature {signature_id} muted",
+                }
 
-            if verbose:
-                logger.info(
-                    f"Muted signature {signature_id}",
-                    extra={"reason": reason, "verbose": True},
-                )
+                if reason:
+                    result["reason"] = reason
 
-            return result
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.status", "success")
 
-        except Exception as e:
-            logger.error(f"Failed to mute signature: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "mute",
-                "signature_id": signature_id,
-                "message": str(e),
-            }
+                if verbose:
+                    logger.info(
+                        f"Muted signature {signature_id}",
+                        extra={"reason": reason, "verbose": True},
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to mute signature: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
+                return {
+                    "status": "error",
+                    "operation": "mute",
+                    "signature_id": signature_id,
+                    "message": str(e),
+                }
 
     async def resolve_signature(
         self,
@@ -94,35 +113,50 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "resolve", "signature_id": str, "message": str}
             - On error: {"status": "error", "operation": "resolve", "signature_id": str, "message": str}
         """
-        try:
-            await self.management.resolve_signature(signature_id, fix_applied)
-
-            result = {
-                "status": "success",
-                "operation": "resolve",
+        with tracer.start_as_current_span(
+            "cli.resolve_signature",
+            attributes={
                 "signature_id": signature_id,
-                "message": f"Signature {signature_id} resolved",
-            }
+                "fix_applied": fix_applied or "",
+                "verbose": verbose,
+            },
+        ) as span:
+            try:
+                await self.management.resolve_signature(signature_id, fix_applied)
 
-            if fix_applied:
-                result["fix_applied"] = fix_applied
+                result = {
+                    "status": "success",
+                    "operation": "resolve",
+                    "signature_id": signature_id,
+                    "message": f"Signature {signature_id} resolved",
+                }
 
-            if verbose:
-                logger.info(
-                    f"Resolved signature {signature_id}",
-                    extra={"fix_applied": fix_applied, "verbose": True},
-                )
+                if fix_applied:
+                    result["fix_applied"] = fix_applied
 
-            return result
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.status", "success")
 
-        except Exception as e:
-            logger.error(f"Failed to resolve signature: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "resolve",
-                "signature_id": signature_id,
-                "message": str(e),
-            }
+                if verbose:
+                    logger.info(
+                        f"Resolved signature {signature_id}",
+                        extra={"fix_applied": fix_applied, "verbose": True},
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to resolve signature: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
+                return {
+                    "status": "error",
+                    "operation": "resolve",
+                    "signature_id": signature_id,
+                    "message": str(e),
+                }
 
     async def retriage_signature(
         self, signature_id: str, verbose: bool = False
@@ -138,32 +172,46 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "retriage", "signature_id": str, "message": str}
             - On error: {"status": "error", "operation": "retriage", "signature_id": str, "message": str}
         """
-        try:
-            await self.management.retriage_signature(signature_id)
-
-            result = {
-                "status": "success",
-                "operation": "retriage",
+        with tracer.start_as_current_span(
+            "cli.retriage_signature",
+            attributes={
                 "signature_id": signature_id,
-                "message": f"Signature {signature_id} retriaged and queued for re-investigation",
-            }
+                "verbose": verbose,
+            },
+        ) as span:
+            try:
+                await self.management.retriage_signature(signature_id)
 
-            if verbose:
-                logger.info(
-                    f"Retriaged signature {signature_id}",
-                    extra={"verbose": True},
-                )
+                result = {
+                    "status": "success",
+                    "operation": "retriage",
+                    "signature_id": signature_id,
+                    "message": f"Signature {signature_id} retriaged and queued for re-investigation",
+                }
 
-            return result
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.status", "success")
 
-        except Exception as e:
-            logger.error(f"Failed to retriage signature: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "retriage",
-                "signature_id": signature_id,
-                "message": str(e),
-            }
+                if verbose:
+                    logger.info(
+                        f"Retriaged signature {signature_id}",
+                        extra={"verbose": True},
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to retriage signature: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
+                return {
+                    "status": "error",
+                    "operation": "retriage",
+                    "signature_id": signature_id,
+                    "message": str(e),
+                }
 
     async def get_signature_details(
         self, signature_id: str, output_format: str = "json"
@@ -179,40 +227,59 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "get_details", "data": {...}}
             - On error: {"status": "error", "operation": "get_details", "message": str}
         """
-        try:
-            details = await self.management.get_signature_details(signature_id)
+        with tracer.start_as_current_span(
+            "cli.get_signature_details",
+            attributes={
+                "signature_id": signature_id,
+                "output_format": output_format,
+            },
+        ) as span:
+            try:
+                details = await self.management.get_signature_details(signature_id)
 
-            if output_format == "json":
-                return {
-                    "status": "success",
-                    "operation": "get_details",
-                    "data": details,
-                }
+                if output_format == "json":
+                    span.set_status(Status(StatusCode.OK))
+                    span.set_attribute("result.status", "success")
+                    return {
+                        "status": "success",
+                        "operation": "get_details",
+                        "data": details,
+                    }
 
-            elif output_format == "text":
-                # Convert to human-readable text format
-                text_output = self._format_details_as_text(details)
-                return {
-                    "status": "success",
-                    "operation": "get_details",
-                    "data": text_output,
-                }
+                elif output_format == "text":
+                    # Convert to human-readable text format
+                    text_output = self._format_details_as_text(details)
+                    span.set_status(Status(StatusCode.OK))
+                    span.set_attribute("result.status", "success")
+                    return {
+                        "status": "success",
+                        "operation": "get_details",
+                        "data": text_output,
+                    }
 
-            else:
+                else:
+                    error_msg = f"Unsupported format: {output_format}"
+                    span.set_status(Status(StatusCode.ERROR, error_msg))
+                    span.set_attribute("result.status", "error")
+                    span.set_attribute("error.type", "UnsupportedFormat")
+                    return {
+                        "status": "error",
+                        "operation": "get_details",
+                        "message": error_msg,
+                    }
+
+            except Exception as e:
+                logger.error(f"Failed to get signature details: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
                 return {
                     "status": "error",
                     "operation": "get_details",
-                    "message": f"Unsupported format: {output_format}",
+                    "signature_id": signature_id,
+                    "message": str(e),
                 }
-
-        except Exception as e:
-            logger.error(f"Failed to get signature details: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "get_details",
-                "signature_id": signature_id,
-                "message": str(e),
-            }
 
     def _format_details_as_text(self, details: SignatureDetails) -> str:
         """Format signature details as human-readable text.
@@ -282,56 +349,76 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "list", "signatures": [...]}
             - On error: {"status": "error", "operation": "list", "message": str}
         """
-        try:
-            from rounds.core.models import SignatureStatus
+        with tracer.start_as_current_span(
+            "cli.list_signatures",
+            attributes={
+                "status_filter": status or "all",
+                "output_format": output_format,
+            },
+        ) as span:
+            try:
+                from rounds.core.models import SignatureStatus
 
-            status_enum = None
-            if status:
-                status_enum = SignatureStatus(status.lower())
+                status_enum = None
+                if status:
+                    status_enum = SignatureStatus(status.lower())
 
-            signatures = await self.management.list_signatures(status_enum)
+                signatures = await self.management.list_signatures(status_enum)
+                span.set_attribute("result.count", len(signatures))
 
-            if output_format == "json":
-                return {
-                    "status": "success",
-                    "operation": "list",
-                    "signatures": [
-                        {
-                            "id": sig.id,
-                            "fingerprint": sig.fingerprint,
-                            "error_type": sig.error_type,
-                            "service": sig.service,
-                            "status": sig.status.value,
-                            "occurrence_count": sig.occurrence_count,
-                            "first_seen": sig.first_seen.isoformat(),
-                            "last_seen": sig.last_seen.isoformat(),
-                        }
-                        for sig in signatures
-                    ],
-                }
+                if output_format == "json":
+                    span.set_status(Status(StatusCode.OK))
+                    span.set_attribute("result.status", "success")
+                    return {
+                        "status": "success",
+                        "operation": "list",
+                        "signatures": [
+                            {
+                                "id": sig.id,
+                                "fingerprint": sig.fingerprint,
+                                "error_type": sig.error_type,
+                                "service": sig.service,
+                                "status": sig.status.value,
+                                "occurrence_count": sig.occurrence_count,
+                                "first_seen": sig.first_seen.isoformat(),
+                                "last_seen": sig.last_seen.isoformat(),
+                            }
+                            for sig in signatures
+                        ],
+                    }
 
-            elif output_format == "text":
-                text_output = self._format_signatures_as_text(signatures)
-                return {
-                    "status": "success",
-                    "operation": "list",
-                    "data": text_output,
-                }
+                elif output_format == "text":
+                    text_output = self._format_signatures_as_text(signatures)
+                    span.set_status(Status(StatusCode.OK))
+                    span.set_attribute("result.status", "success")
+                    return {
+                        "status": "success",
+                        "operation": "list",
+                        "data": text_output,
+                    }
 
-            else:
+                else:
+                    error_msg = f"Unsupported format: {output_format}"
+                    span.set_status(Status(StatusCode.ERROR, error_msg))
+                    span.set_attribute("result.status", "error")
+                    span.set_attribute("error.type", "UnsupportedFormat")
+                    return {
+                        "status": "error",
+                        "operation": "list",
+                        "message": error_msg,
+                    }
+
+            except Exception as e:
+                logger.error(f"Failed to list signatures: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
                 return {
                     "status": "error",
                     "operation": "list",
-                    "message": f"Unsupported format: {output_format}",
+                    "message": str(e),
                 }
-
-        except Exception as e:
-            logger.error(f"Failed to list signatures: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "list",
-                "message": str(e),
-            }
 
     async def reinvestigate_signature(
         self, signature_id: str, verbose: bool = False
@@ -347,42 +434,59 @@ class CLICommandHandler:
             - On success: {"status": "success", "operation": "reinvestigate", "signature_id": str, "diagnosis": {...}}
             - On error: {"status": "error", "operation": "reinvestigate", "signature_id": str, "message": str}
         """
-        try:
-            diagnosis = await self.management.reinvestigate(signature_id)
-
-            result = {
-                "status": "success",
-                "operation": "reinvestigate",
+        with tracer.start_as_current_span(
+            "cli.reinvestigate_signature",
+            attributes={
                 "signature_id": signature_id,
-                "diagnosis": {
-                    "root_cause": diagnosis.root_cause,
-                    "confidence": diagnosis.confidence,
-                    "suggested_fix": diagnosis.suggested_fix,
-                    "cost_usd": diagnosis.cost_usd,
-                    "model": diagnosis.model,
-                },
-            }
+                "verbose": verbose,
+            },
+        ) as span:
+            try:
+                diagnosis = await self.management.reinvestigate(signature_id)
 
-            if verbose:
-                logger.info(
-                    f"Reinvestigated signature {signature_id}",
-                    extra={
+                result = {
+                    "status": "success",
+                    "operation": "reinvestigate",
+                    "signature_id": signature_id,
+                    "diagnosis": {
+                        "root_cause": diagnosis.root_cause,
                         "confidence": diagnosis.confidence,
+                        "suggested_fix": diagnosis.suggested_fix,
                         "cost_usd": diagnosis.cost_usd,
-                        "verbose": True,
+                        "model": diagnosis.model,
                     },
-                )
+                }
 
-            return result
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.status", "success")
+                span.set_attribute("diagnosis.confidence", diagnosis.confidence)
+                span.set_attribute("diagnosis.cost_usd", diagnosis.cost_usd)
+                span.set_attribute("diagnosis.model", diagnosis.model)
 
-        except Exception as e:
-            logger.error(f"Failed to reinvestigate signature: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "reinvestigate",
-                "signature_id": signature_id,
-                "message": str(e),
-            }
+                if verbose:
+                    logger.info(
+                        f"Reinvestigated signature {signature_id}",
+                        extra={
+                            "confidence": diagnosis.confidence,
+                            "cost_usd": diagnosis.cost_usd,
+                            "verbose": True,
+                        },
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to reinvestigate signature: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
+                return {
+                    "status": "error",
+                    "operation": "reinvestigate",
+                    "signature_id": signature_id,
+                    "message": str(e),
+                }
 
     async def investigate_trace(
         self, trace_id: str, verbose: bool = False
@@ -404,32 +508,50 @@ class CLICommandHandler:
             - On error: {"status": "error", "operation": "investigate-trace",
                          "trace_id": str, "message": str}
         """
-        try:
-            investigation = await self.management.investigate_trace(trace_id)
-
-            result: dict[str, Any] = {
-                "status": "success",
-                "operation": "investigate-trace",
+        with tracer.start_as_current_span(
+            "cli.investigate_trace",
+            attributes={
                 "trace_id": trace_id,
-                "investigation": self._format_trace_investigation(investigation),
-            }
+                "verbose": verbose,
+            },
+        ) as span:
+            try:
+                investigation = await self.management.investigate_trace(trace_id)
 
-            if verbose:
-                logger.info(
-                    f"Investigated trace {trace_id}",
-                    extra={"cost_usd": investigation.cost_usd, "model": investigation.model},
-                )
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "operation": "investigate-trace",
+                    "trace_id": trace_id,
+                    "investigation": self._format_trace_investigation(investigation),
+                }
 
-            return result
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.status", "success")
+                span.set_attribute("investigation.cost_usd", investigation.cost_usd)
+                span.set_attribute("investigation.model", investigation.model)
+                span.set_attribute("investigation.services_count", len(investigation.services_involved))
+                span.set_attribute("investigation.key_findings_count", len(investigation.key_findings))
 
-        except Exception as e:
-            logger.error(f"Failed to investigate trace: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "operation": "investigate-trace",
-                "trace_id": trace_id,
-                "message": str(e),
-            }
+                if verbose:
+                    logger.info(
+                        f"Investigated trace {trace_id}",
+                        extra={"cost_usd": investigation.cost_usd, "model": investigation.model},
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to investigate trace: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("result.status", "error")
+                span.set_attribute("error.type", type(e).__name__)
+                return {
+                    "status": "error",
+                    "operation": "investigate-trace",
+                    "trace_id": trace_id,
+                    "message": str(e),
+                }
 
     def _format_trace_investigation(self, inv: TraceInvestigation) -> dict[str, Any]:
         """Serialize a TraceInvestigation to a JSON-compatible dict."""

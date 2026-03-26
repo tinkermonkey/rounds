@@ -21,6 +21,8 @@ import sys
 import urllib.parse
 from typing import Any, Literal
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 
 from rounds.adapters.cli.commands import CLICommandHandler
@@ -199,64 +201,96 @@ async def _execute_cli_command(
     Raises:
         ValueError: If command is unknown or required parameters are missing.
     """
-    if command == "list":
-        return await cli_handler.list_signatures(
-            status=args.get("status"),
-            output_format=args.get("format", "json"),
-        )
+    tracer = trace.get_tracer(__name__)
 
-    elif command == "details":
-        if "signature_id" not in args:
-            raise ValueError("Missing required parameter: signature_id")
-        return await cli_handler.get_signature_details(
-            signature_id=args["signature_id"],
-            output_format=args.get("format", "json"),
-        )
+    with tracer.start_as_current_span(
+        f"rounds.cli.command.{command}",
+        attributes={"command": command},
+    ) as span:
+        try:
+            if command == "list":
+                result = await cli_handler.list_signatures(
+                    status=args.get("status"),
+                    output_format=args.get("format", "json"),
+                )
 
-    elif command == "mute":
-        if "signature_id" not in args:
-            raise ValueError("Missing required parameter: signature_id")
-        return await cli_handler.mute_signature(
-            signature_id=args["signature_id"],
-            reason=args.get("reason"),
-            verbose=args.get("verbose", False),
-        )
+            elif command == "details":
+                if "signature_id" not in args:
+                    raise ValueError("Missing required parameter: signature_id")
+                span.set_attribute("signature_id", args["signature_id"])
+                result = await cli_handler.get_signature_details(
+                    signature_id=args["signature_id"],
+                    output_format=args.get("format", "json"),
+                )
 
-    elif command == "resolve":
-        if "signature_id" not in args:
-            raise ValueError("Missing required parameter: signature_id")
-        return await cli_handler.resolve_signature(
-            signature_id=args["signature_id"],
-            fix_applied=args.get("fix_applied"),
-            verbose=args.get("verbose", False),
-        )
+            elif command == "mute":
+                if "signature_id" not in args:
+                    raise ValueError("Missing required parameter: signature_id")
+                span.set_attribute("signature_id", args["signature_id"])
+                result = await cli_handler.mute_signature(
+                    signature_id=args["signature_id"],
+                    reason=args.get("reason"),
+                    verbose=args.get("verbose", False),
+                )
 
-    elif command == "retriage":
-        if "signature_id" not in args:
-            raise ValueError("Missing required parameter: signature_id")
-        return await cli_handler.retriage_signature(
-            signature_id=args["signature_id"],
-            verbose=args.get("verbose", False),
-        )
+            elif command == "resolve":
+                if "signature_id" not in args:
+                    raise ValueError("Missing required parameter: signature_id")
+                span.set_attribute("signature_id", args["signature_id"])
+                result = await cli_handler.resolve_signature(
+                    signature_id=args["signature_id"],
+                    fix_applied=args.get("fix_applied"),
+                    verbose=args.get("verbose", False),
+                )
 
-    elif command == "reinvestigate":
-        if "signature_id" not in args:
-            raise ValueError("Missing required parameter: signature_id")
-        return await cli_handler.reinvestigate_signature(
-            signature_id=args["signature_id"],
-            verbose=args.get("verbose", False),
-        )
+            elif command == "retriage":
+                if "signature_id" not in args:
+                    raise ValueError("Missing required parameter: signature_id")
+                span.set_attribute("signature_id", args["signature_id"])
+                result = await cli_handler.retriage_signature(
+                    signature_id=args["signature_id"],
+                    verbose=args.get("verbose", False),
+                )
 
-    elif command == "investigate-trace":
-        if "trace_id" not in args:
-            raise ValueError("Missing required parameter: trace_id")
-        return await cli_handler.investigate_trace(
-            trace_id=args["trace_id"],
-            verbose=args.get("verbose", False),
-        )
+            elif command == "reinvestigate":
+                if "signature_id" not in args:
+                    raise ValueError("Missing required parameter: signature_id")
+                span.set_attribute("signature_id", args["signature_id"])
+                result = await cli_handler.reinvestigate_signature(
+                    signature_id=args["signature_id"],
+                    verbose=args.get("verbose", False),
+                )
 
-    else:
-        raise ValueError(f"Unknown command: {command}. Use 'help' for available commands.")
+            elif command == "investigate-trace":
+                if "trace_id" not in args:
+                    raise ValueError("Missing required parameter: trace_id")
+                span.set_attribute("trace_id", args["trace_id"])
+                result = await cli_handler.investigate_trace(
+                    trace_id=args["trace_id"],
+                    verbose=args.get("verbose", False),
+                )
+
+            else:
+                error_msg = f"Unknown command: {command}. Use 'help' for available commands."
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.set_attribute("error.type", "UnknownCommand")
+                raise ValueError(error_msg)
+
+            # Set span status based on result
+            span.set_status(Status(StatusCode.OK))
+            span.set_attribute("result.status", result.get("status", "unknown"))
+            return result
+
+        except ValueError as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error.type", "ValueError")
+            raise
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error.type", type(e).__name__)
+            raise
 
 
 async def _run_scan(poll_service: PollService) -> None:
@@ -274,37 +308,54 @@ async def _run_scan(poll_service: PollService) -> None:
         SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
     """
     logger = logging.getLogger(__name__)
-    try:
-        # Execute single poll cycle
-        result = await poll_service.execute_poll_cycle()
+    tracer = trace.get_tracer(__name__)
 
-        # Output JSON to stdout
-        output = {
-            "status": "success",
-            "new_signatures": result.new_signatures,
-            "updated_signatures": result.updated_signatures,
-            "errors_processed": result.errors_found,
-            "errors_failed": result.errors_failed_to_process,
-            "investigations_queued": result.investigations_queued,
-            "timestamp": result.timestamp.isoformat(),
-        }
-        print(json.dumps(output, indent=2))
+    with tracer.start_as_current_span("rounds.scan") as span:
+        try:
+            # Execute single poll cycle
+            result = await poll_service.execute_poll_cycle()
 
-    except ConnectionError as e:
-        # Telemetry backend unreachable
-        logger.error(f"Scan command failed: telemetry service unreachable: {e}", exc_info=True)
-        output = {
-            "status": "error",
-            "error_type": "connection_error",
-            "message": f"Telemetry service unreachable: {e!s}"
-        }
-        print(json.dumps(output, indent=2), file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Scan command failed: {e}", exc_info=True)
-        output = {"status": "error", "message": str(e)}
-        print(json.dumps(output, indent=2), file=sys.stderr)
-        sys.exit(1)
+            # Output JSON to stdout
+            output = {
+                "status": "success",
+                "new_signatures": result.new_signatures,
+                "updated_signatures": result.updated_signatures,
+                "errors_processed": result.errors_found,
+                "errors_failed": result.errors_failed_to_process,
+                "investigations_queued": result.investigations_queued,
+                "timestamp": result.timestamp.isoformat(),
+            }
+
+            span.set_status(Status(StatusCode.OK))
+            span.set_attribute("result.new_signatures", result.new_signatures)
+            span.set_attribute("result.updated_signatures", result.updated_signatures)
+            span.set_attribute("result.errors_processed", result.errors_found)
+            span.set_attribute("result.errors_failed", result.errors_failed_to_process)
+            span.set_attribute("result.investigations_queued", result.investigations_queued)
+
+            print(json.dumps(output, indent=2))
+
+        except ConnectionError as e:
+            # Telemetry backend unreachable
+            logger.error(f"Scan command failed: telemetry service unreachable: {e}", exc_info=True)
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error.type", "ConnectionError")
+            output = {
+                "status": "error",
+                "error_type": "connection_error",
+                "message": f"Telemetry service unreachable: {e!s}"
+            }
+            print(json.dumps(output, indent=2), file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Scan command failed: {e}", exc_info=True)
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error.type", type(e).__name__)
+            output = {"status": "error", "message": str(e)}
+            print(json.dumps(output, indent=2), file=sys.stderr)
+            sys.exit(1)
 
 
 async def _run_cli_once(
@@ -374,32 +425,54 @@ async def _run_diagnose(
         SystemExit: Calls sys.exit(1) on any error (does not raise, but terminates process).
     """
     logger = logging.getLogger(__name__)
-    try:
-        # Retrieve signature
-        signature = await store.get_by_id(signature_id)
-        if not signature:
-            raise ValueError(f"Signature not found: {signature_id}")
+    tracer = trace.get_tracer(__name__)
 
-        # Investigate
-        diagnosis = await investigator.investigate(signature)
+    with tracer.start_as_current_span(
+        "rounds.diagnose",
+        attributes={"signature_id": signature_id},
+    ) as span:
+        try:
+            # Retrieve signature
+            signature = await store.get_by_id(signature_id)
+            if not signature:
+                error_msg = f"Signature not found: {signature_id}"
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.set_attribute("error.type", "SignatureNotFound")
+                raise ValueError(error_msg)
 
-        # Output JSON to stdout
-        output = {
-            "status": "success",
-            "signature_id": signature_id,
-            "root_cause": diagnosis.root_cause,
-            "confidence": diagnosis.confidence,
-            "cost_usd": diagnosis.cost_usd,
-            "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
-            "model": diagnosis.model,
-        }
-        print(json.dumps(output, indent=2))
+            span.set_attribute("signature.service", signature.service)
+            span.set_attribute("signature.error_type", signature.error_type)
+            span.set_attribute("signature.fingerprint", signature.fingerprint)
 
-    except Exception as e:
-        logger.error(f"Diagnose command failed: {e}", exc_info=True)
-        output = {"status": "error", "message": str(e)}
-        print(json.dumps(output, indent=2), file=sys.stderr)
-        sys.exit(1)
+            # Investigate
+            diagnosis = await investigator.investigate(signature)
+
+            # Output JSON to stdout
+            output = {
+                "status": "success",
+                "signature_id": signature_id,
+                "root_cause": diagnosis.root_cause,
+                "confidence": diagnosis.confidence,
+                "cost_usd": diagnosis.cost_usd,
+                "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
+                "model": diagnosis.model,
+            }
+
+            span.set_status(Status(StatusCode.OK))
+            span.set_attribute("diagnosis.confidence", diagnosis.confidence)
+            span.set_attribute("diagnosis.cost_usd", diagnosis.cost_usd)
+            span.set_attribute("diagnosis.model", diagnosis.model)
+
+            print(json.dumps(output, indent=2))
+
+        except Exception as e:
+            logger.error(f"Diagnose command failed: {e}", exc_info=True)
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error.type", type(e).__name__)
+            output = {"status": "error", "message": str(e)}
+            print(json.dumps(output, indent=2), file=sys.stderr)
+            sys.exit(1)
 
 
 def _print_cli_help() -> None:
@@ -591,6 +664,22 @@ async def bootstrap(
     configure_logging(settings.log_level, settings.log_format)
     logger = logging.getLogger(__name__)
     logger.info("Loading Rounds diagnostic system...")
+
+    # Step 2.5: Initialize telemetry if enabled
+    tracer: trace.Tracer | None = None
+    if settings.enable_self_telemetry:
+        from rounds.telemetry import initialize_telemetry
+
+        tracer = initialize_telemetry(
+            service_name=settings.self_telemetry_service_name,
+            otlp_endpoint=settings.self_telemetry_otlp_endpoint or None,
+            enable_console_export=settings.self_telemetry_console_export,
+        )
+        logger.info("Self-telemetry enabled")
+    else:
+        # Use a no-op tracer if telemetry is disabled
+        tracer = trace.get_tracer(__name__)
+        logger.debug("Self-telemetry disabled")
 
     # Step 3: Instantiate adapters
     logger.info("Initializing adapters...")
@@ -865,6 +954,15 @@ async def bootstrap(
                 cleanup_critical_error = e
         except Exception:
             logger.error("Failed to close notification adapter", exc_info=True)
+
+        # Shutdown self-telemetry last to capture all cleanup operations
+        if settings.enable_self_telemetry:
+            try:
+                from rounds.telemetry import shutdown_telemetry
+
+                shutdown_telemetry()
+            except Exception as e:
+                logger.error("Failed to shutdown self-telemetry", exc_info=True)
 
         # Re-raise first critical error after all cleanup attempts
         if cleanup_critical_error is not None:
