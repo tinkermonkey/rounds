@@ -60,6 +60,7 @@ x-rounds-base: &rounds-base
     NOTIFICATION_OUTPUT_DIR: /app/reports
     NOTIFICATION_BACKEND: markdown
     PYTHONPATH: /workspace/rounds
+    DISABLE_AUTOUPDATER: "1"
   entrypoint:
     - /bin/bash
     - -c
