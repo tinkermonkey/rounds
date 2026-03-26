@@ -126,8 +126,6 @@ services:
     command:
       - claude
       - --dangerously-skip-permissions
-      - --cwd
-      - /workspace/target
       - --add-dir
       - /workspace/rounds
 
