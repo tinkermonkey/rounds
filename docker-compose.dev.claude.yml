@@ -17,7 +17,7 @@
 # LIVE EDITING
 # ------------
 # rounds/        → /workspace/rounds  (rw — edits take effect immediately)
-# ../documentation_robotics → /workspace/target  (ro — codebase under analysis)
+# ../documentation_robotics → /workspace/target  (rw — codebase under analysis)
 #
 # SKILLS AVAILABLE IN THE ROUNDS CONTEXT
 # ---------------------------------------
@@ -72,7 +72,7 @@ x-rounds-base: &rounds-base
     - --
   volumes:
     - .:/workspace/rounds:rw
-    - ../documentation_robotics:/workspace/target:ro
+    - ../documentation_robotics:/workspace/target:rw
     - ./reports:/app/reports:rw
     - rounds-dr-cli-dev-data:/app/data:rw
     # Mount host ~/.claude/ and ~/.claude.json so interactive claude finds

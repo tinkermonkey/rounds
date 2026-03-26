@@ -10,7 +10,7 @@ under analysis.
 |------|---------|----------|
 | `/workspace/rounds/` | Rounds project root (this repo) | yes |
 | `/workspace/rounds/rounds/` | Python package source | yes |
-| `/workspace/target/` | Target codebase under analysis | no |
+| `/workspace/target/` | Target codebase under analysis | yes |
 | `/app/data/signatures.db` | Signature database | yes |
 | `/app/reports/` | Diagnosis report output | yes |
 
@@ -87,9 +87,8 @@ Use these slash commands in this Claude session:
 
 ## Working with the Target Codebase
 
-The target project is mounted read-only at `/workspace/target/`. You can read its
-source files to understand the code that rounds is analysing. Do not modify files
-there.
+The target project is mounted read-write at `/workspace/target/`. You can read and
+modify its source files — changes go directly to the host filesystem.
 
 ## Switching to Target Project Context
 
