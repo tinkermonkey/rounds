@@ -397,6 +397,32 @@ class StoreStats:
 
 
 @dataclass(frozen=True)
+class TraceInvestigation:
+    """Result of an ad-hoc trace investigation (code flow analysis).
+
+    Produced by DiagnosisPort.investigate_trace() in response to a
+    user-initiated `investigate-trace` command. Focused on explaining
+    what the trace *does*, not diagnosing an error.
+    """
+
+    trace_id: str
+    summary: str  # one-paragraph explanation of the request's end-to-end behaviour
+    code_flow: tuple[str, ...]  # ordered steps describing the call chain
+    services_involved: tuple[str, ...]
+    key_findings: tuple[str, ...]  # notable observations (perf, patterns, issues)
+    model: str
+    cost_usd: float
+    investigated_at: datetime
+
+    def __post_init__(self) -> None:
+        """Validate invariants on creation."""
+        if self.cost_usd < 0:
+            raise ValueError(
+                f"cost_usd must be non-negative, got {self.cost_usd}"
+            )
+
+
+@dataclass(frozen=True)
 class SignatureDetails:
     """Detailed information about a signature.
 

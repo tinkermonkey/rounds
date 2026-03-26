@@ -1,0 +1,136 @@
+# ============================================================================
+# Rounds Development Compose — Claude Code as the interface
+# ============================================================================
+#
+# Launches rounds source + target codebase inside a container and opens a
+# Claude Code session as the interactive interface, replacing the plain bash
+# shell used in docker-compose.dev.dr-cli.yml.
+#
+# USAGE
+# -----
+# Claude in rounds project context (edit rounds source, run CLI skills):
+#   docker compose -f docker-compose.dev.claude.yml run --rm rounds-claude
+#
+# Claude in target project context (access target CLAUDE.md and its agents):
+#   docker compose -f docker-compose.dev.claude.yml run --rm rounds-target-claude
+#
+# LIVE EDITING
+# ------------
+# rounds/        → /workspace/rounds  (rw — edits take effect immediately)
+# ../documentation_robotics → /workspace/target  (ro — codebase under analysis)
+#
+# SKILLS AVAILABLE IN THE ROUNDS CONTEXT
+# ---------------------------------------
+# /rounds-investigate TRACE_ID     — investigate a distributed trace
+# /rounds-list [STATUS]            — list error signatures
+# /rounds-details SIGNATURE_ID     — full signature details
+# /rounds-reinvestigate SIG_ID     — re-run LLM diagnosis
+# /rounds-mute SIG_ID [REASON]     — mute a signature
+# /rounds-resolve SIG_ID           — mark a signature resolved
+# /rounds-daemon                   — start the polling daemon
+# /rounds-test                     — run pytest
+# /rounds-check                    — mypy + ruff
+#
+# CONFIGURATION
+# -------------
+# All settings come from .env (copy from .env.rounds.template if missing).
+# Required: SIGNOZ_API_URL, SIGNOZ_API_KEY (or empty), CLAUDE_CODE_OAUTH_TOKEN
+#           or ANTHROPIC_API_KEY.
+#
+# AUTH
+# ----
+# CLAUDE_CODE_OAUTH_TOKEN in .env is used directly by the Claude Code CLI.
+# No ~/.claude/ mount is needed — the env var is sufficient.
+# To refresh the token: copy claudeAiOauth.accessToken from ~/.claude/.credentials.json
+# ============================================================================
+
+x-rounds-base: &rounds-base
+  image: rounds-agent:latest
+  restart: "no"
+  stdin_open: true
+  tty: true
+  # All config including CLAUDE_CODE_OAUTH_TOKEN comes from .env.
+  # Do not duplicate vars in environment: — env_file takes effect first and
+  # environment: overrides it, so duplicate bare references can shadow the value.
+  env_file:
+    - .env
+  environment:
+    CODEBASE_PATH: /workspace/target
+    STORE_SQLITE_PATH: /app/data/signatures.db
+    NOTIFICATION_OUTPUT_DIR: /app/reports
+    NOTIFICATION_BACKEND: markdown
+    PYTHONPATH: /workspace/rounds
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      mkdir -p /app/reports /app/data
+      pip install -q pydantic pydantic-settings httpx aiosqlite python-dotenv
+      exec "$@"
+    - --
+  volumes:
+    - .:/workspace/rounds:rw
+    - ../documentation_robotics:/workspace/target:ro
+    - ./reports:/app/reports:rw
+    - rounds-dr-cli-dev-data:/app/data:rw
+    # Mount host ~/.claude/ and ~/.claude.json so interactive claude finds
+    # valid credentials and matching userID. The image bakes in a ~/.claude.json
+    # with a different userID, causing the setup wizard to trigger even when
+    # credentials are present.
+    - ~/.claude:/home/orchestrator/.claude:rw
+    - ~/.claude.json:/home/orchestrator/.claude.json:rw
+    # Inject container-level context as a CLAUDE.md one directory above the
+    # project root — Claude Code reads CLAUDE.md from CWD and all parent dirs,
+    # so /workspace/CLAUDE.md is loaded automatically.
+    - ./docker/dev-claude/workspace-CLAUDE.md:/workspace/CLAUDE.md:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # rounds-claude: Claude Code rooted in the rounds project
+  #
+  # Use this to work on rounds source code, run CLI skills, investigate traces,
+  # and iterate on changes without restarting the container.
+  # ---------------------------------------------------------------------------
+  rounds-claude:
+    <<: *rounds-base
+    container_name: rounds-dr-cli-claude
+    # Project root as CWD so Claude sees the full source tree and picks up
+    # /workspace/rounds/CLAUDE.md (project conventions) and
+    # /workspace/rounds/.claude/ (skills and agents).
+    working_dir: /workspace/rounds
+    command:
+      - claude
+      - --dangerously-skip-permissions
+
+  # ---------------------------------------------------------------------------
+  # rounds-target-claude: Claude Code rooted in the target project
+  #
+  # Use this when you want Claude to operate within the target codebase's own
+  # CLAUDE.md, skills, and agents — e.g. to understand application code that
+  # rounds is diagnosing, or to use project-specific tooling defined there.
+  # Rounds source is also added so rounds skills remain available.
+  # ---------------------------------------------------------------------------
+  rounds-target-claude:
+    <<: *rounds-base
+    container_name: rounds-dr-cli-claude-target
+    working_dir: /workspace/target
+    command:
+      - claude
+      - --dangerously-skip-permissions
+      - --cwd
+      - /workspace/target
+      - --add-dir
+      - /workspace/rounds
+
+volumes:
+  rounds-dr-cli-dev-data:
+    name: rounds-dr-cli-dev-data
+    driver: local

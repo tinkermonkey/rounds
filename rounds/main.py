@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 import urllib.parse
 from typing import Any, Literal
@@ -41,6 +42,32 @@ from rounds.core.management_service import ManagementService
 from rounds.core.poll_service import PollService
 from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
+
+
+# Only hex chars and hyphens are valid in a trace ID.
+# Prevents path traversal and URL/shell injection when the value is forwarded
+# to the telemetry backend as part of an HTTP request path.
+_TRACE_ID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _validate_trace_id(raw: str) -> str:
+    """Return the trace ID if it is safe, otherwise raise ValueError.
+
+    Accepts the 32-char lowercase hex format used by OpenTelemetry and the
+    hyphenated UUID format (36 chars). Rejects anything else to prevent
+    URL injection when the value is forwarded to the telemetry API.
+
+    Raises:
+        ValueError: If the string contains characters outside [0-9a-fA-F-]
+            or is shorter than 8 or longer than 64 characters.
+    """
+    trace_id = raw.strip()
+    if not _TRACE_ID_RE.match(trace_id):
+        raise ValueError(
+            f"Invalid trace ID {trace_id!r}: must be 8–64 hex characters "
+            "(0-9, a-f, A-F) with optional hyphens."
+        )
+    return trace_id
 
 
 async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
@@ -86,15 +113,25 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
             command = parts[0].lower()
             args_str = parts[1] if len(parts) > 1 else ""
 
-            # Try to parse arguments as JSON
+            # Try to parse arguments as JSON.
+            # For `investigate-trace`, also accept a bare trace ID string so
+            # the user can type: investigate-trace abc123def456...
+            # instead of: investigate-trace {"trace_id": "abc123def456..."}
             try:
                 if args_str:
                     args = json.loads(args_str)
                 else:
                     args = {}
             except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON arguments: {e}. Input: {args_str!r}")
-                continue
+                if command == "investigate-trace" and args_str:
+                    try:
+                        args = {"trace_id": _validate_trace_id(args_str)}
+                    except ValueError as ve:
+                        print(json.dumps({"status": "error", "message": str(ve)}, indent=2))
+                        continue
+                else:
+                    logger.error(f"Invalid JSON arguments: {e}. Input: {args_str!r}")
+                    continue
 
             # Execute command
             try:
@@ -149,6 +186,7 @@ async def _execute_cli_command(
     - 'resolve': Required signature_id (str), optional fix_applied (str), verbose (bool)
     - 'retriage': Required signature_id (str), optional verbose (bool)
     - 'reinvestigate': Required signature_id (str), optional verbose (bool)
+    - 'investigate-trace': Required trace_id (str), optional verbose (bool)
 
     Args:
         cli_handler: CLICommandHandler instance.
@@ -159,7 +197,7 @@ async def _execute_cli_command(
         Command result dictionary with status and data.
 
     Raises:
-        ValueError: If command is not recognized or required parameters are missing.
+        ValueError: If command is unknown or required parameters are missing.
     """
     if command == "list":
         return await cli_handler.list_signatures(
@@ -206,6 +244,14 @@ async def _execute_cli_command(
             raise ValueError("Missing required parameter: signature_id")
         return await cli_handler.reinvestigate_signature(
             signature_id=args["signature_id"],
+            verbose=args.get("verbose", False),
+        )
+
+    elif command == "investigate-trace":
+        if "trace_id" not in args:
+            raise ValueError("Missing required parameter: trace_id")
+        return await cli_handler.investigate_trace(
+            trace_id=args["trace_id"],
             verbose=args.get("verbose", False),
         )
 
@@ -258,6 +304,55 @@ async def _run_scan(poll_service: PollService) -> None:
         logger.error(f"Scan command failed: {e}", exc_info=True)
         output = {"status": "error", "message": str(e)}
         print(json.dumps(output, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+
+async def _run_cli_once(
+    cli_handler: CLICommandHandler,
+    command: str,
+    args_str: str,
+) -> None:
+    """Execute a single CLI command non-interactively, print JSON result, and return.
+
+    Used by the ``cli-run`` invocation mode so skills and scripts can call rounds
+    without starting an interactive REPL.
+
+    Args:
+        cli_handler: CLICommandHandler instance for executing commands.
+        command: CLI sub-command name (investigate-trace, list, details, …).
+        args_str: Argument string — either a JSON object or a bare trace ID.
+    """
+    logger = logging.getLogger(__name__)
+
+    # Parse args using the same logic as the interactive CLI.
+    try:
+        args: dict[str, Any] = json.loads(args_str) if args_str else {}
+    except json.JSONDecodeError:
+        if command == "investigate-trace" and args_str:
+            try:
+                args = {"trace_id": _validate_trace_id(args_str)}
+            except ValueError as ve:
+                print(json.dumps({"status": "error", "message": str(ve)}, indent=2))
+                sys.exit(1)
+        else:
+            print(
+                json.dumps(
+                    {"status": "error", "message": f"Invalid JSON arguments: {args_str!r}"},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    try:
+        result = await _execute_cli_command(cli_handler, command, args)
+        print(json.dumps(result, indent=2, default=str))
+    except ValueError as e:
+        print(json.dumps({"status": "error", "message": str(e)}, indent=2), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"cli-run failed: {e}", exc_info=True)
+        print(json.dumps({"status": "error", "message": str(e)}, indent=2), file=sys.stderr)
         sys.exit(1)
 
 
@@ -350,6 +445,15 @@ Available Commands (JSON format):
 
     Example: reinvestigate {"signature_id": "uuid-here"}
 
+  investigate-trace
+    Fetch a trace by ID and explain the end-to-end code flow.
+    Reads the mounted codebase to cite actual file:line locations.
+    Required: trace_id (hex string)
+
+    Examples:
+      investigate-trace abcdef1234567890abcdef1234567890
+      investigate-trace {"trace_id": "abcdef1234567890abcdef1234567890"}
+
   help
     Show this help message.
 
@@ -390,33 +494,41 @@ def _parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments.
 
     Returns:
-        Parsed arguments containing command and optional signature_id.
+        Parsed arguments containing command and optional rest args.
     """
     parser = argparse.ArgumentParser(
         description="Rounds continuous error diagnosis system",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m rounds.main                      # Start interactive CLI
-  python -m rounds.main scan                 # Execute single poll cycle
-  python -m rounds.main diagnose sig_12345   # Diagnose specific signature
+  python -m rounds.main                                         # Start interactive CLI
+  python -m rounds.main scan                                    # Execute single poll cycle
+  python -m rounds.main diagnose sig_12345                      # Diagnose specific signature
+  python -m rounds.main cli-run list                            # List all signatures
+  python -m rounds.main cli-run investigate-trace TRACE_ID      # Investigate a trace
+  python -m rounds.main cli-run details '{"signature_id":"X"}'  # Get signature details
         """,
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["scan", "diagnose"],
+        choices=["scan", "diagnose", "cli-run"],
         help="Non-interactive command to execute",
     )
     parser.add_argument(
-        "signature_id",
-        nargs="?",
-        help="Signature ID for diagnose command (required if command=diagnose)",
+        "rest",
+        nargs="*",
+        help="Additional arguments (signature_id for diagnose; sub-command and args for cli-run)",
     )
     return parser.parse_args()
 
 
-async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signature_id: str | None = None) -> None:
+async def bootstrap(
+    command: Literal["scan", "diagnose", "cli-run"] | None = None,
+    signature_id: str | None = None,
+    cli_subcommand: str | None = None,
+    cli_args_str: str = "",
+) -> None:
     """Load configuration, wire adapters, and start the application.
 
     This is the composition root: the single place where all components
@@ -430,8 +542,10 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
     5. Select and start run mode
 
     Args:
-        command: Optional command to execute (scan or diagnose).
-        signature_id: Optional signature ID for diagnose command.
+        command: Optional command to execute (scan, diagnose, or cli-run).
+        signature_id: Signature ID for diagnose command.
+        cli_subcommand: CLI sub-command for cli-run mode (e.g. "investigate-trace").
+        cli_args_str: Arguments string for cli-run sub-command (JSON or bare value).
 
     Design note: The invariant "diagnose requires signature_id" is enforced at runtime
     (validation in _run_diagnose function) rather than via type system (e.g., overloads
@@ -658,6 +772,15 @@ async def bootstrap(command: Literal["scan", "diagnose"] | None = None, signatur
                 investigator=investigator,
             )
 
+        elif command == "cli-run":
+            if not cli_subcommand:
+                output = {"status": "error", "message": "cli-run requires a sub-command argument"}
+                print(json.dumps(output, indent=2), file=sys.stderr)
+                sys.exit(1)
+            logger.info(f"Executing cli-run: {cli_subcommand} {cli_args_str!r}")
+            cli_handler = CLICommandHandler(management_service)
+            await _run_cli_once(cli_handler, cli_subcommand, cli_args_str)
+
         else:
             # No non-interactive command, use run_mode
             logger.info(f"Starting in {settings.run_mode} mode...")
@@ -765,14 +888,33 @@ def main() -> None:
         # Parse command-line arguments
         args = _parse_arguments()
 
-        # Validate command-line arguments early to fail fast
-        if args.command == "diagnose" and not args.signature_id:
-            print("ERROR: diagnose command requires signature_id argument", file=sys.stderr)
-            print("Usage: python -m rounds.main diagnose SIGNATURE_ID", file=sys.stderr)
-            sys.exit(1)
+        # Resolve per-command arguments early to fail fast
+        signature_id: str | None = None
+        cli_subcommand: str | None = None
+        cli_args_str: str = ""
 
-        # Run bootstrap with optional command and signature_id
-        asyncio.run(bootstrap(command=args.command, signature_id=args.signature_id))
+        if args.command == "diagnose":
+            if not args.rest:
+                print("ERROR: diagnose command requires signature_id argument", file=sys.stderr)
+                print("Usage: python -m rounds.main diagnose SIGNATURE_ID", file=sys.stderr)
+                sys.exit(1)
+            signature_id = args.rest[0]
+        elif args.command == "cli-run":
+            if not args.rest:
+                print("ERROR: cli-run requires a sub-command argument", file=sys.stderr)
+                print("Usage: python -m rounds.main cli-run COMMAND [ARGS]", file=sys.stderr)
+                sys.exit(1)
+            cli_subcommand = args.rest[0]
+            cli_args_str = args.rest[1] if len(args.rest) > 1 else ""
+
+        asyncio.run(
+            bootstrap(
+                command=args.command,
+                signature_id=signature_id,
+                cli_subcommand=cli_subcommand,
+                cli_args_str=cli_args_str,
+            )
+        )
     except KeyboardInterrupt:
         logger.warning("Shutdown requested by user (SIGINT)")
         sys.exit(130)

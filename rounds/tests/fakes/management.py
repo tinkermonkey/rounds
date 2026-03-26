@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import Diagnosis, Signature, SignatureDetails, SignatureStatus
+from rounds.core.models import Diagnosis, Signature, SignatureDetails, SignatureStatus, TraceInvestigation
 from rounds.core.ports import ManagementPort
 
 
@@ -19,6 +19,7 @@ class FakeManagementPort(ManagementPort):
         self.retriaged_signatures: list[str] = []
         self.signature_details: dict[str, SignatureDetails] = {}
         self.reinvestigated_signatures: list[str] = []
+        self.investigated_traces: list[str] = []
         self.stored_signatures: list[Signature] = []
         self.should_fail: bool = False
         self.fail_message: str = "Management operation failed"
@@ -120,6 +121,23 @@ class FakeManagementPort(ManagementPort):
             cost_usd=0.0,
         )
 
+    async def investigate_trace(self, trace_id: str) -> TraceInvestigation:
+        """Return a canned TraceInvestigation and track the call."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+
+        self.investigated_traces.append(trace_id)
+        return TraceInvestigation(
+            trace_id=trace_id,
+            summary="Fake trace investigation summary",
+            code_flow=("Step 1: fake entry point", "Step 2: fake downstream call"),
+            services_involved=("fake-service",),
+            key_findings=("Fake finding",),
+            model="fake-model",
+            cost_usd=0.0,
+            investigated_at=datetime.now(UTC),
+        )
+
     def set_signature_details(
         self, signature_id: str, details: SignatureDetails
     ) -> None:
@@ -164,6 +182,7 @@ class FakeManagementPort(ManagementPort):
         self.retriaged_signatures.clear()
         self.signature_details.clear()
         self.reinvestigated_signatures.clear()
+        self.investigated_traces.clear()
         self.stored_signatures.clear()
         self.should_fail = False
         self.fail_message = "Management operation failed"

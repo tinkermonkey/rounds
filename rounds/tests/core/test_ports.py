@@ -29,6 +29,7 @@ from core.models import (
     SpanNode,
     StackFrame,
     StoreStats,
+    TraceInvestigation,
     TraceTree,
 )
 from core.ports import (
@@ -315,6 +316,24 @@ class MockDiagnosisPort(DiagnosisPort):
         """Mock implementation."""
         return 0.0
 
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        """Mock implementation."""
+        return TraceInvestigation(
+            trace_id=trace.trace_id,
+            summary="Mock summary",
+            code_flow=("Step 1: mock",),
+            services_involved=(trace.root_span.service,),
+            key_findings=("Mock finding",),
+            model="mock-model",
+            cost_usd=0.0,
+            investigated_at=datetime.now(UTC),
+        )
+
 
 class MockNotificationPort(NotificationPort):
     """Mock implementation of NotificationPort for testing."""
@@ -404,6 +423,19 @@ class MockManagementPort(ManagementPort):
             diagnosed_at=datetime.now(UTC),
             model="mock-model",
             cost_usd=0.0,
+        )
+
+    async def investigate_trace(self, trace_id: str) -> TraceInvestigation:
+        """Mock implementation."""
+        return TraceInvestigation(
+            trace_id=trace_id,
+            summary="Mock summary",
+            code_flow=("Step 1: mock",),
+            services_involved=("mock-service",),
+            key_findings=("Mock finding",),
+            model="mock-model",
+            cost_usd=0.0,
+            investigated_at=datetime.now(UTC),
         )
 
 
@@ -588,6 +620,23 @@ class TestDiagnosisPort:
         assert isinstance(result, float)
         assert result >= 0.0
 
+    @pytest.mark.asyncio
+    async def test_investigate_trace_returns_trace_investigation(
+        self, investigation_context: InvestigationContext
+    ) -> None:
+        """investigate_trace must return a TraceInvestigation object."""
+        port = MockDiagnosisPort()
+        trace = investigation_context.trace_data[0]
+        result = await port.investigate_trace(trace, "/app")
+        assert isinstance(result, TraceInvestigation)
+        assert result.trace_id == trace.trace_id
+        assert isinstance(result.summary, str)
+        assert isinstance(result.code_flow, tuple)
+        assert isinstance(result.services_involved, tuple)
+        assert isinstance(result.key_findings, tuple)
+        assert isinstance(result.cost_usd, float)
+        assert result.cost_usd >= 0.0
+
 
 # ============================================================================
 # Test NotificationPort Contract
@@ -676,3 +725,19 @@ class TestManagementPort:
         port = MockManagementPort()
         result = await port.get_signature_details("sig-001")
         assert isinstance(result, SignatureDetails)
+
+    @pytest.mark.asyncio
+    async def test_investigate_trace_returns_trace_investigation(self) -> None:
+        """investigate_trace must return a TraceInvestigation object."""
+        port = MockManagementPort()
+        result = await port.investigate_trace("trace-abc123")
+        assert isinstance(result, TraceInvestigation)
+        assert result.trace_id == "trace-abc123"
+        assert isinstance(result.summary, str)
+        assert isinstance(result.code_flow, tuple)
+        assert isinstance(result.services_involved, tuple)
+        assert isinstance(result.key_findings, tuple)
+        assert isinstance(result.model, str)
+        assert isinstance(result.cost_usd, float)
+        assert result.cost_usd >= 0.0
+        assert isinstance(result.investigated_at, datetime)

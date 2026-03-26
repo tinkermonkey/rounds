@@ -51,6 +51,12 @@ RUN pip install --no-cache-dir \
     pydantic \
     python-dotenv
 
+# Create application data directories with orchestrator ownership so that
+# Docker named volumes mounted at these paths inherit the correct permissions
+# on first use (Docker copies image content into a new empty volume).
+RUN mkdir -p /app/data /app/reports && \
+    chown -R orchestrator:orchestrator /app/data /app/reports
+
 # ============================================================================
 # Stage 4: Switch to Runtime User
 # ============================================================================

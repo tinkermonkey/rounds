@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from rounds.core.models import Diagnosis, InvestigationContext
+from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
 from rounds.core.ports import DiagnosisPort
 
 logger = logging.getLogger(__name__)
@@ -303,6 +303,28 @@ Respond with a JSON object in exactly this format:
         except Exception as e:
             logger.error(f"Failed to invoke OpenAI API: {e}", exc_info=True)
             raise
+
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        """Explain code flow for a trace.
+
+        The OpenAI adapter does not have filesystem access (no equivalent of
+        Claude Code's --add-dir flag), so it can only analyze the trace and
+        log data without reading source files.
+
+        Raises:
+            NotImplementedError: Always — use ClaudeCodeDiagnosisAdapter for
+                trace investigation, which supports codebase file access.
+        """
+        raise NotImplementedError(
+            "OpenAI adapter does not support trace investigation. "
+            "Use ClaudeCodeDiagnosisAdapter (DIAGNOSIS_BACKEND=claude_code) "
+            "to investigate traces with codebase access."
+        )
 
     def _parse_diagnosis_result(
         self, result: dict[str, Any], context: InvestigationContext

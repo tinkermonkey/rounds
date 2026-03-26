@@ -34,6 +34,7 @@ from .models import (
     SignatureDetails,
     SignatureStatus,
     StoreStats,
+    TraceInvestigation,
     TraceTree,
 )
 
@@ -349,6 +350,34 @@ class DiagnosisPort(ABC):
             Exception: If cost estimation fails.
         """
 
+    @abstractmethod
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        """Explain the code flow for a distributed trace.
+
+        Unlike diagnose(), this is not tied to an error signature. It reads
+        the actual source files in codebase_path and produces a human-readable
+        walkthrough of the request's end-to-end behaviour.
+
+        Args:
+            trace: Full span tree for the trace to investigate.
+            codebase_path: Absolute path to the codebase on disk.
+            correlated_logs: Log entries correlated with this trace (optional).
+
+        Returns:
+            TraceInvestigation with summary, ordered code flow steps,
+            services involved, key findings, model name, and cost.
+
+        Raises:
+            TimeoutError: If the LLM invocation exceeds the configured timeout.
+            RuntimeError: If the LLM backend returns an error.
+            ValueError: If the response cannot be parsed.
+        """
+
 
 class NotificationPort(ABC):
     """Port for reporting findings to developers.
@@ -574,4 +603,25 @@ class ManagementPort(ABC):
         Raises:
             ValueError: If signature doesn't exist.
             Exception: If investigation or diagnosis fails.
+        """
+
+    @abstractmethod
+    async def investigate_trace(self, trace_id: str) -> TraceInvestigation:
+        """Fetch a trace by ID and explain the code flow through the codebase.
+
+        Does not require an existing signature. Fetches the trace from the
+        telemetry backend, retrieves correlated logs, and invokes the
+        diagnosis engine to produce a code-flow walkthrough.
+
+        Args:
+            trace_id: OpenTelemetry trace ID (128-bit hex string).
+
+        Returns:
+            TraceInvestigation with summary, code flow steps, services,
+            key findings, model name, and cost.
+
+        Raises:
+            KeyError: If the trace does not exist in the telemetry backend.
+            TimeoutError: If the diagnosis engine times out.
+            Exception: If the telemetry backend or diagnosis engine fails.
         """

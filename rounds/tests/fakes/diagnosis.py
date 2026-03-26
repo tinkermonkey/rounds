@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import Diagnosis, InvestigationContext
+from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
 from rounds.core.ports import DiagnosisPort
 
 
@@ -80,6 +80,30 @@ class FakeDiagnosisPort(DiagnosisPort):
             raise RuntimeError(self.fail_message)
 
         return self.default_cost
+
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        """Return a canned TraceInvestigation for testing."""
+        if self.should_fail:
+            raise RuntimeError(self.fail_message)
+
+        return TraceInvestigation(
+            trace_id=trace.trace_id,
+            summary=f"Fake investigation for trace {trace.trace_id}",
+            code_flow=(
+                f"Step 1: {trace.root_span.service} {trace.root_span.operation} — entry point",
+                "Step 2: downstream service called",
+            ),
+            services_involved=(trace.root_span.service,),
+            key_findings=("Fake finding from test",),
+            model="fake-model",
+            cost_usd=self.default_cost,
+            investigated_at=datetime.now(UTC),
+        )
 
     def set_should_fail(self, should_fail: bool, message: str = "Diagnosis failed") -> None:
         """Configure the adapter to fail on the next operation."""

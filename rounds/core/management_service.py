@@ -15,6 +15,7 @@ from .models import (
     Signature,
     SignatureDetails,
     SignatureStatus,
+    TraceInvestigation,
 )
 from .ports import (
     DiagnosisPort,
@@ -339,3 +340,42 @@ class ManagementService(ManagementPort):
             )
 
         return diagnosis
+
+    async def investigate_trace(self, trace_id: str) -> TraceInvestigation:
+        """Fetch a trace by ID and explain the code flow through the codebase.
+
+        Args:
+            trace_id: OpenTelemetry trace ID.
+
+        Returns:
+            TraceInvestigation with summary, code flow, services, and findings.
+
+        Raises:
+            KeyError: If the trace does not exist in the telemetry backend.
+            Exception: If the telemetry backend or diagnosis engine fails.
+        """
+        trace = await self.telemetry.get_trace(trace_id)
+
+        logs = await self.telemetry.get_correlated_logs([trace_id], window_minutes=5)
+
+        logger.info(
+            f"Investigating trace {trace_id}",
+            extra={"trace_id": trace_id, "log_count": len(logs)},
+        )
+
+        investigation = await self.diagnosis_engine.investigate_trace(
+            trace=trace,
+            codebase_path=self.codebase_path,
+            correlated_logs=tuple(logs),
+        )
+
+        logger.info(
+            f"Completed trace investigation for {trace_id}",
+            extra={
+                "trace_id": trace_id,
+                "cost_usd": investigation.cost_usd,
+                "model": investigation.model,
+            },
+        )
+
+        return investigation

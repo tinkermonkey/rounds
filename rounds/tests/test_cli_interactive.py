@@ -185,3 +185,161 @@ class TestInteractiveCLILoop:
             # Critical error should propagate
             with pytest.raises(type(critical_error)):
                 await _run_cli_interactive(handler)
+
+
+@pytest.mark.asyncio
+class TestInvestigateTraceCommand:
+    """Tests for the investigate-trace CLI command."""
+
+    async def test_investigate_trace_returns_success(self) -> None:
+        """investigate-trace returns a successful TraceInvestigation dict."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        result = await handler.investigate_trace("abc123def456")
+
+        assert result["status"] == "success"
+        assert result["operation"] == "investigate-trace"
+        assert result["trace_id"] == "abc123def456"
+        inv = result["investigation"]
+        assert "summary" in inv
+        assert "code_flow" in inv
+        assert isinstance(inv["code_flow"], list)
+        assert "services_involved" in inv
+        assert "key_findings" in inv
+        assert management.investigated_traces == ["abc123def456"]
+
+    async def test_investigate_trace_error_returns_error_dict(self) -> None:
+        """investigate-trace returns an error dict when management raises."""
+        management = FakeManagementPort()
+        management.set_should_fail(True, "trace not found")
+        handler = CLICommandHandler(management)
+
+        result = await handler.investigate_trace("missing-trace-id")
+
+        assert result["status"] == "error"
+        assert result["operation"] == "investigate-trace"
+        assert result["trace_id"] == "missing-trace-id"
+        assert "trace not found" in result["message"]
+
+    async def test_investigate_trace_via_interactive_loop(self) -> None:
+        """investigate-trace can be invoked through the interactive CLI loop."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            'investigate-trace {"trace_id": "abc123"}',
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print"):
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == ["abc123"]
+
+
+@pytest.mark.asyncio
+class TestInvestigateTraceBareSyntax:
+    """Tests for the bare trace-ID syntax on investigate-trace."""
+
+    async def test_bare_trace_id_accepted(self) -> None:
+        """A bare 32-char hex trace ID is accepted without JSON wrapping."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            "investigate-trace abcdef1234567890abcdef1234567890",
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print"):
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == ["abcdef1234567890abcdef1234567890"]
+
+    async def test_bare_uuid_trace_id_accepted(self) -> None:
+        """A hyphenated UUID-style trace ID is accepted."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            "investigate-trace abcdef12-3456-7890-abcd-ef1234567890",
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print"):
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == ["abcdef12-3456-7890-abcd-ef1234567890"]
+
+    async def test_injection_attempt_rejected(self) -> None:
+        """Shell metacharacters in a bare trace ID are rejected."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            "investigate-trace ../../../etc/passwd",
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print") as mock_print:
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == []
+        error_output = json.loads(mock_print.call_args_list[0][0][0])
+        assert error_output["status"] == "error"
+        assert "Invalid trace ID" in error_output["message"]
+
+    async def test_sql_injection_attempt_rejected(self) -> None:
+        """SQL injection characters in a bare trace ID are rejected."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            "investigate-trace ' OR 1=1--",
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print") as mock_print:
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == []
+        error_output = json.loads(mock_print.call_args_list[0][0][0])
+        assert error_output["status"] == "error"
+
+    async def test_too_short_trace_id_rejected(self) -> None:
+        """A trace ID shorter than 8 characters is rejected."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            "investigate-trace abc",
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print") as mock_print:
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == []
+
+    async def test_json_syntax_still_works(self) -> None:
+        """JSON object syntax continues to work alongside bare trace IDs."""
+        management = FakeManagementPort()
+        handler = CLICommandHandler(management)
+
+        commands = [
+            'investigate-trace {"trace_id": "abcdef1234567890abcdef1234567890"}',
+            "exit",
+        ]
+
+        with patch("builtins.input", side_effect=commands):
+            with patch("builtins.print"):
+                await _run_cli_interactive(handler)
+
+        assert management.investigated_traces == ["abcdef1234567890abcdef1234567890"]

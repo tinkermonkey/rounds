@@ -58,12 +58,23 @@ services:
       # project root to PYTHONPATH makes `import rounds` resolve correctly.
       PYTHONPATH: /workspace/rounds
 
-    # Ensure runtime dependencies are present, then start the application.
-    # PYTHONPATH makes the live source importable without an install step.
-    command:
+    # Install runtime deps on every container entry (up, run --rm, exec),
+    # then hand off to whatever command was requested.
+    entrypoint:
       - /bin/bash
       - -c
-      - "set -e && mkdir -p /app/reports /app/data && pip install -q pydantic pydantic-settings httpx aiosqlite python-dotenv && exec python -m rounds.main"
+      - |
+        set -e
+        mkdir -p /app/reports /app/data
+        pip install -q pydantic pydantic-settings httpx aiosqlite python-dotenv
+        exec "$@"
+      - --
+
+    # Default command when started via `docker compose up`
+    command:
+      - python
+      - -m
+      - rounds.main
 
     volumes:
       # Rounds project root — the rounds/ package lives one level inside here.

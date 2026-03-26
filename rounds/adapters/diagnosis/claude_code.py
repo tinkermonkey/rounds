@@ -14,7 +14,7 @@ import subprocess
 from datetime import UTC, datetime
 from typing import Any
 
-from rounds.core.models import Diagnosis, InvestigationContext
+from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
 from rounds.core.ports import DiagnosisPort
 
 logger = logging.getLogger(__name__)
@@ -344,10 +344,12 @@ Codebase is at: {context.codebase_path}
             except json.JSONDecodeError:
                 pass  # raw output, search as-is
 
-            # If the inner text is itself valid JSON with our expected fields, return it
+            # If the inner text is itself valid JSON dict, return it directly.
+            # Field validation is the caller's responsibility (_parse_diagnosis_result
+            # or _parse_trace_investigation_result), so we accept any non-empty dict.
             try:
                 parsed: dict[str, Any] = json.loads(text_to_search)
-                if isinstance(parsed, dict) and "root_cause" in parsed:
+                if isinstance(parsed, dict) and parsed:
                     return parsed
             except json.JSONDecodeError:
                 pass
@@ -372,7 +374,7 @@ Codebase is at: {context.codebase_path}
                         json_str = "\n".join(json_buffer)
                         try:
                             parsed = json.loads(json_str)
-                            if isinstance(parsed, dict) and "root_cause" in parsed:
+                            if isinstance(parsed, dict) and parsed:
                                 return parsed
                         except json.JSONDecodeError as e:
                             logger.warning(
@@ -385,7 +387,7 @@ Codebase is at: {context.codebase_path}
                         in_json = False
 
             raise ValueError(
-                f"Claude Code output contained no diagnosis JSON. "
+                f"Claude Code output contained no parseable JSON dict. "
                 f"Output: {text_to_search[:500]}"
             )
 
@@ -401,6 +403,161 @@ Codebase is at: {context.codebase_path}
         except Exception as e:
             logger.error(f"Failed to invoke Claude Code: {e}", exc_info=True)
             raise
+
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        """Explain the code flow for a distributed trace by reading the codebase.
+
+        Raises:
+            ValueError: If JSON parsing fails.
+            TimeoutError: If CLI invocation times out.
+            RuntimeError: If CLI returns non-zero exit code.
+        """
+        estimated_cost = self._estimate_trace_cost(trace, correlated_logs)
+        if estimated_cost > self.budget_usd:
+            raise ValueError(
+                f"Investigation cost ${estimated_cost:.2f} exceeds budget ${self.budget_usd:.2f}"
+            )
+
+        prompt = self._build_trace_investigation_prompt(trace, correlated_logs, codebase_path)
+        result = await self._invoke_claude_code(prompt, codebase_path=codebase_path)
+        return self._parse_trace_investigation_result(result, trace.trace_id, estimated_cost)
+
+    def _estimate_trace_cost(
+        self, trace: TraceTree, correlated_logs: tuple[LogEntry, ...]
+    ) -> float:
+        """Estimate cost for a trace investigation (same heuristic as error diagnosis)."""
+        base_cost = 0.30
+        context_size = len(correlated_logs)
+        # Count spans via BFS
+        queue = [trace.root_span]
+        while queue:
+            node = queue.pop()
+            context_size += 1
+            queue.extend(node.children)
+        additional_cost = (context_size / 10) * 0.01
+        return base_cost + additional_cost
+
+    def _build_trace_investigation_prompt(
+        self,
+        trace: TraceTree,
+        correlated_logs: tuple[LogEntry, ...],
+        codebase_path: str,
+    ) -> str:
+        """Build a prompt asking Claude to explain the code flow for a trace."""
+        prompt = f"""You are an expert software engineer explaining how a distributed request flows through a codebase.
+You have file-system access to the codebase at: {codebase_path}
+
+Use your file reading tools (Read, Glob, Grep) to find and read the source files
+referenced in the span service names and operation names below.
+Read the actual code before writing your explanation.
+
+---
+
+## Trace ID: {trace.trace_id}
+
+## Span Tree
+"""
+        prompt += self._format_span_tree(trace.root_span)
+
+        if trace.error_spans:
+            prompt += "\n## Error Spans\n"
+            for span in trace.error_spans:
+                prompt += f"- [{span.service}] {span.operation} ({span.duration_ms:.1f}ms)\n"
+                relevant_attrs = {
+                    k: v
+                    for k, v in span.attributes.items()
+                    if any(
+                        kw in k.lower()
+                        for kw in ("error", "exception", "message", "status", "http", "db", "rpc")
+                    )
+                }
+                for k, v in list(relevant_attrs.items())[:8]:
+                    prompt += f"  {k}: {v}\n"
+
+        if correlated_logs:
+            prompt += f"\n## Correlated Logs ({len(correlated_logs)} entries)\n"
+            for log in correlated_logs[:15]:
+                prompt += f"[{log.severity.value}] {log.timestamp}  {log.body[:200]}\n"
+
+        prompt += f"""
+---
+
+## Your Task
+
+1. Use Glob/Grep to locate the source files for the services and operations listed in the span tree.
+2. Read the relevant handlers, functions, and middleware that appear in the trace.
+3. Trace the request from the root span through to the leaf spans, citing specific file:line references.
+
+## Response Format
+
+Respond with a JSON object in exactly this format:
+{{
+  "summary": "One paragraph explaining what this request does end-to-end",
+  "code_flow": [
+    "Step 1: <service> <file:line> — description of what happens here",
+    "Step 2: ...",
+    "Step 3: ..."
+  ],
+  "services_involved": ["service-a", "service-b"],
+  "key_findings": [
+    "Notable observation about the code or request pattern",
+    "Performance note or architectural observation"
+  ]
+}}
+
+Codebase is at: {codebase_path}
+"""
+        return prompt
+
+    def _parse_trace_investigation_result(
+        self, result: dict[str, Any], trace_id: str, cost_usd: float
+    ) -> TraceInvestigation:
+        """Parse Claude Code response into a TraceInvestigation object.
+
+        Raises:
+            ValueError: If required fields are missing or invalid.
+        """
+        summary = result.get("summary", "")
+        if not summary:
+            raise ValueError("Response missing 'summary' field")
+
+        code_flow_raw = result.get("code_flow")
+        if code_flow_raw is None:
+            raise ValueError("Response missing 'code_flow' field")
+        if not isinstance(code_flow_raw, list):
+            raise ValueError(f"'code_flow' must be a list, got {type(code_flow_raw).__name__}")
+
+        services_raw = result.get("services_involved")
+        if services_raw is None:
+            raise ValueError("Response missing 'services_involved' field")
+        if not isinstance(services_raw, list):
+            raise ValueError(
+                f"'services_involved' must be a list, got {type(services_raw).__name__}"
+            )
+
+        findings_raw = result.get("key_findings")
+        if findings_raw is None:
+            raise ValueError("Response missing 'key_findings' field")
+        if not isinstance(findings_raw, list):
+            raise ValueError(
+                f"'key_findings' must be a list, got {type(findings_raw).__name__}"
+            )
+
+        return TraceInvestigation(
+            trace_id=trace_id,
+            summary=summary,
+            code_flow=tuple(code_flow_raw),
+            services_involved=tuple(services_raw),
+            key_findings=tuple(findings_raw),
+            model=self.model,
+            cost_usd=cost_usd,
+            investigated_at=datetime.now(UTC),
+        )
 
     def _parse_diagnosis_result(
         self, result: dict[str, Any], context: InvestigationContext

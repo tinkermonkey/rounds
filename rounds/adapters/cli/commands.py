@@ -10,7 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from rounds.core.models import Signature, SignatureDetails
+from rounds.core.models import Signature, SignatureDetails, TraceInvestigation
 from rounds.core.ports import ManagementPort
 
 logger = logging.getLogger(__name__)
@@ -384,6 +384,66 @@ class CLICommandHandler:
                 "message": str(e),
             }
 
+    async def investigate_trace(
+        self, trace_id: str, verbose: bool = False
+    ) -> dict[str, Any]:
+        """Investigate a trace by ID via CLI.
+
+        Fetches the full distributed trace from the telemetry backend, reads
+        the relevant source files from the mounted codebase, and returns a
+        step-by-step explanation of the code flow.
+
+        Args:
+            trace_id: OpenTelemetry trace ID (128-bit hex string).
+            verbose: If True, log additional information.
+
+        Returns:
+            Dictionary with status and investigation data:
+            - On success: {"status": "success", "operation": "investigate-trace",
+                           "trace_id": str, "investigation": {...}}
+            - On error: {"status": "error", "operation": "investigate-trace",
+                         "trace_id": str, "message": str}
+        """
+        try:
+            investigation = await self.management.investigate_trace(trace_id)
+
+            result: dict[str, Any] = {
+                "status": "success",
+                "operation": "investigate-trace",
+                "trace_id": trace_id,
+                "investigation": self._format_trace_investigation(investigation),
+            }
+
+            if verbose:
+                logger.info(
+                    f"Investigated trace {trace_id}",
+                    extra={"cost_usd": investigation.cost_usd, "model": investigation.model},
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to investigate trace: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "operation": "investigate-trace",
+                "trace_id": trace_id,
+                "message": str(e),
+            }
+
+    def _format_trace_investigation(self, inv: TraceInvestigation) -> dict[str, Any]:
+        """Serialize a TraceInvestigation to a JSON-compatible dict."""
+        return {
+            "trace_id": inv.trace_id,
+            "summary": inv.summary,
+            "code_flow": list(inv.code_flow),
+            "services_involved": list(inv.services_involved),
+            "key_findings": list(inv.key_findings),
+            "model": inv.model,
+            "cost_usd": inv.cost_usd,
+            "investigated_at": inv.investigated_at.isoformat(),
+        }
+
     def _format_signatures_as_text(self, signatures: Sequence[Signature]) -> str:
         """Format signatures as human-readable text.
 
@@ -468,6 +528,14 @@ async def run_command(
     elif command == "reinvestigate":
         return await handler.reinvestigate_signature(
             args["signature_id"],
+            args.get("verbose", False),
+        )
+
+    elif command == "investigate-trace":
+        if "trace_id" not in args:
+            raise ValueError("Missing required parameter: trace_id")
+        return await handler.investigate_trace(
+            args["trace_id"],
             args.get("verbose", False),
         )
 
