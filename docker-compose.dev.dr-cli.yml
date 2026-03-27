@@ -91,6 +91,9 @@ services:
       # Persistent signature database across restarts
       - rounds-dr-cli-dev-data:/app/data:rw
 
+      # SSH credentials for GitHub access inside the container
+      - ~/.ssh:/home/orchestrator/.ssh:ro
+
     working_dir: /workspace/rounds/rounds
 
     # Reach the SigNoz instance running on the host (192.168.x.x / localhost)

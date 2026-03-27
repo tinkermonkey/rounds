@@ -273,7 +273,9 @@ class SQLiteSignatureStore(SignatureStorePort):
         try:
             # Total signatures
             cursor = await conn.execute("SELECT COUNT(*) FROM signatures")
-            total = (await cursor.fetchone())[0]
+            count_row = await cursor.fetchone()
+            assert count_row is not None  # COUNT(*) always returns a row
+            total = count_row[0]
 
             # By status
             cursor = await conn.execute(
@@ -307,6 +309,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 """
             )
             row = await cursor.fetchone()
+            assert row is not None  # aggregation query always returns a row
             oldest_age_hours = row[0] if row[0] is not None else None
             avg_occurrence = float(row[1]) if row[1] is not None else 0.0
 
@@ -320,7 +323,7 @@ class SQLiteSignatureStore(SignatureStorePort):
         finally:
             await self._return_connection(conn)
 
-    def _row_to_signature(self, row: tuple[Any, ...]) -> Signature:
+    def _row_to_signature(self, row: aiosqlite.Row) -> Signature:
         """Convert a database row to a Signature object.
 
         Raises:

@@ -85,6 +85,8 @@ x-rounds-base: &rounds-base
     # project root — Claude Code reads CLAUDE.md from CWD and all parent dirs,
     # so /workspace/CLAUDE.md is loaded automatically.
     - ./docker/dev-claude/workspace-CLAUDE.md:/workspace/CLAUDE.md:ro
+    # SSH credentials for GitHub access inside the container
+    - ~/.ssh:/home/orchestrator/.ssh:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
   logging:

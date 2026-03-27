@@ -32,6 +32,7 @@ from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
+from rounds.adapters.telemetry.elasticsearch import ElasticsearchTelemetryAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 from rounds.adapters.telemetry.jaeger import JaegerTelemetryAdapter
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
@@ -704,6 +705,16 @@ async def bootstrap(
             prometheus_url=settings.grafana_prometheus_url,
         )
         logger.info("Telemetry adapter: Grafana Stack")
+    elif settings.telemetry_backend == "elasticsearch":
+        telemetry = ElasticsearchTelemetryAdapter(
+            es_url=settings.es_url,
+            api_key=settings.es_api_key.get_secret_value(),
+            username=settings.es_username,
+            password=settings.es_password.get_secret_value(),
+            traces_index=settings.es_traces_index,
+            logs_index=settings.es_logs_index,
+        )
+        logger.info(f"Telemetry adapter: Elasticsearch ({settings.es_url})")
     else:
         logger.error(f"Unknown telemetry backend: {settings.telemetry_backend}")
         sys.exit(1)

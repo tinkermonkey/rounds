@@ -7,9 +7,10 @@ This module provides centralized configuration management:
 - Support multiple environments (development, staging, production)
 """
 
+import warnings
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     )
 
     # Telemetry backend configuration
-    telemetry_backend: Literal["signoz", "jaeger", "grafana_stack"] = Field(
+    telemetry_backend: Literal["signoz", "jaeger", "grafana_stack", "elasticsearch"] = Field(
         default="signoz",
         description="Telemetry backend type",
     )
@@ -59,6 +60,30 @@ class Settings(BaseSettings):
     grafana_prometheus_url: str = Field(
         default="http://localhost:9090",
         description="Grafana Prometheus API endpoint URL",
+    )
+    es_url: str = Field(
+        default="http://localhost:9200",
+        description="Elasticsearch base URL for telemetry queries",
+    )
+    es_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Elasticsearch API key (id:key format). Takes precedence over es_username/es_password.",
+    )
+    es_username: str = Field(
+        default="",
+        description="Elasticsearch HTTP Basic auth username",
+    )
+    es_password: SecretStr = Field(
+        default=SecretStr(""),
+        description="Elasticsearch HTTP Basic auth password",
+    )
+    es_traces_index: str = Field(
+        default="otel-traces-*",
+        description="Elasticsearch index pattern for OTEL trace documents",
+    )
+    es_logs_index: str = Field(
+        default="otel-logs-*",
+        description="Elasticsearch index pattern for OTEL log documents",
     )
 
     # Signature store configuration
@@ -316,6 +341,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "store_postgresql_url must be set when store_backend is 'postgresql'"
             )
+
+        # Validate elasticsearch telemetry dependencies
+        if self.telemetry_backend == "elasticsearch":
+            has_api_key = bool(self.es_api_key.get_secret_value())
+            has_basic_auth = bool(self.es_username and self.es_password.get_secret_value())
+            if not has_api_key and not has_basic_auth:
+                warnings.warn(
+                    "No Elasticsearch credentials configured (es_api_key or "
+                    "es_username+es_password). Connecting unauthenticated to "
+                    f"{self.es_url}.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         return self
 
