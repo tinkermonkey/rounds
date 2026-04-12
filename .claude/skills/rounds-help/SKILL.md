@@ -22,7 +22,7 @@ failure patterns, and uses LLM-powered analysis to diagnose root causes in your
 codebase. It makes periodic passes over your telemetry — polling for errors,
 tracing them through your system, recognizing recurring patterns, and building up
 a persistent knowledge base of failure signatures and diagnoses. Think of it as a
-doctor making rounds on your running software.
+nurse making rounds on your running software.
 
 SKILLS AVAILABLE IN THE ROUNDS CONTEXT
 ---------------------------------------

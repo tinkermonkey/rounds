@@ -2,7 +2,7 @@
 
 An autonomous diagnostic agent that watches your OpenTelemetry data, fingerprints failure patterns, and uses LLM-powered analysis to diagnose root causes in your codebase.
 
-Rounds makes periodic passes over your telemetry — checking for errors, tracing them through your system, recognizing recurring patterns, and building up a persistent knowledge base of failure signatures and diagnoses. Think of it as a doctor making rounds on your running software.
+Rounds makes periodic passes over your telemetry — checking for errors, tracing them through your system, recognizing recurring patterns, and building up a persistent knowledge base of failure signatures and diagnoses. Think of it as a nurse making rounds on your running software.
 
 ## How it works
 
