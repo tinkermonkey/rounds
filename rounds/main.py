@@ -271,6 +271,31 @@ async def _execute_cli_command(
                     verbose=args.get("verbose", False),
                 )
 
+            elif command == "search-logs":
+                result = await cli_handler.search_logs(
+                    query=args.get("query", ""),
+                    since_minutes=args.get("since_minutes", 60),
+                    until_minutes=args.get("until_minutes"),
+                    services=args.get("services"),
+                    limit=args.get("limit", 50),
+                )
+
+            elif command == "search-spans":
+                result = await cli_handler.search_spans(
+                    since_minutes=args.get("since_minutes", 60),
+                    until_minutes=args.get("until_minutes"),
+                    services=args.get("services"),
+                    operation=args.get("operation"),
+                    has_error=args.get("has_error"),
+                    limit=args.get("limit", 50),
+                )
+
+            elif command == "get-trace-tree":
+                if "trace_id" not in args:
+                    raise ValueError("Missing required parameter: trace_id")
+                span.set_attribute("trace_id", args["trace_id"])
+                result = await cli_handler.get_trace_tree(args["trace_id"])
+
             else:
                 error_msg = f"Unknown command: {command}. Use 'help' for available commands."
                 span.set_status(Status(StatusCode.ERROR, error_msg))
