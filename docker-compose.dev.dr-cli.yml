@@ -83,7 +83,7 @@ services:
       - .:/workspace/rounds:rw
 
       # Target project codebase — read-only reference for diagnosis
-      - ../documentation_robotics:/workspace/target:ro
+      - ../../beta-tester/documentation_robotics:/workspace/target:ro
 
       # Diagnosis reports — visible on host at ./reports/
       - ./reports:/app/reports:rw

@@ -296,6 +296,31 @@ class TraceTree:
 
 
 @dataclass(frozen=True)
+class SpanSummary:
+    """A lightweight span returned from a span search.
+
+    Returned by TelemetryPort.search_spans(). Contains enough context to
+    identify the span and decide whether to fetch the full TraceTree.
+    """
+
+    trace_id: str
+    span_id: str
+    service: str
+    operation: str
+    duration_ms: float
+    has_error: bool
+    timestamp: datetime
+    attributes: dict[str, Any] | MappingProxyType[str, Any]
+
+    def __post_init__(self) -> None:
+        """Convert attributes dict to read-only proxy."""
+        if isinstance(self.attributes, dict):
+            object.__setattr__(
+                self, "attributes", MappingProxyType(self.attributes)
+            )
+
+
+@dataclass(frozen=True)
 class LogEntry:
     """A single log entry from telemetry."""
 

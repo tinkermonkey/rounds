@@ -24,6 +24,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -454,6 +455,244 @@ class SigNozTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error fetching logs: {e}", exc_info=True)
             raise
 
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Search logs by keyword and optional metadata filters.
+
+        Queries SigNoz v3 query_range API with dataSource=logs.
+        Uses a body contains filter for keyword search.
+
+        Args:
+            query: Keyword to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter (matched against service.name resource attr).
+            limit: Maximum results to return.
+        """
+        try:
+            now = datetime.now(UTC)
+            start_ms = int(since.timestamp() * 1000)
+            end_ms = int((until or now).timestamp() * 1000)
+
+            filter_items: list[dict[str, Any]] = []
+
+            if query:
+                filter_items.append({
+                    "key": {
+                        "key": "body",
+                        "dataType": "string",
+                        "type": "",
+                        "isColumn": True,
+                    },
+                    "op": "contains",
+                    "value": query,
+                })
+
+            if services:
+                valid_services = [s for s in services if self._is_valid_identifier(s)]
+                invalid = [s for s in services if not self._is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if valid_services:
+                    filter_items.append({
+                        "key": {
+                            "key": "service.name",
+                            "dataType": "string",
+                            "type": "resource",
+                            "isColumn": False,
+                        },
+                        "op": "in",
+                        "value": valid_services,
+                    })
+
+            payload = {
+                "start": start_ms,
+                "end": end_ms,
+                "step": 60,
+                "variables": {},
+                "compositeQuery": {
+                    "queryType": "builder",
+                    "panelType": "list",
+                    "builderQueries": {
+                        "A": {
+                            "dataSource": "logs",
+                            "queryName": "A",
+                            "expression": "A",
+                            "aggregateOperator": "noop",
+                            "filters": {"op": "AND", "items": filter_items},
+                            "limit": limit,
+                            "offset": 0,
+                            "pageSize": limit,
+                            "orderBy": [{"columnName": "timestamp", "order": "desc"}],
+                        }
+                    },
+                },
+            }
+
+            response = await self.client.post("/api/v3/query_range", json=payload)
+            response.raise_for_status()
+
+            data = response.json()
+            logs = []
+            for result in data.get("data", {}).get("result", []):
+                for item in result.get("list", []):
+                    log = self._parse_log_entry(item)
+                    if log:
+                        logs.append(log)
+
+            return logs
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search logs in SigNoz: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching logs: {e}", exc_info=True)
+            raise
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Queries SigNoz v3 query_range API with dataSource=traces.
+        All filters are combined with AND logic.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters (exact match per key).
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+        """
+        try:
+            now = datetime.now(UTC)
+            start_ms = int(since.timestamp() * 1000)
+            end_ms = int((until or now).timestamp() * 1000)
+
+            filter_items: list[dict[str, Any]] = []
+
+            if has_error is not None:
+                filter_items.append({
+                    "key": {
+                        "key": "hasError",
+                        "dataType": "bool",
+                        "type": "tag",
+                        "isColumn": True,
+                    },
+                    "op": "=",
+                    "value": has_error,
+                })
+
+            if services:
+                valid_services = [s for s in services if self._is_valid_identifier(s)]
+                invalid = [s for s in services if not self._is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if valid_services:
+                    filter_items.append({
+                        "key": {
+                            "key": "serviceName",
+                            "dataType": "string",
+                            "type": "tag",
+                            "isColumn": True,
+                        },
+                        "op": "in",
+                        "value": valid_services,
+                    })
+
+            if operation:
+                filter_items.append({
+                    "key": {
+                        "key": "name",
+                        "dataType": "string",
+                        "type": "tag",
+                        "isColumn": True,
+                    },
+                    "op": "contains",
+                    "value": operation,
+                })
+
+            if attributes:
+                for key, value in attributes.items():
+                    filter_items.append({
+                        "key": {
+                            "key": key,
+                            "dataType": "string",
+                            "type": "tag",
+                            "isColumn": False,
+                        },
+                        "op": "=",
+                        "value": value,
+                    })
+
+            payload = {
+                "start": start_ms,
+                "end": end_ms,
+                "step": 60,
+                "variables": {},
+                "compositeQuery": {
+                    "queryType": "builder",
+                    "panelType": "list",
+                    "builderQueries": {
+                        "A": {
+                            "dataSource": "traces",
+                            "queryName": "A",
+                            "expression": "A",
+                            "aggregateOperator": "noop",
+                            "filters": {"op": "AND", "items": filter_items},
+                            "limit": limit,
+                            "offset": 0,
+                            "pageSize": limit,
+                            "orderBy": [{"columnName": "timestamp", "order": "desc"}],
+                            "selectColumns": [
+                                {"key": "serviceName", "dataType": "string", "type": "tag", "isColumn": True},
+                                {"key": "name", "dataType": "string", "type": "tag", "isColumn": True},
+                                {"key": "spanID", "dataType": "string", "type": "tag", "isColumn": True},
+                                {"key": "traceID", "dataType": "string", "type": "tag", "isColumn": True},
+                                {"key": "durationNano", "dataType": "float64", "type": "tag", "isColumn": True},
+                                {"key": "hasError", "dataType": "bool", "type": "tag", "isColumn": True},
+                                {"key": "statusMessage", "dataType": "string", "type": "tag", "isColumn": True},
+                            ],
+                        }
+                    },
+                },
+            }
+
+            response = await self.client.post("/api/v3/query_range", json=payload)
+            response.raise_for_status()
+
+            data = response.json()
+            spans = []
+            for result in data.get("data", {}).get("result", []):
+                for item in result.get("list", []):
+                    span = self._parse_span_summary(item)
+                    if span:
+                        spans.append(span)
+
+            return spans
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search spans in SigNoz: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching spans: {e}", exc_info=True)
+            raise
+
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:
@@ -541,6 +780,42 @@ class SigNozTelemetryAdapter(TelemetryPort):
             raise ValueError(
                 f"Cannot parse error event from span {span_id}: {e}"
             ) from e
+
+    def _parse_span_summary(self, item: dict[str, Any]) -> SpanSummary | None:
+        """Parse a v3 query_range list item into a SpanSummary.
+
+        Item format: {"timestamp": "ISO8601", "data": {span fields}}
+        """
+        try:
+            span_data = item.get("data", {})
+            span_id = span_data.get("spanID", "")
+            trace_id = span_data.get("traceID", "")
+            service = span_data.get("serviceName", "")
+            operation = span_data.get("name", "")
+            duration_nano = span_data.get("durationNano", 0) or 0
+            has_error = bool(span_data.get("hasError", False))
+
+            ts_str = item.get("timestamp", "")
+            if ts_str:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            else:
+                timestamp = datetime.now(UTC)
+
+            attributes: dict[str, Any] = span_data.get("attributes", {}) or {}
+
+            return SpanSummary(
+                trace_id=trace_id,
+                span_id=span_id,
+                service=service,
+                operation=operation,
+                duration_ms=int(duration_nano) / 1e6,
+                has_error=has_error,
+                timestamp=timestamp,
+                attributes=attributes,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse span summary: {e}", exc_info=True)
+            return None
 
     def _parse_log_entry(self, item: dict[str, Any]) -> LogEntry | None:
         """Parse a v3 query_range list item into a LogEntry.

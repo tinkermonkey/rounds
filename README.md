@@ -202,6 +202,30 @@ rounds/
 - **docker-compose.full-stack.yml** — Complete stack with SigNoz
 - **docker-compose.webhook.yml** — Event-driven webhook mode
 
+### Development Compose Quick Reference
+
+| Compose file | Service | Use when... |
+|---|---|---|
+| `docker-compose.dev.claude.yml` | `rounds-target-claude` | Investigating target app errors, using rounds skills interactively |
+| `docker-compose.dev.claude.yml` | `rounds-claude` | Editing rounds source code itself |
+| `docker-compose.dev.dr-cli.yml` | `rounds` | Running the rounds daemon headlessly (no Claude Code UI) |
+
+**Investigating and working on a target codebase** (most common):
+```bash
+docker compose -f docker-compose.dev.claude.yml run --rm rounds-target-claude
+```
+Opens a Claude Code session rooted at `/workspace/target` — the target project's `CLAUDE.md` and agents are active, and all rounds skills (`/rounds-investigate`, `/rounds-list`, etc.) are available via `--add-dir`.
+
+**Working on rounds source code itself:**
+```bash
+docker compose -f docker-compose.dev.claude.yml run --rm rounds-claude
+```
+
+**Running the rounds daemon headlessly:**
+```bash
+docker compose -f docker-compose.dev.dr-cli.yml up
+```
+
 ## License
 
 MIT

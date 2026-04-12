@@ -2,7 +2,16 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import Diagnosis, Signature, SignatureDetails, SignatureStatus, TraceInvestigation
+from rounds.core.models import (
+    Diagnosis,
+    LogEntry,
+    Signature,
+    SignatureDetails,
+    SignatureStatus,
+    SpanSummary,
+    TraceInvestigation,
+    TraceTree,
+)
 from rounds.core.ports import ManagementPort
 
 
@@ -137,6 +146,40 @@ class FakeManagementPort(ManagementPort):
             cost_usd=0.0,
             investigated_at=datetime.now(UTC),
         )
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Return empty list; override in specific tests as needed."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Return empty list; override in specific tests as needed."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+        return []
+
+    async def get_trace_tree(self, trace_id: str) -> TraceTree:
+        """Raise KeyError; override in specific tests as needed."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+        raise KeyError(f"Trace not found: {trace_id}")
 
     def set_signature_details(
         self, signature_id: str, details: SignatureDetails

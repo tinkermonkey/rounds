@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import ErrorEvent, LogEntry, PartialResultsInfo, TraceTree
+from rounds.core.models import ErrorEvent, LogEntry, PartialResultsInfo, SpanSummary, TraceTree
 from rounds.core.ports import TelemetryPort
 
 
@@ -19,6 +19,7 @@ class FakeTelemetryPort(TelemetryPort):
         self.traces: dict[str, TraceTree] = {}
         self.logs: list[LogEntry] = []
         self.signature_events: dict[str, list[ErrorEvent]] = {}
+        self.span_summaries: list[SpanSummary] = []
         self.get_recent_errors_call_count = 0
         self.get_trace_call_count = 0
         self.get_traces_call_count = 0
@@ -160,12 +161,66 @@ class FakeTelemetryPort(TelemetryPort):
 
         return []
 
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Search logs by keyword.
+
+        Filters self.logs by case-insensitive body match.
+        """
+        if self._error_to_raise:
+            raise self._error_to_raise
+
+        result = [
+            log for log in self.logs
+            if not query or query.lower() in log.body.lower()
+        ]
+        if services:
+            result = [
+                log for log in result
+                if log.attributes.get("service.name") in services
+            ]
+        return result[:limit]
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Search spans — returns pre-populated span_summaries."""
+        if self._error_to_raise:
+            raise self._error_to_raise
+
+        result = list(self.span_summaries)
+        if services:
+            result = [s for s in result if s.service in services]
+        if operation:
+            result = [s for s in result if operation.lower() in s.operation.lower()]
+        if has_error is not None:
+            result = [s for s in result if s.has_error == has_error]
+        return result[:limit]
+
+    def add_span_summary(self, span: SpanSummary) -> None:
+        """Add a span summary for search_spans to return."""
+        self.span_summaries.append(span)
+
     def reset(self) -> None:
         """Reset all collected data and call counts."""
         self.errors.clear()
         self.traces.clear()
         self.logs.clear()
         self.signature_events.clear()
+        self.span_summaries.clear()
         self.get_recent_errors_call_count = 0
         self.get_trace_call_count = 0
         self.get_traces_call_count = 0

@@ -13,7 +13,9 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from rounds.core.models import Signature, SignatureDetails, TraceInvestigation
+from datetime import UTC, datetime, timedelta
+
+from rounds.core.models import Signature, SignatureDetails, SpanNode, TraceInvestigation
 from rounds.core.ports import ManagementPort
 
 logger = logging.getLogger(__name__)
@@ -566,6 +568,191 @@ class CLICommandHandler:
             "investigated_at": inv.investigated_at.isoformat(),
         }
 
+    async def search_logs(
+        self,
+        query: str = "",
+        since_minutes: int = 60,
+        until_minutes: int | None = None,
+        services: list[str] | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Search logs by keyword and optional metadata filters.
+
+        Args:
+            query: Keyword or phrase to search in log bodies. Empty matches all.
+            since_minutes: Lookback window in minutes from now.
+            until_minutes: If set, upper bound in minutes ago from now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            Dictionary with status and matching log entries.
+        """
+        with tracer.start_as_current_span(
+            "cli.search_logs",
+            attributes={"query": query, "since_minutes": since_minutes},
+        ) as span:
+            try:
+                now = datetime.now(UTC)
+                since = now - timedelta(minutes=since_minutes)
+                until = (now - timedelta(minutes=until_minutes)) if until_minutes is not None else None
+
+                logs = await self.management.search_logs(query, since, until, services, limit)
+
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "operation": "search-logs",
+                    "query": query,
+                    "count": len(logs),
+                    "logs": [
+                        {
+                            "timestamp": log.timestamp.isoformat(),
+                            "severity": log.severity.value,
+                            "body": log.body,
+                            "trace_id": log.trace_id,
+                            "span_id": log.span_id,
+                            "attributes": dict(log.attributes),
+                        }
+                        for log in logs
+                    ],
+                }
+
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.count", len(logs))
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to search logs: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                return {
+                    "status": "error",
+                    "operation": "search-logs",
+                    "message": str(e),
+                }
+
+    async def search_spans(
+        self,
+        since_minutes: int = 60,
+        until_minutes: int | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        has_error: bool | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Search spans by metadata filters.
+
+        Args:
+            since_minutes: Lookback window in minutes from now.
+            until_minutes: If set, upper bound in minutes ago from now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            Dictionary with status and matching span summaries.
+        """
+        with tracer.start_as_current_span(
+            "cli.search_spans",
+            attributes={"since_minutes": since_minutes, "has_error": str(has_error)},
+        ) as span:
+            try:
+                now = datetime.now(UTC)
+                since = now - timedelta(minutes=since_minutes)
+                until = (now - timedelta(minutes=until_minutes)) if until_minutes is not None else None
+
+                spans = await self.management.search_spans(
+                    since, until, services, operation, None, has_error, limit
+                )
+
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "operation": "search-spans",
+                    "count": len(spans),
+                    "spans": [
+                        {
+                            "trace_id": s.trace_id,
+                            "span_id": s.span_id,
+                            "service": s.service,
+                            "operation": s.operation,
+                            "duration_ms": s.duration_ms,
+                            "has_error": s.has_error,
+                            "timestamp": s.timestamp.isoformat(),
+                            "attributes": dict(s.attributes),
+                        }
+                        for s in spans
+                    ],
+                }
+
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.count", len(spans))
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to search spans: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                return {
+                    "status": "error",
+                    "operation": "search-spans",
+                    "message": str(e),
+                }
+
+    async def get_trace_tree(self, trace_id: str) -> dict[str, Any]:
+        """Fetch the full span tree for a trace without LLM analysis.
+
+        Returns the raw span hierarchy assembled from the telemetry backend.
+        Use /rounds-investigate for LLM-powered code-flow analysis.
+
+        Args:
+            trace_id: OpenTelemetry trace ID (128-bit hex string).
+
+        Returns:
+            Dictionary with status and the full span tree.
+        """
+        with tracer.start_as_current_span(
+            "cli.get_trace_tree", attributes={"trace_id": trace_id}
+        ) as span:
+            try:
+                tree = await self.management.get_trace_tree(trace_id)
+
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "operation": "get-trace-tree",
+                    "trace_id": tree.trace_id,
+                    "error_span_count": len(tree.error_spans),
+                    "tree": self._format_span_node(tree.root_span),
+                }
+
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("error_span_count", len(tree.error_spans))
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to get trace tree: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                return {
+                    "status": "error",
+                    "operation": "get-trace-tree",
+                    "trace_id": trace_id,
+                    "message": str(e),
+                }
+
+    def _format_span_node(self, node: SpanNode) -> dict[str, Any]:
+        """Recursively serialize a SpanNode to a JSON-compatible dict."""
+        return {
+            "span_id": node.span_id,
+            "service": node.service,
+            "operation": node.operation,
+            "duration_ms": node.duration_ms,
+            "status": node.status,
+            "attributes": dict(node.attributes),
+            "events": [dict(e) for e in node.events],
+            "children": [self._format_span_node(child) for child in node.children],
+        }
+
     def _format_signatures_as_text(self, signatures: Sequence[Signature]) -> str:
         """Format signatures as human-readable text.
 
@@ -660,6 +847,30 @@ async def run_command(
             args["trace_id"],
             args.get("verbose", False),
         )
+
+    elif command == "search-logs":
+        return await handler.search_logs(
+            args.get("query", ""),
+            args.get("since_minutes", 60),
+            args.get("until_minutes"),
+            args.get("services"),
+            args.get("limit", 50),
+        )
+
+    elif command == "search-spans":
+        return await handler.search_spans(
+            args.get("since_minutes", 60),
+            args.get("until_minutes"),
+            args.get("services"),
+            args.get("operation"),
+            args.get("has_error"),
+            args.get("limit", 50),
+        )
+
+    elif command == "get-trace-tree":
+        if "trace_id" not in args:
+            raise ValueError("Missing required parameter: trace_id")
+        return await handler.get_trace_tree(args["trace_id"])
 
     else:
         raise ValueError(f"Unknown command: {command}")

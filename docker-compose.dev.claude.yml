@@ -72,7 +72,7 @@ x-rounds-base: &rounds-base
     - --
   volumes:
     - .:/workspace/rounds:rw
-    - ../documentation_robotics:/workspace/target:rw
+    - ../../beta-tester/documentation_robotics:/workspace/target:ro
     - ./reports:/app/reports:rw
     - rounds-dr-cli-dev-data:/app/data:rw
     # Mount host ~/.claude/ and ~/.claude.json so interactive claude finds

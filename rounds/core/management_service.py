@@ -8,14 +8,18 @@ and auditable.
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 
 from .models import (
     Diagnosis,
     InvestigationContext,
+    LogEntry,
     Signature,
     SignatureDetails,
     SignatureStatus,
+    SpanSummary,
     TraceInvestigation,
+    TraceTree,
 )
 from .ports import (
     DiagnosisPort,
@@ -379,3 +383,37 @@ class ManagementService(ManagementPort):
         )
 
         return investigation
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> Sequence[LogEntry]:
+        """Search logs by keyword and optional metadata filters."""
+        logs = await self.telemetry.search_logs(query, since, until, services, limit)
+        logger.debug("Log search completed", extra={"query": query, "count": len(logs)})
+        return logs
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> Sequence[SpanSummary]:
+        """Search spans by metadata filters."""
+        spans = await self.telemetry.search_spans(
+            since, until, services, operation, attributes, has_error, limit
+        )
+        logger.debug("Span search completed", extra={"count": len(spans)})
+        return spans
+
+    async def get_trace_tree(self, trace_id: str) -> TraceTree:
+        """Fetch the full span hierarchy for a trace without LLM analysis."""
+        return await self.telemetry.get_trace(trace_id)

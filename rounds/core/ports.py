@@ -33,6 +33,7 @@ from .models import (
     Signature,
     SignatureDetails,
     SignatureStatus,
+    SpanSummary,
     StoreStats,
     TraceInvestigation,
     TraceTree,
@@ -150,6 +151,60 @@ class TelemetryPort(ABC):
 
         Returns:
             List of ErrorEvent objects matching the fingerprint.
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> Sequence[LogEntry]:
+        """Search logs by keyword and optional metadata filters.
+
+        Args:
+            query: Keyword or phrase to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            List of LogEntry objects in descending timestamp order.
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> Sequence[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            List of SpanSummary objects in descending timestamp order.
 
         Raises:
             Exception: If telemetry backend is unreachable.
@@ -624,4 +679,77 @@ class ManagementPort(ABC):
             KeyError: If the trace does not exist in the telemetry backend.
             TimeoutError: If the diagnosis engine times out.
             Exception: If the telemetry backend or diagnosis engine fails.
+        """
+
+    @abstractmethod
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> Sequence[LogEntry]:
+        """Search logs by keyword and optional metadata filters.
+
+        Args:
+            query: Keyword or phrase to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            List of LogEntry objects in descending timestamp order.
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> Sequence[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            List of SpanSummary objects in descending timestamp order.
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def get_trace_tree(self, trace_id: str) -> TraceTree:
+        """Fetch the full span hierarchy for a trace without LLM analysis.
+
+        Returns the raw span tree assembled from the telemetry backend.
+        Use this for structural exploration; use investigate_trace() when
+        you want LLM-generated code-flow analysis.
+
+        Args:
+            trace_id: OpenTelemetry trace ID (128-bit hex string).
+
+        Returns:
+            TraceTree with root_span hierarchy and error_spans collection.
+
+        Raises:
+            KeyError: If the trace does not exist in the telemetry backend.
+            Exception: If the telemetry backend is unreachable.
         """
