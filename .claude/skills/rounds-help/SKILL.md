@@ -36,6 +36,8 @@ SKILLS AVAILABLE IN THE ROUNDS CONTEXT
 /rounds-daemon                        — start the polling daemon
 /rounds-test                          — run pytest
 /rounds-check                         — mypy + ruff
+/rounds-explore [QUERY]               — query telemetry: search logs, spans, traces
+/rounds-assess [QUERY]                — assess transaction types: instrumentation, code quality, usage, skill gaps
 
 DIRECTORIES (inside container)
 -------------------------------
