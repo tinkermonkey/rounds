@@ -6,6 +6,7 @@ Covers:
 - JSON command parsing
 """
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -31,8 +32,9 @@ class TestInteractiveCLILoop:
         ]
 
         with patch("builtins.input", side_effect=commands):
-            # Should complete without error
-            await _run_cli_interactive(handler)
+            # Timeout prevents indefinite hang if input mock fails to intercept
+            # the run_in_executor thread (e.g. in CI environments with blocking stdin)
+            await asyncio.wait_for(_run_cli_interactive(handler), timeout=10.0)
 
     async def test_cli_handles_json_parse_errors(self) -> None:
         """Test that CLI handles malformed JSON gracefully."""
