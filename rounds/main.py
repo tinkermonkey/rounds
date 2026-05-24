@@ -84,16 +84,9 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
     logger = logging.getLogger(__name__)
     logger.info("Starting interactive CLI. Type 'help' for available commands or 'exit' to quit.")
 
-    loop = asyncio.get_running_loop()
-
     while True:
         try:
-            # Read command from stdin in a thread to avoid blocking
-            command_line = await loop.run_in_executor(
-                None,
-                input,
-                "rounds> "
-            )
+            command_line = input("rounds> ")
 
             command_line = command_line.strip()
 

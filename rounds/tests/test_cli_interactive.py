@@ -17,6 +17,7 @@ from rounds.tests.fakes.management import FakeManagementPort
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(10)
 class TestInteractiveCLILoop:
     """Test suite for interactive CLI loop."""
 
