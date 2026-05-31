@@ -20,6 +20,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -704,3 +705,27 @@ class JaegerTelemetryAdapter(TelemetryPort):
         except Exception as e:
             logger.error(f"Failed to fetch events for fingerprint {fingerprint}: {e}", exc_info=True)
             raise
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Not implemented for Jaeger; returns empty list."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Not implemented for Jaeger; returns empty list."""
+        return []

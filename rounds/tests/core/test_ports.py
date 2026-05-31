@@ -27,6 +27,7 @@ from core.models import (
     SignatureDetails,
     SignatureStatus,
     SpanNode,
+    SpanSummary,
     StackFrame,
     StoreStats,
     TraceInvestigation,
@@ -250,6 +251,30 @@ class MockTelemetryPort(TelemetryPort):
         """Mock implementation."""
         return []
 
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Mock implementation."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Mock implementation."""
+        return []
+
 
 class MockSignatureStorePort(SignatureStorePort):
     """Mock implementation of SignatureStorePort for testing."""
@@ -437,6 +462,44 @@ class MockManagementPort(ManagementPort):
             cost_usd=0.0,
             investigated_at=datetime.now(UTC),
         )
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Mock implementation."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Mock implementation."""
+        return []
+
+    async def get_trace_tree(self, trace_id: str) -> TraceTree:
+        """Mock implementation."""
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="mock-service",
+            operation="mock-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
 
 
 class TestPortImplementation:

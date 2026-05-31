@@ -215,21 +215,21 @@ class TestArgumentParsing:
         monkeypatch.setattr(sys, "argv", ["main.py", "scan"])
         args = _parse_arguments()
         assert args.command == "scan"
-        assert args.signature_id is None
+        assert args.rest == []
 
     def test_parse_arguments_with_diagnose_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test _parse_arguments with 'diagnose' command and signature_id."""
         monkeypatch.setattr(sys, "argv", ["main.py", "diagnose", "sig-12345"])
         args = _parse_arguments()
         assert args.command == "diagnose"
-        assert args.signature_id == "sig-12345"
+        assert args.rest == ["sig-12345"]
 
     def test_parse_arguments_with_no_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test _parse_arguments with no command (interactive mode)."""
         monkeypatch.setattr(sys, "argv", ["main.py"])
         args = _parse_arguments()
         assert args.command is None
-        assert args.signature_id is None
+        assert args.rest == []
 
 
 # ============================================================================

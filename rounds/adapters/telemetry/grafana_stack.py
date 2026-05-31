@@ -27,6 +27,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -577,3 +578,27 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                     break
 
         return matching_errors
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Not implemented for Grafana Stack; returns empty list."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Not implemented for Grafana Stack; returns empty list."""
+        return []
