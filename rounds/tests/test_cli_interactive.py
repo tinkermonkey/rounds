@@ -189,6 +189,7 @@ class TestInteractiveCLILoop:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(10)
 class TestInvestigateTraceCommand:
     """Tests for the investigate-trace CLI command."""
 
@@ -241,6 +242,7 @@ class TestInvestigateTraceCommand:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(10)
 class TestInvestigateTraceBareSyntax:
     """Tests for the bare trace-ID syntax on investigate-trace."""
 

@@ -86,7 +86,7 @@ async def _run_cli_interactive(cli_handler: CLICommandHandler) -> None:
 
     while True:
         try:
-            command_line = input("rounds> ")
+            command_line = await asyncio.to_thread(input, "rounds> ")
 
             command_line = command_line.strip()
 
