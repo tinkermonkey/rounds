@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+asyncpg = pytest.importorskip("asyncpg", reason="asyncpg not installed")
+
 from rounds.adapters.store.postgresql import PostgreSQLSignatureStore
 from rounds.core.models import (
     Diagnosis,
