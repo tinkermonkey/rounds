@@ -288,7 +288,7 @@ async def test_out_of_order_events_do_not_corrupt_time_bounds(
     assert result.errors_failed_to_process == 0, "No events should fail due to ordering"
     sig = (await store.get_all())[0]
     assert sig.occurrence_count == 3
-    assert sig.first_seen == t2 or sig.first_seen == t0  # Either t2 (creation) or updated to t0
+    assert sig.first_seen == t0
     # last_seen must be the latest timestamp (t2)
     assert sig.last_seen == t2
     await store.close_pool()

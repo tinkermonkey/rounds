@@ -4,7 +4,7 @@ Verifies that state transitions are properly validated and that
 invalid transitions raise appropriate errors.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -308,7 +308,6 @@ def test_record_occurrence_invariants(signature: Signature) -> None:
 
 def test_record_occurrence_earlier_timestamp_updates_first_seen(signature: Signature) -> None:
     """record_occurrence with an older timestamp should update first_seen, not raise."""
-    from datetime import timedelta
     early_timestamp = signature.first_seen - timedelta(seconds=1)
     original_last_seen = signature.last_seen
     original_count = signature.occurrence_count
@@ -322,7 +321,6 @@ def test_record_occurrence_earlier_timestamp_updates_first_seen(signature: Signa
 
 def test_record_occurrence_does_not_move_last_seen_backwards(signature: Signature) -> None:
     """record_occurrence with an older-than-last_seen timestamp must not decrease last_seen."""
-    from datetime import timedelta
     original_last_seen = signature.last_seen
     # timestamp is after first_seen but before last_seen
     mid_timestamp = signature.first_seen + timedelta(seconds=30)
