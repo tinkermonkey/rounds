@@ -1,11 +1,13 @@
 """Tests for Settings config field parsing."""
 
+from typing import Any
+
 import pytest
 
 from rounds.config import Settings
 
 
-def _settings(**kwargs: object) -> Settings:
+def _settings(**kwargs: Any) -> Settings:
     """Create a Settings instance isolated from any .env file."""
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
