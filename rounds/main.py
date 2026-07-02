@@ -713,11 +713,19 @@ async def bootstrap(
     # Telemetry adapter - select based on config
     telemetry: TelemetryPort
     if settings.telemetry_backend == "signoz":
-        telemetry = SigNozTelemetryAdapter(
+        _signoz = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
             api_key=settings.signoz_api_key,
         )
         logger.info("Telemetry adapter: SigNoz")
+        try:
+            await _signoz.verify_connection()
+        except Exception:
+            logger.warning(
+                "SigNoz connectivity check failed at startup — "
+                "will retry on first poll cycle"
+            )
+        telemetry = _signoz
     elif settings.telemetry_backend == "jaeger":
         telemetry = JaegerTelemetryAdapter(
             api_url=settings.jaeger_api_url,

@@ -91,6 +91,41 @@ class SigNozTelemetryAdapter(TelemetryPort):
         """
         await self.client.aclose()
 
+    async def verify_connection(self) -> None:
+        """Verify connectivity and authentication with the SigNoz API.
+
+        Makes a lightweight GET request to the SigNoz health endpoint.
+        Any 2xx or 4xx response (other than 401/403) confirms the server is reachable.
+        Only ConnectError, TimeoutException, or auth failures (401/403) are propagated.
+
+        Raises:
+            httpx.ConnectError: If SigNoz cannot be reached at the configured URL.
+            httpx.HTTPStatusError: If authentication fails (401 or 403).
+            httpx.TimeoutException: If the request times out.
+        """
+        try:
+            response = await self.client.get("/api/v1/health", timeout=10.0)
+            if response.status_code in (401, 403):
+                raise httpx.HTTPStatusError(
+                    f"SigNoz authentication failed (HTTP {response.status_code}): "
+                    "check SIGNOZ_API_KEY",
+                    request=response.request,
+                    response=response,
+                )
+            logger.info(f"SigNoz connection verified: {self.api_url}")
+        except httpx.ConnectError as e:
+            logger.error(f"Cannot connect to SigNoz at {self.api_url}: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"SigNoz authentication failed (HTTP {e.response.status_code}) "
+                f"at {self.api_url}"
+            )
+            raise
+        except httpx.TimeoutException as e:
+            logger.error(f"SigNoz connection timed out at {self.api_url}: {e}")
+            raise
+
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
     ) -> list[ErrorEvent]:
