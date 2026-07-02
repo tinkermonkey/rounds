@@ -871,10 +871,6 @@ async def bootstrap(
     else:
         logger.info("Service filter: all services")
 
-    service_host_map = settings.get_service_host_map()
-    if service_host_map:
-        logger.info(f"Service-host map: {service_host_map}")
-
     # Poll service (implements PollPort)
     poll_service = PollService(
         telemetry=telemetry,

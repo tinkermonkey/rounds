@@ -399,7 +399,10 @@ class Settings(BaseSettings):
         v = self.service_host_map.strip()
         if not v:
             return {}
-        return json.loads(v)
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"SERVICE_HOST_MAP must be a JSON object, got {type(result).__name__}")
+        return result
 
 
 def load_settings(env_file: str | None = None) -> Settings:

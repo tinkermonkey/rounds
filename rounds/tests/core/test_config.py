@@ -57,3 +57,13 @@ class TestGetServiceHostMap:
     def test_default_returns_empty_dict(self):
         s = _settings()
         assert s.get_service_host_map() == {}
+
+    def test_json_array_raises_value_error(self):
+        s = _settings(service_host_map="[1, 2, 3]")
+        with pytest.raises(ValueError, match="SERVICE_HOST_MAP must be a JSON object"):
+            s.get_service_host_map()
+
+    def test_malformed_json_raises_error(self):
+        s = _settings(service_host_map="not json")
+        with pytest.raises(Exception):
+            s.get_service_host_map()

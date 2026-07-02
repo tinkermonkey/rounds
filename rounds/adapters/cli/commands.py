@@ -906,5 +906,8 @@ async def run_command(
             raise ValueError("Missing required parameter: trace_id")
         return await handler.get_trace_tree(args["trace_id"])
 
+    elif command == "list-services":
+        return await handler.list_services()
+
     else:
         raise ValueError(f"Unknown command: {command}")
