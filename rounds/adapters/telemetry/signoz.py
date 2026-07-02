@@ -114,16 +114,17 @@ class SigNozTelemetryAdapter(TelemetryPort):
                 )
             logger.info(f"SigNoz connection verified: {self.api_url}")
         except httpx.ConnectError as e:
-            logger.error(f"Cannot connect to SigNoz at {self.api_url}: {e}")
+            logger.error(f"Cannot connect to SigNoz at {self.api_url}: {e}", exc_info=True)
             raise
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"SigNoz authentication failed (HTTP {e.response.status_code}) "
-                f"at {self.api_url}"
+                f"at {self.api_url}",
+                exc_info=True,
             )
             raise
         except httpx.TimeoutException as e:
-            logger.error(f"SigNoz connection timed out at {self.api_url}: {e}")
+            logger.error(f"SigNoz connection timed out at {self.api_url}: {e}", exc_info=True)
             raise
 
     async def get_recent_errors(
