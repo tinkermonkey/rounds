@@ -204,13 +204,18 @@ class Signature:
         self.status = SignatureStatus.MUTED
 
     def record_occurrence(self, timestamp: datetime) -> None:
-        """Record a new occurrence and update last_seen."""
-        if timestamp < self.first_seen:
-            raise ValueError(
-                f"Occurrence timestamp {timestamp} cannot be before first_seen {self.first_seen}"
-            )
+        """Record a new occurrence and update time bounds.
+
+        Accepts any timestamp — events may arrive out-of-order when the telemetry
+        backend returns results newest-first or when the lookback window overlaps
+        with a previous poll cycle. first_seen tracks the earliest observed
+        timestamp; last_seen tracks the latest.
+        """
         self.occurrence_count += 1
-        self.last_seen = timestamp
+        if timestamp < self.first_seen:
+            self.first_seen = timestamp
+        if timestamp > self.last_seen:
+            self.last_seen = timestamp
 
     def revert_to_new(self) -> None:
         """Revert signature from INVESTIGATING back to NEW status.

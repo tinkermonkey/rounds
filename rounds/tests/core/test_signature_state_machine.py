@@ -306,9 +306,28 @@ def test_record_occurrence_invariants(signature: Signature) -> None:
     assert signature.last_seen == new_timestamp
 
 
-def test_record_occurrence_before_first_seen_fails(signature: Signature) -> None:
-    """record_occurrence should fail if timestamp is before first_seen."""
+def test_record_occurrence_earlier_timestamp_updates_first_seen(signature: Signature) -> None:
+    """record_occurrence with an older timestamp should update first_seen, not raise."""
     from datetime import timedelta
     early_timestamp = signature.first_seen - timedelta(seconds=1)
-    with pytest.raises(ValueError, match="cannot be before first_seen"):
-        signature.record_occurrence(early_timestamp)
+    original_last_seen = signature.last_seen
+    original_count = signature.occurrence_count
+
+    signature.record_occurrence(early_timestamp)
+
+    assert signature.occurrence_count == original_count + 1
+    assert signature.first_seen == early_timestamp
+    assert signature.last_seen == original_last_seen  # last_seen should not move backward
+
+
+def test_record_occurrence_does_not_move_last_seen_backwards(signature: Signature) -> None:
+    """record_occurrence with an older-than-last_seen timestamp must not decrease last_seen."""
+    from datetime import timedelta
+    original_last_seen = signature.last_seen
+    # timestamp is after first_seen but before last_seen
+    mid_timestamp = signature.first_seen + timedelta(seconds=30)
+    assert mid_timestamp < original_last_seen
+
+    signature.record_occurrence(mid_timestamp)
+
+    assert signature.last_seen == original_last_seen
