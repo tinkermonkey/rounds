@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import asyncpg
+import asyncpg  # type: ignore[import-not-found,import-untyped]
 
 from rounds.core.models import Diagnosis, Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort
@@ -79,6 +79,33 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             raise RuntimeError(
                 f"Failed to connect to PostgreSQL database: {e}"
             ) from e
+
+    async def initialize(self) -> None:
+        """Initialize the connection pool and schema.
+
+        Public lifecycle method: call once at startup before any queries.
+        Subsequent calls are no-ops (idempotent).
+        """
+        await self._init_schema()
+
+    async def get(self, fingerprint: str, service: str) -> "Signature | None":
+        """Look up a signature by fingerprint.
+
+        The ``service`` parameter is accepted for API compatibility but not
+        used in the query — fingerprints are globally unique.
+
+        Args:
+            fingerprint: Hex digest of the normalized error.
+            service: Service name (unused; fingerprints are globally unique).
+
+        Returns:
+            Signature object if found, None otherwise.
+        """
+        return await self.get_by_fingerprint(fingerprint)
+
+    async def close(self) -> None:
+        """Close all pooled connections. Alias for close_pool()."""
+        await self.close_pool()
 
     async def close_pool(self) -> None:
         """Close all pooled connections."""

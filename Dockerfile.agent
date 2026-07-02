@@ -43,13 +43,27 @@ RUN apt-get update && \
 
 WORKDIR /workspace/rounds
 
-# If requirements.txt exists, copy and install it
-# For now, install expected core dependencies that the project will need
-# These can be updated when requirements.txt is created
+# Install all project dependencies from pyproject.toml
+# Core dependencies:
+#   pydantic, pydantic-settings: Configuration validation
+#   aiosqlite: Async SQLite for signature store
+#   httpx: HTTP client for telemetry API polling
+#   python-dotenv: .env file support
+#   opentelemetry-*: Tracing and telemetry export
+# Optional adapters:
+#   asyncpg: PostgreSQL signature store adapter
+#   openai: OpenAI diagnosis adapter
 RUN pip install --no-cache-dir \
-    httpx \
     pydantic \
-    python-dotenv
+    pydantic-settings \
+    aiosqlite \
+    httpx \
+    python-dotenv \
+    opentelemetry-api \
+    opentelemetry-sdk \
+    opentelemetry-exporter-otlp-proto-http \
+    asyncpg \
+    openai
 
 # Create application data directories with orchestrator ownership so that
 # Docker named volumes mounted at these paths inherit the correct permissions
@@ -73,7 +87,7 @@ RUN claude --version && \
 # Verify Python and installed packages
 RUN python3 --version && \
     pip --version && \
-    python3 -c "import httpx; import pydantic; import dotenv"
+    python3 -c "import httpx; import pydantic; import dotenv; import pydantic_settings; import aiosqlite; import opentelemetry; import asyncpg; import openai"
 
 # ============================================================================
 # Default command

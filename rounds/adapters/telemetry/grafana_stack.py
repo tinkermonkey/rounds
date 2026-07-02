@@ -27,6 +27,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -577,3 +578,174 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                     break
 
         return matching_errors
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Search logs by keyword and optional metadata filters.
+
+        Queries Loki using LogQL with a ``|=`` substring filter for keyword search.
+
+        Args:
+            query: Keyword to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            List of LogEntry objects in descending timestamp order.
+
+        Raises:
+            Exception: If Loki is unreachable.
+        """
+        try:
+            now = datetime.now(UTC)
+            start_ns = int(since.timestamp() * 1e9)
+            end_ns = int((until or now).timestamp() * 1e9)
+
+            if services:
+                valid_services = [s for s in services if _is_valid_identifier(s)]
+                invalid = [s for s in services if not _is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if not valid_services:
+                    return []
+                service_regex = "|".join(valid_services)
+                stream_selector = f'{{service=~"{service_regex}"}}'
+            else:
+                stream_selector = "{}"
+
+            logql_query = f'{stream_selector} |= "{query}"' if query else stream_selector
+
+            response = await self.loki_client.get(
+                "/loki/api/v1/query_range",
+                params={"query": logql_query, "start": start_ns, "end": end_ns, "limit": limit},
+            )
+
+            if response.status_code != 200:
+                return []
+
+            logs: list[LogEntry] = []
+            for stream in response.json().get("data", {}).get("result", []):
+                for timestamp_ns, log_line in stream.get("values", []):
+                    logs.append(LogEntry(
+                        timestamp=datetime.fromtimestamp(int(timestamp_ns) / 1e9, tz=UTC),
+                        severity=Severity.INFO,
+                        body=log_line,
+                        attributes={},
+                        trace_id=None,
+                        span_id=None,
+                    ))
+                    if len(logs) >= limit:
+                        return logs
+
+            return logs
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search logs in Loki: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching logs: {e}", exc_info=True)
+            raise
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Queries Tempo's search API (``/api/search``) and returns lightweight
+        span summaries. Tempo returns trace-level results; each summary
+        represents the root span of a matching trace.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            List of SpanSummary objects in descending timestamp order.
+
+        Raises:
+            Exception: If Tempo is unreachable.
+        """
+        try:
+            now = datetime.now(UTC)
+            params: dict[str, Any] = {
+                "start": int(since.timestamp()),
+                "end": int((until or now).timestamp()),
+                "limit": limit,
+            }
+
+            if services:
+                valid_services = [s for s in services if _is_valid_identifier(s)]
+                if valid_services:
+                    params["service.name"] = valid_services[0]
+
+            if operation:
+                params["name"] = operation
+
+            if has_error is True:
+                params["spanStatus"] = "error"
+
+            if attributes:
+                for key, value in attributes.items():
+                    if _is_valid_identifier(key):
+                        params[f"tags.{key}"] = value
+
+            response = await self.tempo_client.get("/api/search", params=params)
+
+            if response.status_code != 200:
+                return []
+
+            summaries: list[SpanSummary] = []
+            for trace_data in response.json().get("traces", []):
+                start_ns = trace_data.get("startTimeUnixNano", 0)
+                timestamp = datetime.fromtimestamp(int(start_ns) / 1e9, tz=UTC) if start_ns else now
+
+                span_sets = trace_data.get("spanSets", [])
+                trace_has_error = any(
+                    span.get("attributes", {}).get("otel.status_code") == "ERROR"
+                    for span_set in span_sets
+                    for span in span_set.get("spans", [])
+                )
+                if has_error is not None and trace_has_error != has_error:
+                    continue
+
+                summaries.append(SpanSummary(
+                    trace_id=trace_data.get("traceID", ""),
+                    span_id="",
+                    service=trace_data.get("rootServiceName", ""),
+                    operation=trace_data.get("rootName", ""),
+                    duration_ms=float(trace_data.get("durationMs", 0.0)),
+                    has_error=trace_has_error,
+                    timestamp=timestamp,
+                    attributes={},
+                ))
+                if len(summaries) >= limit:
+                    break
+
+            return summaries
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search spans in Tempo: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching spans: {e}", exc_info=True)
+            raise

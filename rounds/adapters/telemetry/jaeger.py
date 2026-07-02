@@ -20,6 +20,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -703,4 +704,190 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         except Exception as e:
             logger.error(f"Failed to fetch events for fingerprint {fingerprint}: {e}", exc_info=True)
+            raise
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Search logs by keyword.
+
+        Jaeger does not have a standalone log search API; logs are extracted
+        from span log events. Queries recent traces and extracts log entries
+        whose message body contains the query string.
+
+        Args:
+            query: Keyword to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            List of LogEntry objects extracted from matching span logs.
+        """
+        now = datetime.now(UTC)
+        end_time_us = int((until or now).timestamp() * 1e6)
+        start_time_us = int(since.timestamp() * 1e6)
+
+        try:
+            services_to_query = [s for s in (services or await self._get_services())
+                                  if _is_valid_identifier(s)]
+            all_logs: list[LogEntry] = []
+
+            for service in services_to_query:
+                try:
+                    response = await self.client.get(
+                        "/api/traces",
+                        params={"service": service, "start": start_time_us, "end": end_time_us, "limit": 100},
+                    )
+                    if response.status_code != 200:
+                        continue
+
+                    for trace in response.json().get("data", []):
+                        trace_id = trace.get("traceID", "")
+                        for span_data in trace.get("spans", []):
+                            span_id = span_data.get("spanID", "")
+                            for log in span_data.get("logs", []):
+                                if not isinstance(log, dict):
+                                    continue
+                                fields = log.get("fields", [])
+                                message = next(
+                                    (str(f.get("value", "")) for f in fields
+                                     if isinstance(f, dict) and f.get("key") == "message"),
+                                    "",
+                                )
+                                if not message:
+                                    continue
+                                if query and query.lower() not in message.lower():
+                                    continue
+
+                                ts_us = log.get("timestamp", 0)
+                                all_logs.append(LogEntry(
+                                    timestamp=datetime.fromtimestamp(ts_us / 1e6, tz=UTC) if ts_us else now,
+                                    severity=Severity.INFO,
+                                    body=message,
+                                    attributes={f.get("key", ""): f.get("value", "")
+                                                for f in fields if isinstance(f, dict)},
+                                    trace_id=trace_id,
+                                    span_id=span_id,
+                                ))
+                                if len(all_logs) >= limit:
+                                    return all_logs
+                except Exception as e:
+                    logger.warning(f"Failed to extract logs from service {service}: {e}")
+                    continue
+
+            return all_logs
+
+        except Exception as e:
+            logger.error(f"Failed to search logs in Jaeger: {e}", exc_info=True)
+            raise
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Queries Jaeger for traces matching the filters and extracts
+        SpanSummary objects from the results.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            List of SpanSummary objects in descending timestamp order.
+        """
+        now = datetime.now(UTC)
+        end_time_us = int((until or now).timestamp() * 1e6)
+        start_time_us = int(since.timestamp() * 1e6)
+
+        try:
+            services_to_query = [s for s in (services or await self._get_services())
+                                  if _is_valid_identifier(s)]
+            all_spans: list[SpanSummary] = []
+
+            for service in services_to_query:
+                try:
+                    params: dict[str, Any] = {
+                        "service": service,
+                        "start": start_time_us,
+                        "end": end_time_us,
+                        "limit": limit,
+                    }
+                    if operation:
+                        params["operation"] = operation
+                    if has_error is True:
+                        params["tags"] = "error=true"
+
+                    response = await self.client.get("/api/traces", params=params)
+                    if response.status_code != 200:
+                        continue
+
+                    for trace in response.json().get("data", []):
+                        trace_id = trace.get("traceID", "")
+                        processes = trace.get("processes", {})
+
+                        for span_data in trace.get("spans", []):
+                            tags_list = span_data.get("tags", [])
+                            tags: dict[str, Any] = (
+                                {t["key"]: t["value"] for t in tags_list}
+                                if isinstance(tags_list, list)
+                                else tags_list
+                            )
+                            span_has_error = (
+                                bool(tags.get("error"))
+                                or tags.get("otel.status_code") == "ERROR"
+                            )
+
+                            if has_error is not None and span_has_error != has_error:
+                                continue
+                            if attributes and not all(tags.get(k) == v for k, v in attributes.items()):
+                                continue
+
+                            process_id = span_data.get("processID", "")
+                            span_service = processes.get(process_id, {}).get("serviceName", service)
+
+                            all_spans.append(SpanSummary(
+                                trace_id=trace_id,
+                                span_id=span_data.get("spanID", ""),
+                                service=span_service,
+                                operation=span_data.get("operationName", ""),
+                                duration_ms=span_data.get("duration", 0) / 1000.0,
+                                has_error=span_has_error,
+                                timestamp=datetime.fromtimestamp(
+                                    span_data.get("startTime", 0) / 1e6, tz=UTC
+                                ),
+                                attributes=dict(tags),
+                            ))
+                            if len(all_spans) >= limit:
+                                all_spans.sort(key=lambda s: s.timestamp, reverse=True)
+                                return all_spans
+
+                except Exception as e:
+                    logger.warning(f"Failed to search spans in service {service}: {e}")
+                    continue
+
+            all_spans.sort(key=lambda s: s.timestamp, reverse=True)
+            return all_spans[:limit]
+
+        except Exception as e:
+            logger.error(f"Failed to search spans in Jaeger: {e}", exc_info=True)
             raise

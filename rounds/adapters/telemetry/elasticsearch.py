@@ -27,6 +27,7 @@ from rounds.core.models import (
     PartialResultsInfo,
     Severity,
     SpanNode,
+    SpanSummary,
     StackFrame,
     TraceTree,
 )
@@ -756,6 +757,195 @@ class ElasticsearchTelemetryAdapter(TelemetryPort):
             raise ValueError(
                 f"Cannot parse error event from span {span_id}: {e}"
             ) from e
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Search logs by keyword and optional metadata filters.
+
+        Queries the otel-logs-* index using Elasticsearch Query DSL.
+
+        Args:
+            query: Keyword to search in log bodies. Empty string matches all.
+            since: Return logs after this timestamp.
+            until: Return logs before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            limit: Maximum results to return.
+
+        Returns:
+            List of LogEntry objects in descending timestamp order.
+
+        Raises:
+            httpx.HTTPError: If the Elasticsearch request fails.
+        """
+        try:
+            now = datetime.now(UTC)
+            filter_items: list[dict[str, Any]] = [
+                {"range": {"@timestamp": {"gte": since.isoformat(), "lte": (until or now).isoformat()}}},
+            ]
+
+            if query:
+                filter_items.append({"match": {"body": query}})
+
+            if services:
+                valid_services = [s for s in services if _is_valid_identifier(s)]
+                invalid = [s for s in services if not _is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if valid_services:
+                    filter_items.append(
+                        {"terms": {"resource.attributes.service.name": valid_services}}
+                    )
+
+            es_query: dict[str, Any] = {
+                "query": {"bool": {"filter": filter_items}},
+                "size": limit,
+                "sort": [{"@timestamp": "desc"}],
+            }
+
+            response = await self.client.post(f"/{self.logs_index}/_search", json=es_query)
+            response.raise_for_status()
+
+            hits = response.json().get("hits", {}).get("hits", [])
+            logs = []
+            parse_errors = 0
+            for hit in hits:
+                try:
+                    logs.append(self._parse_log_entry(hit))
+                except Exception:
+                    parse_errors += 1
+            if parse_errors:
+                logger.error(
+                    "Failed to parse %d/%d log entries from Elasticsearch during search",
+                    parse_errors,
+                    len(hits),
+                )
+            return logs
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search logs in Elasticsearch: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching logs: {e}", exc_info=True)
+            raise
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Search spans by metadata filters.
+
+        Queries the otel-traces-* index using Elasticsearch Query DSL.
+
+        Args:
+            since: Return spans after this timestamp.
+            until: Return spans before this timestamp. Defaults to now.
+            services: Optional service name filter.
+            operation: Optional operation name substring filter.
+            attributes: Optional key-value span attribute filters.
+            has_error: If set, filter to error or non-error spans only.
+            limit: Maximum results to return.
+
+        Returns:
+            List of SpanSummary objects in descending timestamp order.
+
+        Raises:
+            httpx.HTTPError: If the Elasticsearch request fails.
+        """
+        try:
+            now = datetime.now(UTC)
+            filter_items: list[dict[str, Any]] = [
+                {"range": {"@timestamp": {"gte": since.isoformat(), "lte": (until or now).isoformat()}}},
+            ]
+
+            if services:
+                valid_services = [s for s in services if _is_valid_identifier(s)]
+                invalid = [s for s in services if not _is_valid_identifier(s)]
+                if invalid:
+                    logger.warning(f"Skipping invalid service names: {invalid}")
+                if valid_services:
+                    filter_items.append(
+                        {"terms": {"resource.attributes.service.name": valid_services}}
+                    )
+
+            if operation:
+                filter_items.append({"match": {"name": operation}})
+
+            if has_error is True:
+                filter_items.append({"term": {"status.code": _ES_ERROR_STATUS}})
+            elif has_error is False:
+                filter_items.append(
+                    {"bool": {"must_not": {"term": {"status.code": _ES_ERROR_STATUS}}}}
+                )
+
+            if attributes:
+                for key, value in attributes.items():
+                    if _is_valid_identifier(key):
+                        filter_items.append({"term": {f"attributes.{key}": value}})
+
+            es_query: dict[str, Any] = {
+                "query": {"bool": {"filter": filter_items}},
+                "size": limit,
+                "sort": [{"@timestamp": "desc"}, {"_id": "asc"}],
+            }
+
+            response = await self.client.post(f"/{self.traces_index}/_search", json=es_query)
+            response.raise_for_status()
+
+            hits = response.json().get("hits", {}).get("hits", [])
+            spans: list[SpanSummary] = []
+            parse_errors = 0
+            for hit in hits:
+                try:
+                    source = hit.get("_source", {})
+                    ts_str = source.get("@timestamp", "")
+                    timestamp = (
+                        datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        if ts_str
+                        else now
+                    )
+                    status_code = (source.get("status") or {}).get("code", "")
+                    spans.append(SpanSummary(
+                        trace_id=source.get("traceId", ""),
+                        span_id=source.get("spanId", ""),
+                        service=(
+                            source.get("resource", {})
+                            .get("attributes", {})
+                            .get("service.name", "")
+                        ),
+                        operation=source.get("name", ""),
+                        duration_ms=int(source.get("durationNano", 0) or 0) / 1e6,
+                        has_error=status_code == _ES_ERROR_STATUS,
+                        timestamp=timestamp,
+                        attributes=dict(source.get("attributes", {}) or {}),
+                    ))
+                except Exception:
+                    parse_errors += 1
+            if parse_errors:
+                logger.error(
+                    "Failed to parse %d/%d spans from Elasticsearch during search",
+                    parse_errors,
+                    len(hits),
+                )
+            return spans
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to search spans in Elasticsearch: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error searching spans: {e}", exc_info=True)
+            raise
 
     def _parse_log_entry(self, hit: dict[str, Any]) -> LogEntry:
         """Parse an Elasticsearch hit from otel-logs-* into a LogEntry.

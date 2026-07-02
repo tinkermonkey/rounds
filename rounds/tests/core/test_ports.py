@@ -4,17 +4,12 @@ Tests verify that port abstract base classes are properly defined
 and that implementations must satisfy the interface contract.
 """
 
-import sys
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-# Add the rounds directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from core.models import (
+from rounds.core.models import (
     Diagnosis,
     ErrorEvent,
     InvestigationContext,
@@ -27,12 +22,13 @@ from core.models import (
     SignatureDetails,
     SignatureStatus,
     SpanNode,
+    SpanSummary,
     StackFrame,
     StoreStats,
     TraceInvestigation,
     TraceTree,
 )
-from core.ports import (
+from rounds.core.ports import (
     DiagnosisPort,
     ManagementPort,
     NotificationPort,
@@ -120,7 +116,7 @@ def investigation_context(signature: Signature, error_event: ErrorEvent) -> Inve
         duration_ms=5000,
         status="error",
         attributes={"error.type": "ConnectionTimeoutError"},
-        events=({"message": "timeout"}, {"message": "retrying"}),
+        events=({"message": "timeout"}, {"message": "retrying"}),  # type: ignore[arg-type]
     )
     trace_tree = TraceTree(
         trace_id="trace-123",
@@ -247,6 +243,30 @@ class MockTelemetryPort(TelemetryPort):
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:
+        """Mock implementation."""
+        return []
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Mock implementation."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
         """Mock implementation."""
         return []
 
@@ -437,6 +457,44 @@ class MockManagementPort(ManagementPort):
             cost_usd=0.0,
             investigated_at=datetime.now(UTC),
         )
+
+    async def search_logs(
+        self,
+        query: str,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[LogEntry]:
+        """Mock implementation."""
+        return []
+
+    async def search_spans(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+        services: list[str] | None = None,
+        operation: str | None = None,
+        attributes: dict[str, str] | None = None,
+        has_error: bool | None = None,
+        limit: int = 100,
+    ) -> list[SpanSummary]:
+        """Mock implementation."""
+        return []
+
+    async def get_trace_tree(self, trace_id: str) -> TraceTree:
+        """Mock implementation."""
+        root_span = SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service="test-service",
+            operation="test-op",
+            duration_ms=0,
+            status="ok",
+            attributes={},
+            events=(),
+        )
+        return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
 
 
 class TestPortImplementation:
