@@ -634,6 +634,33 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
         return log_entries
 
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in Jaeger.
+
+        Uses GET /api/services which returns all instrumented service names.
+
+        Returns:
+            Sorted list of service name strings.
+
+        Raises:
+            httpx.HTTPError: If the API request fails.
+        """
+        try:
+            response = await self.client.get("/api/services")
+            response.raise_for_status()
+            data = response.json()
+            names = data.get("data", [])
+            if not isinstance(names, list):
+                logger.warning(f"Unexpected /api/services response shape: {type(names)}")
+                return []
+            return sorted(str(n) for n in names if n)
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to list services from Jaeger: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error listing services: {e}", exc_info=True)
+            raise
+
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:

@@ -270,6 +270,10 @@ class MockTelemetryPort(TelemetryPort):
         """Mock implementation."""
         return []
 
+    async def list_services(self) -> list[str]:
+        """Mock implementation."""
+        return []
+
 
 class MockSignatureStorePort(SignatureStorePort):
     """Mock implementation of SignatureStorePort for testing."""
@@ -495,6 +499,10 @@ class MockManagementPort(ManagementPort):
             events=(),
         )
         return TraceTree(trace_id=trace_id, root_span=root_span, error_spans=())
+
+    async def list_services(self) -> list[str]:
+        """Mock implementation."""
+        return []
 
 
 class TestPortImplementation:

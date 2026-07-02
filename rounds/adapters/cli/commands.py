@@ -739,6 +739,41 @@ class CLICommandHandler:
                     "message": str(e),
                 }
 
+    async def list_services(self) -> dict[str, Any]:
+        """List all service names visible in the telemetry backend.
+
+        Returns:
+            Dictionary with status and sorted list of service names:
+            - On success: {"status": "success", "operation": "list-services",
+                           "count": int, "services": [str, ...]}
+            - On error: {"status": "error", "operation": "list-services",
+                         "message": str}
+        """
+        with tracer.start_as_current_span("cli.list_services") as span:
+            try:
+                services = await self.management.list_services()
+
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "operation": "list-services",
+                    "count": len(services),
+                    "services": services,
+                }
+
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("result.count", len(services))
+                return result
+
+            except Exception as e:
+                logger.error(f"Failed to list services: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                return {
+                    "status": "error",
+                    "operation": "list-services",
+                    "message": str(e),
+                }
+
     def _format_span_node(self, node: SpanNode) -> dict[str, Any]:
         """Recursively serialize a SpanNode to a JSON-compatible dict."""
         return {

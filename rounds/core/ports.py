@@ -210,6 +210,21 @@ class TelemetryPort(ABC):
             Exception: If telemetry backend is unreachable.
         """
 
+    @abstractmethod
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in the telemetry backend.
+
+        Used to enumerate instrumented services for filter configuration
+        and service-to-host mapping.
+
+        Returns:
+            Sorted list of service name strings, exactly as reported by
+            the telemetry backend (case-sensitive).
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
     async def close(self) -> None:
         """Close connections and clean up resources.
 
@@ -752,4 +767,17 @@ class ManagementPort(ABC):
         Raises:
             KeyError: If the trace does not exist in the telemetry backend.
             Exception: If the telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in the telemetry backend.
+
+        Delegates to the underlying TelemetryPort implementation.
+
+        Returns:
+            Sorted list of service name strings (exact, case-sensitive).
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
         """

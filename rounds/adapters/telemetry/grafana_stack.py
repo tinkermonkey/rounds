@@ -543,6 +543,36 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
         return logs
 
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in Tempo via label values query.
+
+        Queries Loki for unique service.name label values as an approximation
+        of all instrumented services. Returns empty list if Loki is unavailable.
+
+        Returns:
+            Sorted list of service name strings.
+
+        Raises:
+            httpx.HTTPError: If the Loki API request fails.
+        """
+        try:
+            response = await self.loki_client.get(
+                "/loki/api/v1/label/service_name/values"
+            )
+            response.raise_for_status()
+            data = response.json()
+            names = data.get("data", [])
+            if not isinstance(names, list):
+                logger.warning(f"Unexpected Loki label values response: {type(names)}")
+                return []
+            return sorted(str(n) for n in names if n)
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to list services from Grafana Stack: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error listing services: {e}", exc_info=True)
+            raise
+
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:

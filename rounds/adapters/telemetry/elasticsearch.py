@@ -643,6 +643,49 @@ class ElasticsearchTelemetryAdapter(TelemetryPort):
             )
             raise
 
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in Elasticsearch.
+
+        Uses a terms aggregation on resource.attributes.service.name across
+        the traces index to enumerate all instrumented services.
+
+        Returns:
+            Sorted list of service name strings.
+
+        Raises:
+            httpx.HTTPError: If the Elasticsearch API request fails.
+        """
+        try:
+            payload = {
+                "size": 0,
+                "aggs": {
+                    "services": {
+                        "terms": {
+                            "field": "resource.attributes.service.name",
+                            "size": 1000,
+                        }
+                    }
+                },
+            }
+            response = await self.client.post(
+                f"/{self.traces_index}/_search", json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+            buckets = (
+                data.get("aggregations", {})
+                .get("services", {})
+                .get("buckets", [])
+            )
+            names = [b["key"] for b in buckets if b.get("key")]
+            return sorted(names)
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to list services from Elasticsearch: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error listing services: {e}", exc_info=True)
+            raise
+
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:

@@ -210,6 +210,21 @@ class FakeTelemetryPort(TelemetryPort):
             result = [s for s in result if s.has_error == has_error]
         return result[:limit]
 
+    async def list_services(self) -> list[str]:
+        """Return unique service names from stored errors and spans."""
+        if self._error_to_raise:
+            raise self._error_to_raise
+
+        names: set[str] = set()
+        for errors in self.errors.values():
+            for error in errors:
+                if error.service:
+                    names.add(error.service)
+        for span in self.span_summaries:
+            if span.service:
+                names.add(span.service)
+        return sorted(names)
+
     def add_span_summary(self, span: SpanSummary) -> None:
         """Add a span summary for search_spans to return."""
         self.span_summaries.append(span)

@@ -295,6 +295,9 @@ async def _execute_cli_command(
                 span.set_attribute("trace_id", args["trace_id"])
                 result = await cli_handler.get_trace_tree(args["trace_id"])
 
+            elif command == "list-services":
+                result = await cli_handler.list_services()
+
             else:
                 error_msg = f"Unknown command: {command}. Use 'help' for available commands."
                 span.set_status(Status(StatusCode.ERROR, error_msg))
@@ -551,6 +554,12 @@ Available Commands (JSON format):
     Examples:
       investigate-trace abcdef1234567890abcdef1234567890
       investigate-trace {"trace_id": "abcdef1234567890abcdef1234567890"}
+
+  list-services
+    List all service names visible in the telemetry backend.
+    Returns exact, case-sensitive names as reported by the backend.
+
+    Example: list-services
 
   help
     Show this help message.
@@ -854,6 +863,18 @@ async def bootstrap(
         budget_tracker=scheduler,
     )
 
+    # Resolve service filter: None means all services, non-empty list filters to named services
+    service_names = settings.get_service_names()
+    service_filter: list[str] | None = service_names if service_names else None
+    if service_filter:
+        logger.info(f"Service filter active: {service_filter}")
+    else:
+        logger.info("Service filter: all services")
+
+    service_host_map = settings.get_service_host_map()
+    if service_host_map:
+        logger.info(f"Service-host map: {service_host_map}")
+
     # Poll service (implements PollPort)
     poll_service = PollService(
         telemetry=telemetry,
@@ -862,7 +883,7 @@ async def bootstrap(
         triage=triage,
         investigator=investigator,
         lookback_minutes=settings.error_lookback_minutes,
-        services=None,  # None means all services
+        services=service_filter,
         batch_size=settings.poll_batch_size,
     )
 

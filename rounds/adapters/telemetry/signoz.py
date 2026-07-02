@@ -729,6 +729,45 @@ class SigNozTelemetryAdapter(TelemetryPort):
             logger.error(f"Unexpected error searching spans: {e}", exc_info=True)
             raise
 
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in SigNoz.
+
+        Queries GET /api/v1/services which returns all services that have
+        sent telemetry. Service names are returned exactly as SigNoz reports
+        them (case-sensitive).
+
+        Returns:
+            Sorted list of service name strings.
+
+        Raises:
+            httpx.HTTPError: If the API request fails.
+        """
+        try:
+            response = await self.client.get("/api/v1/services")
+            response.raise_for_status()
+
+            data = response.json()
+
+            # SigNoz returns: {"data": [{"serviceName": "...", ...}, ...]}
+            services_data = data.get("data", [])
+            if not isinstance(services_data, list):
+                logger.warning(f"Unexpected /api/v1/services response shape: {type(services_data)}")
+                return []
+
+            names = [
+                item["serviceName"]
+                for item in services_data
+                if isinstance(item, dict) and item.get("serviceName")
+            ]
+            return sorted(set(names))
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to list services from SigNoz: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error listing services: {e}", exc_info=True)
+            raise
+
     async def get_events_for_signature(
         self, fingerprint: str, limit: int = 5
     ) -> list[ErrorEvent]:

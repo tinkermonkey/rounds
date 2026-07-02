@@ -181,6 +181,12 @@ class FakeManagementPort(ManagementPort):
             raise ValueError(self.fail_message)
         raise KeyError(f"Trace not found: {trace_id}")
 
+    async def list_services(self) -> list[str]:
+        """Return empty list; override in specific tests as needed."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+        return []
+
     def set_signature_details(
         self, signature_id: str, details: SignatureDetails
     ) -> None:

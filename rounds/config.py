@@ -7,6 +7,7 @@ This module provides centralized configuration management:
 - Support multiple environments (development, staging, production)
 """
 
+import json
 import warnings
 from typing import Literal
 
@@ -224,6 +225,24 @@ class Settings(BaseSettings):
         description="Path to the codebase for diagnosis context",
     )
 
+    # Service filter and host mapping
+    service_filter: str = Field(
+        default="",
+        description=(
+            "Comma-separated service names to monitor (empty = all services). "
+            "Names must match the telemetry backend exactly (case-sensitive). "
+            "Example: SERVICE_FILTER=my-api,worker-service"
+        ),
+    )
+    service_host_map: str = Field(
+        default="",
+        description=(
+            "JSON map from telemetry service name to host machine. "
+            "Used to route diagnosis context to the correct codebase host. "
+            'Example: SERVICE_HOST_MAP={"my-api":"t5610","worker":"petit-cochon"}'
+        ),
+    )
+
     # Development
     debug: bool = Field(
         default=False,
@@ -356,6 +375,31 @@ class Settings(BaseSettings):
                 )
 
         return self
+
+
+    def get_service_names(self) -> list[str]:
+        """Parse service_filter string into a list of service names.
+
+        Returns an empty list when SERVICE_FILTER is empty (meaning all services
+        will be monitored).
+
+        Supports comma-separated format: ``svc-a,svc-b``
+        """
+        v = self.service_filter.strip()
+        if not v:
+            return []
+        return [s.strip() for s in v.split(",") if s.strip()]
+
+    def get_service_host_map(self) -> dict[str, str]:
+        """Parse service_host_map string into a dict mapping service → host.
+
+        Returns an empty dict when SERVICE_HOST_MAP is not configured.
+        Expects JSON format: ``{"my-api": "t5610", "worker": "petit-cochon"}``
+        """
+        v = self.service_host_map.strip()
+        if not v:
+            return {}
+        return json.loads(v)
 
 
 def load_settings(env_file: str | None = None) -> Settings:

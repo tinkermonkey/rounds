@@ -417,3 +417,7 @@ class ManagementService(ManagementPort):
     async def get_trace_tree(self, trace_id: str) -> TraceTree:
         """Fetch the full span hierarchy for a trace without LLM analysis."""
         return await self.telemetry.get_trace(trace_id)
+
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in the telemetry backend."""
+        return await self.telemetry.list_services()

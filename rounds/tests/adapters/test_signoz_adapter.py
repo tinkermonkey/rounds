@@ -91,6 +91,89 @@ class TestVerifyConnection:
         await adapter.close()
 
 
+class TestListServices:
+    """Tests for SigNozTelemetryAdapter.list_services()."""
+
+    @pytest.mark.asyncio
+    async def test_returns_sorted_service_names(self):
+        """Should return sorted service names from /api/v1/services data array."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/v1/services"
+            return httpx.Response(200, json={
+                "data": [
+                    {"serviceName": "zebra-api", "p99": 0},
+                    {"serviceName": "alpha-worker", "p99": 0},
+                    {"serviceName": "beta-service", "p99": 0},
+                ]
+            })
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        services = await adapter.list_services()
+        assert services == ["alpha-worker", "beta-service", "zebra-api"]
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_service_names(self):
+        """Should deduplicate service names returned by SigNoz."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={
+                "data": [
+                    {"serviceName": "my-service"},
+                    {"serviceName": "my-service"},
+                    {"serviceName": "other-service"},
+                ]
+            })
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        services = await adapter.list_services()
+        assert services == ["my-service", "other-service"]
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_data_returns_empty_list(self):
+        """Should return empty list when no services are instrumented."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"data": []})
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        services = await adapter.list_services()
+        assert services == []
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_http_error_propagates(self):
+        """Should re-raise HTTPStatusError from /api/v1/services."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, json={"error": "internal server error"})
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter.list_services()
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_skips_items_without_service_name(self):
+        """Should skip data items that have no serviceName field."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={
+                "data": [
+                    {"serviceName": "real-service"},
+                    {"p99": 0},  # no serviceName
+                    {"serviceName": ""},  # empty string
+                ]
+            })
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        services = await adapter.list_services()
+        assert services == ["real-service"]
+        await adapter.close()
+
+
 class TestMainBootstrapIntegration:
     """Tests for the catch-and-continue behavior in main.py bootstrap()."""
 
