@@ -1,7 +1,7 @@
 """Tests for SigNozTelemetryAdapter.verify_connection()."""
 
-import pytest
 import httpx
+import pytest
 
 from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
 

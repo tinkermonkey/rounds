@@ -325,7 +325,7 @@ class TestInvestigateTraceBareSyntax:
         ]
 
         with patch("builtins.input", side_effect=commands):
-            with patch("builtins.print") as mock_print:
+            with patch("builtins.print"):
                 await _run_cli_interactive(handler)
 
         assert management.investigated_traces == []

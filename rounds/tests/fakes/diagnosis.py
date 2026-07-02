@@ -2,7 +2,13 @@
 
 from datetime import UTC, datetime
 
-from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
+from rounds.core.models import (
+    Diagnosis,
+    InvestigationContext,
+    LogEntry,
+    TraceInvestigation,
+    TraceTree,
+)
 from rounds.core.ports import DiagnosisPort
 
 

@@ -3,7 +3,6 @@
 import asyncio
 import json
 from http.client import HTTPConnection
-from typing import Any
 
 import pytest
 

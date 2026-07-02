@@ -10,7 +10,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
+from rounds.core.models import (
+    Diagnosis,
+    InvestigationContext,
+    LogEntry,
+    TraceInvestigation,
+    TraceTree,
+)
 from rounds.core.ports import DiagnosisPort
 
 logger = logging.getLogger(__name__)

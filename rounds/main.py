@@ -46,7 +46,6 @@ from rounds.core.poll_service import PollService
 from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
 
-
 # Only hex chars and hyphens are valid in a trace ID.
 # Prevents path traversal and URL/shell injection when the value is forwarded
 # to the telemetry backend as part of an HTTP request path.
@@ -67,7 +66,7 @@ def _validate_trace_id(raw: str) -> str:
     trace_id = raw.strip()
     if not _TRACE_ID_RE.match(trace_id):
         raise ValueError(
-            f"Invalid trace ID {trace_id!r}: must be 8–64 hex characters "
+            f"Invalid trace ID {trace_id!r}: must be 8-64 hex characters "
             "(0-9, a-f, A-F) with optional hyphens."
         )
     return trace_id
@@ -680,7 +679,7 @@ async def bootstrap(
         # by removing quoted values that might contain secrets
         sanitized_msg = re.sub(r"'[^']{20,}'", "'[REDACTED]'", sanitized_msg)
 
-        print(f"ERROR: Configuration validation failed.")
+        print("ERROR: Configuration validation failed.")
         print(f"Details: {sanitized_msg}")
         print("Please check your .env.rounds file and ensure all required variables are set.")
         print("See .env.rounds.template for required configuration options.")
@@ -692,11 +691,10 @@ async def bootstrap(
     logger.info("Loading Rounds diagnostic system...")
 
     # Step 2.5: Initialize telemetry if enabled
-    tracer: trace.Tracer | None = None
     if settings.enable_self_telemetry:
         from rounds.telemetry import initialize_telemetry
 
-        tracer = initialize_telemetry(
+        initialize_telemetry(
             service_name=settings.self_telemetry_service_name,
             otlp_endpoint=settings.self_telemetry_otlp_endpoint or None,
             enable_console_export=settings.self_telemetry_console_export,
@@ -704,7 +702,7 @@ async def bootstrap(
         logger.info("Self-telemetry enabled")
     else:
         # Use a no-op tracer if telemetry is disabled
-        tracer = trace.get_tracer(__name__)
+        trace.get_tracer(__name__)
         logger.debug("Self-telemetry disabled")
 
     # Step 3: Instantiate adapters
@@ -1005,7 +1003,7 @@ async def bootstrap(
                 from rounds.telemetry import shutdown_telemetry
 
                 shutdown_telemetry()
-            except Exception as e:
+            except Exception:
                 logger.error("Failed to shutdown self-telemetry", exc_info=True)
 
         # Re-raise first critical error after all cleanup attempts

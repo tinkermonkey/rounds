@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-# Add the rounds directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add the workspace directory to path so that 'rounds' package is importable
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
@@ -24,7 +24,7 @@ from rounds.core.models import (
 )
 from rounds.core.poll_service import PollService
 from rounds.core.triage import TriageEngine
-from tests.fakes import (
+from rounds.tests.fakes import (
     FakeDiagnosisPort,
     FakeNotificationPort,
     FakeSignatureStorePort,

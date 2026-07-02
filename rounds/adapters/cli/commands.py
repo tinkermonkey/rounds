@@ -8,12 +8,11 @@ operations. It handles CLI-specific formatting and error reporting.
 
 import logging
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-
-from datetime import UTC, datetime, timedelta
 
 from rounds.core.models import Signature, SignatureDetails, SpanNode, TraceInvestigation
 from rounds.core.ports import ManagementPort
