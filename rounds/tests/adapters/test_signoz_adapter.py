@@ -175,12 +175,14 @@ class TestListServices:
 
 
 class TestMainBootstrapIntegration:
-    """Tests for the catch-and-continue behavior in main.py bootstrap()."""
+    """Tests for the catch-and-continue behavior in main.py _verify_signoz_connection()."""
 
     @pytest.mark.asyncio
     async def test_connectivity_failure_does_not_block_startup(self, caplog):
-        """bootstrap() should log a WARNING and proceed if verify_connection() raises a transient error."""
+        """_verify_signoz_connection() should log a WARNING and proceed on transient connection errors."""
         import logging
+
+        from rounds.main import _verify_signoz_connection
 
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("Connection refused")
@@ -188,21 +190,7 @@ class TestMainBootstrapIntegration:
         adapter = _make_adapter(httpx.MockTransport(handler))
 
         with caplog.at_level(logging.WARNING):
-            try:
-                await adapter.verify_connection()
-            except httpx.HTTPStatusError:
-                import logging as _log
-                _log.getLogger("rounds.main").error(
-                    "SigNoz authentication failed at startup — "
-                    "check SIGNOZ_API_KEY and restart"
-                )
-                raise
-            except Exception:
-                import logging as _log
-                _log.getLogger("rounds.main").warning(
-                    "SigNoz connectivity check failed at startup — "
-                    "proceeding, errors will surface on first poll cycle"
-                )
+            await _verify_signoz_connection(adapter)
 
         assert any(
             "proceeding, errors will surface on first poll cycle" in r.message
@@ -212,8 +200,10 @@ class TestMainBootstrapIntegration:
 
     @pytest.mark.asyncio
     async def test_auth_failure_raises_at_startup(self, caplog):
-        """bootstrap() should log an ERROR and re-raise if verify_connection() raises HTTPStatusError."""
+        """_verify_signoz_connection() should log an ERROR and re-raise on 401/403 responses."""
         import logging
+
+        from rounds.main import _verify_signoz_connection
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(401, json={"error": "unauthorized"})
@@ -222,18 +212,34 @@ class TestMainBootstrapIntegration:
 
         with caplog.at_level(logging.ERROR):
             with pytest.raises(httpx.HTTPStatusError):
-                try:
-                    await adapter.verify_connection()
-                except httpx.HTTPStatusError:
-                    import logging as _log
-                    _log.getLogger("rounds.main").error(
-                        "SigNoz authentication failed at startup — "
-                        "check SIGNOZ_API_KEY and restart"
-                    )
-                    raise
+                await _verify_signoz_connection(adapter)
 
         assert any(
             "check SIGNOZ_API_KEY" in r.message
+            for r in caplog.records
+        )
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_non_auth_http_error_does_not_block_startup(self, caplog):
+        """_verify_signoz_connection() should treat non-auth HTTPStatusError as transient and proceed."""
+        import logging
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        from rounds.main import _verify_signoz_connection
+
+        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200)))
+        mock_response = httpx.Response(500, request=httpx.Request("GET", "http://signoz-test:3301/api/v1/health"))
+        exc = httpx.HTTPStatusError("Internal Server Error", request=mock_response.request, response=mock_response)
+
+        with patch.object(adapter, "verify_connection", new=AsyncMock(side_effect=exc)):
+            with caplog.at_level(logging.WARNING):
+                await _verify_signoz_connection(adapter)
+
+        assert any(
+            "proceeding, errors will surface on first poll cycle" in r.message
             for r in caplog.records
         )
         await adapter.close()

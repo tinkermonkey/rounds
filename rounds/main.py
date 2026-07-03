@@ -634,6 +634,29 @@ Examples:
     return args
 
 
+async def _verify_signoz_connection(adapter: "SigNozTelemetryAdapter") -> None:
+    """Verify SigNoz connectivity; raise on 401/403 auth failures, warn on transient errors."""
+    _logger = logging.getLogger(__name__)
+    try:
+        await adapter.verify_connection()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            _logger.error(
+                "SigNoz authentication failed at startup — "
+                "check SIGNOZ_API_KEY and restart"
+            )
+            raise
+        _logger.warning(
+            "SigNoz connectivity check failed at startup — "
+            "proceeding, errors will surface on first poll cycle"
+        )
+    except Exception:
+        _logger.warning(
+            "SigNoz connectivity check failed at startup — "
+            "proceeding, errors will surface on first poll cycle"
+        )
+
+
 async def bootstrap(
     command: Literal["scan", "diagnose", "cli-run"] | None = None,
     signature_id: str | None = None,
@@ -729,19 +752,7 @@ async def bootstrap(
             api_key=settings.signoz_api_key,
         )
         logger.info("Telemetry adapter: SigNoz")
-        try:
-            await _signoz.verify_connection()
-        except httpx.HTTPStatusError:
-            logger.error(
-                "SigNoz authentication failed at startup — "
-                "check SIGNOZ_API_KEY and restart"
-            )
-            raise
-        except Exception:
-            logger.warning(
-                "SigNoz connectivity check failed at startup — "
-                "proceeding, errors will surface on first poll cycle"
-            )
+        await _verify_signoz_connection(_signoz)
         telemetry = _signoz
     elif settings.telemetry_backend == "jaeger":
         telemetry = JaegerTelemetryAdapter(
