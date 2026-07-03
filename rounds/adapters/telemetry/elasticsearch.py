@@ -41,7 +41,7 @@ _ES_ERROR_STATUS = "STATUS_CODE_ERROR"
 
 def _is_valid_trace_id(trace_id: str) -> bool:
     """Validate trace ID format (hex string, 1-64 chars)."""
-    if not isinstance(trace_id, str) or not trace_id:
+    if not isinstance(trace_id, str) or not trace_id or len(trace_id) > 64:
         return False
     return all(c in "0123456789abcdefABCDEF" for c in trace_id)
 
@@ -860,8 +860,14 @@ class ElasticsearchTelemetryAdapter(TelemetryPort):
             for hit in hits:
                 try:
                     logs.append(self._parse_log_entry(hit))
-                except Exception:
+                except Exception as e:
                     parse_errors += 1
+                    logger.warning(
+                        "Failed to parse log entry %s: %s",
+                        hit.get("_id", "<unknown>"),
+                        e,
+                        exc_info=True,
+                    )
             if parse_errors:
                 logger.error(
                     "Failed to parse %d/%d log entries from Elasticsearch during search",
@@ -973,8 +979,14 @@ class ElasticsearchTelemetryAdapter(TelemetryPort):
                         timestamp=timestamp,
                         attributes=dict(source.get("attributes", {}) or {}),
                     ))
-                except Exception:
+                except Exception as e:
                     parse_errors += 1
+                    logger.warning(
+                        "Failed to parse span %s: %s",
+                        hit.get("_id", "<unknown>"),
+                        e,
+                        exc_info=True,
+                    )
             if parse_errors:
                 logger.error(
                     "Failed to parse %d/%d spans from Elasticsearch during search",
