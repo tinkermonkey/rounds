@@ -782,13 +782,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         "/api/traces",
                         params={"service": service, "start": start_time_us, "end": end_time_us, "limit": 100},
                     )
-                    if response.status_code != 200:
-                        logger.warning(
-                            "Jaeger log query failed for service %s: HTTP %s",
-                            service,
-                            response.status_code,
-                        )
-                        continue
+                    response.raise_for_status()
 
                     for trace in response.json().get("data", []):
                         trace_id = trace.get("traceID", "")
@@ -880,13 +874,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         params["tags"] = "error=true"
 
                     response = await self.client.get("/api/traces", params=params)
-                    if response.status_code != 200:
-                        logger.warning(
-                            "Jaeger span query failed for service %s: HTTP %s",
-                            service,
-                            response.status_code,
-                        )
-                        continue
+                    response.raise_for_status()
 
                     for trace in response.json().get("data", []):
                         trace_id = trace.get("traceID", "")
