@@ -5,10 +5,12 @@
 # templating .env.rounds from vault-encrypted secrets.
 #
 # Usage:
+#   ansible-galaxy collection install -r requirements.yml  # first time only
 #   ansible-playbook rounds.yml --ask-vault-pass
 #   ansible-playbook rounds.yml --vault-password-file .vault_pass
 #
 # Prerequisites:
+#   - community.docker collection installed (see requirements.yml above)
 #   - Docker and Docker Compose V2 installed on target host
 #   - vault/secrets.yml encrypted with: ansible-vault encrypt vault/secrets.yml
 #   - rounds:dist Docker image available on target (build or pull beforehand)
