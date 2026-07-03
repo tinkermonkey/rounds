@@ -267,6 +267,28 @@ class Settings(BaseSettings):
         description="Enable console export for rounds CLI telemetry (for debugging)",
     )
 
+    @field_validator("service_host_map")
+    @classmethod
+    def validate_service_host_map(cls, v: str) -> str:
+        """Validate SERVICE_HOST_MAP is valid JSON with string keys and values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"SERVICE_HOST_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"SERVICE_HOST_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
+        return v
+
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval(cls, v: int) -> int:
@@ -402,6 +424,11 @@ class Settings(BaseSettings):
         result = json.loads(v)
         if not isinstance(result, dict):
             raise ValueError(f"SERVICE_HOST_MAP must be a JSON object, got {type(result).__name__}")
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
         return result
 
 

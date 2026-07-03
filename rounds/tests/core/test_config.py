@@ -60,12 +60,14 @@ class TestGetServiceHostMap:
         s = _settings()
         assert s.get_service_host_map() == {}
 
-    def test_json_array_raises_value_error(self):
-        s = _settings(service_host_map="[1, 2, 3]")
-        with pytest.raises(ValueError, match="SERVICE_HOST_MAP must be a JSON object"):
-            s.get_service_host_map()
+    def test_json_array_raises_value_error_at_construction(self):
+        with pytest.raises(Exception, match="SERVICE_HOST_MAP must be a JSON object"):
+            _settings(service_host_map="[1, 2, 3]")
 
-    def test_malformed_json_raises_error(self):
-        s = _settings(service_host_map="not json")
-        with pytest.raises(Exception):
-            s.get_service_host_map()
+    def test_malformed_json_raises_error_at_construction(self):
+        with pytest.raises(Exception, match="SERVICE_HOST_MAP must be valid JSON"):
+            _settings(service_host_map="not json")
+
+    def test_non_string_values_raise_value_error_at_construction(self):
+        with pytest.raises(Exception, match="SERVICE_HOST_MAP values must be strings"):
+            _settings(service_host_map='{"svc": 42}')
