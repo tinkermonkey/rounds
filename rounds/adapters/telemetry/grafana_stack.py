@@ -452,9 +452,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         Returns:
             Tuple of (traces, partial_info) where traces is the list of successfully
             retrieved TraceTree objects and partial_info indicates if results are complete.
-
-        Raises:
-            ValueError: If any trace ID format is invalid.
+            Invalid trace IDs are skipped and counted as failures in PartialResultsInfo.
         """
         from rounds.core.models import PartialResultsInfo
 
@@ -462,6 +460,14 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         invalid_ids = [tid for tid in trace_ids if not _is_valid_trace_id(tid)]
         if invalid_ids:
             logger.warning(f"Skipping invalid trace IDs: {invalid_ids}")
+
+        if not valid_ids:
+            return [], PartialResultsInfo(
+                total_requested=len(trace_ids),
+                total_returned=0,
+                is_partial=bool(trace_ids),
+                reason="No valid trace IDs provided" if trace_ids else None,
+            )
 
         traces: list[TraceTree] = []
         failed_count = len(invalid_ids)
