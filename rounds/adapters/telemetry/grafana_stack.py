@@ -158,9 +158,9 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                     logger.warning(f"No valid service names provided: {services}")
                     return []
                 service_regex = "|".join(valid_services)
-                service_filter = f' | json | service =~ "{service_regex}"'
+                service_filter = f' | service_name =~ "{service_regex}"'
 
-            query = f'{{level="error"}}{service_filter} | json'
+            query = f'{{level="error"}} | json{service_filter}'
 
             # Convert timestamp to nanoseconds for Loki
             start_ns = int(since.timestamp() * 1e9)
@@ -657,7 +657,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 if not valid_services:
                     return []
                 service_regex = "|".join(valid_services)
-                stream_selector = f'{{service=~"{service_regex}"}}'
+                stream_selector = f'{{service_name=~"{service_regex}"}}'
             else:
                 stream_selector = "{}"
 
@@ -738,6 +738,11 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             if services:
                 valid_services = [s for s in services if _is_valid_identifier(s)]
                 if valid_services:
+                    if len(valid_services) > 1:
+                        logger.warning(
+                            f"Tempo search supports only one service filter; "
+                            f"using '{valid_services[0]}', ignoring: {valid_services[1:]}"
+                        )
                     params["service.name"] = valid_services[0]
 
             if operation:

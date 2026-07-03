@@ -175,7 +175,7 @@ class TestSearchLogs:
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
         await adapter.search_logs("error", since=_SINCE, services=["api", "worker"])
         logql = captured_params[0]["query"]
-        assert "service=~" in logql
+        assert "service_name=~" in logql
         assert "api" in logql
         assert "worker" in logql
         await adapter.close()
