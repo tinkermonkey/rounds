@@ -22,7 +22,6 @@ import urllib.parse
 from typing import Any, Literal
 
 import httpx
-
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
