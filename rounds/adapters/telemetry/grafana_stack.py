@@ -544,10 +544,10 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         return logs
 
     async def list_services(self) -> list[str]:
-        """Return all service names visible in Tempo via label values query.
+        """Return all service names visible in Loki via label values query.
 
-        Queries Loki for unique service.name label values as an approximation
-        of all instrumented services. Returns empty list if Loki is unavailable.
+        Queries Loki for unique service_name label values as an approximation
+        of all instrumented services.
 
         Returns:
             Sorted list of service name strings.
@@ -651,15 +651,17 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             else:
                 stream_selector = "{}"
 
-            logql_query = f'{stream_selector} |= "{query}"' if query else stream_selector
+            if query:
+                escaped_query = query.replace("\\", "\\\\").replace('"', '\\"')
+                logql_query = f'{stream_selector} |= "{escaped_query}"'
+            else:
+                logql_query = stream_selector
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
                 params={"query": logql_query, "start": start_ns, "end": end_ns, "limit": limit},
             )
-
-            if response.status_code != 200:
-                return []
+            response.raise_for_status()
 
             logs: list[LogEntry] = []
             for stream in response.json().get("data", {}).get("result", []):
@@ -740,9 +742,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                         params[f"tags.{key}"] = value
 
             response = await self.tempo_client.get("/api/search", params=params)
-
-            if response.status_code != 200:
-                return []
+            response.raise_for_status()
 
             summaries: list[SpanSummary] = []
             for trace_data in response.json().get("traces", []):
