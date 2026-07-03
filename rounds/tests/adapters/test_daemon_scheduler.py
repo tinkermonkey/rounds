@@ -234,7 +234,7 @@ async def test_start_without_poll_port_raises_value_error() -> None:
 async def test_daemon_continues_after_investigation_threshold(
     poll_port: FakePollPort,
 ) -> None:
-    """Daemon poll loop must survive 5+ consecutive investigation failures without crashing."""
+    """Daemon poll loop must survive 5 consecutive investigation failures and suspend them."""
     scheduler = DaemonScheduler(
         poll_port=poll_port,
         poll_interval_seconds=0,
@@ -254,10 +254,15 @@ async def test_daemon_continues_after_investigation_threshold(
     )
     poll_port.should_fail_investigation = True
 
-    async def stop_after_enough_failures() -> None:
+    async def stop_after_suspension() -> None:
+        # Wait for at least 5 poll cycles beyond the failure threshold to confirm
+        # investigations are suspended and poll loop continues
         for _ in range(200):
             await asyncio.sleep(0.01)
-            if scheduler._investigation_failure_count >= 7:
+            if (
+                scheduler._investigation_failure_count == 5
+                and poll_port.poll_cycle_count >= 8
+            ):
                 await scheduler.stop()
                 return
         await scheduler.stop()
@@ -265,12 +270,15 @@ async def test_daemon_continues_after_investigation_threshold(
     # _run_loop and the stopper run concurrently; if the loop crashed, gather would raise
     await asyncio.gather(
         scheduler._run_loop(),
-        stop_after_enough_failures(),
+        stop_after_suspension(),
     )
 
-    # Loop survived and poll cycles continued beyond the 5-failure threshold
-    assert scheduler._investigation_failure_count >= 7
-    assert poll_port.poll_cycle_count >= 7
+    # Failure counter capped at 5 — investigations suspended, not retried indefinitely
+    assert scheduler._investigation_failure_count == 5
+    # Poll loop continued beyond the threshold
+    assert poll_port.poll_cycle_count >= 8
+    # Investigation cycle was called exactly 5 times (once per failure, then suspended)
+    assert poll_port.execute_investigation_cycle_call_count == 5
 
 
 @pytest.mark.asyncio

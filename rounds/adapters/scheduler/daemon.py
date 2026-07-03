@@ -166,30 +166,38 @@ class DaemonScheduler:
 
                     # Execute investigation cycle for pending diagnoses
                     if result.investigations_queued > 0:
-                        logger.debug(f"Starting investigation cycle #{cycle_number}")
-                        try:
-                            inv_result = await poll_port.execute_investigation_cycle()
-                            # Reset failure counter on successful cycle
-                            self._investigation_failure_count = 0
-                            logger.info(
-                                f"Investigation cycle #{cycle_number} completed: "
-                                f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
-                                f"{inv_result.investigations_failed} failed "
-                                f"(out of {inv_result.investigations_attempted} attempted)"
+                        if self._investigation_failure_count >= 5:
+                            logger.warning(
+                                f"Skipping investigation cycle #{cycle_number}: "
+                                f"{self._investigation_failure_count} consecutive failures. "
+                                f"Investigations suspended until next success. "
+                                f"Review logs for root cause; daemon poll loop continues."
                             )
-                        except Exception as e:
-                            self._investigation_failure_count += 1
-                            logger.error(
-                                f"Error in investigation cycle #{cycle_number}: {e} "
-                                f"(consecutive failures: {self._investigation_failure_count})",
-                                exc_info=True,
-                            )
-                            if self._investigation_failure_count >= 5:
-                                logger.critical(
-                                    f"Investigation cycle has failed {self._investigation_failure_count} "
-                                    f"consecutive times. Investigations suspended until next success. "
-                                    f"Review logs for root cause; daemon poll loop continues."
+                        else:
+                            logger.debug(f"Starting investigation cycle #{cycle_number}")
+                            try:
+                                inv_result = await poll_port.execute_investigation_cycle()
+                                # Reset failure counter on successful cycle
+                                self._investigation_failure_count = 0
+                                logger.info(
+                                    f"Investigation cycle #{cycle_number} completed: "
+                                    f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
+                                    f"{inv_result.investigations_failed} failed "
+                                    f"(out of {inv_result.investigations_attempted} attempted)"
                                 )
+                            except Exception as e:
+                                self._investigation_failure_count += 1
+                                logger.error(
+                                    f"Error in investigation cycle #{cycle_number}: {e} "
+                                    f"(consecutive failures: {self._investigation_failure_count})",
+                                    exc_info=True,
+                                )
+                                if self._investigation_failure_count == 5:
+                                    logger.critical(
+                                        f"Investigation cycle has failed {self._investigation_failure_count} "
+                                        f"consecutive times. Investigations suspended until next success. "
+                                        f"Review logs for root cause; daemon poll loop continues."
+                                    )
                                 # Don't raise — daemon continues polling; investigations resume on next success
 
             except asyncio.CancelledError:
