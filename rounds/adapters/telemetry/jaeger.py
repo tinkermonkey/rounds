@@ -773,6 +773,11 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         params={"service": service, "start": start_time_us, "end": end_time_us, "limit": 100},
                     )
                     if response.status_code != 200:
+                        logger.warning(
+                            "Jaeger log query failed for service %s: HTTP %s",
+                            service,
+                            response.status_code,
+                        )
                         continue
 
                     for trace in response.json().get("data", []):
@@ -806,7 +811,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                                 if len(all_logs) >= limit:
                                     return all_logs
                 except Exception as e:
-                    logger.warning(f"Failed to extract logs from service {service}: {e}")
+                    logger.warning("Failed to extract logs from service %s: %s", service, e, exc_info=True)
                     continue
 
             return all_logs
@@ -866,6 +871,11 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
                     response = await self.client.get("/api/traces", params=params)
                     if response.status_code != 200:
+                        logger.warning(
+                            "Jaeger span query failed for service %s: HTTP %s",
+                            service,
+                            response.status_code,
+                        )
                         continue
 
                     for trace in response.json().get("data", []):
@@ -909,7 +919,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
                                 return all_spans
 
                 except Exception as e:
-                    logger.warning(f"Failed to search spans in service {service}: {e}")
+                    logger.warning("Failed to search spans in service %s: %s", service, e, exc_info=True)
                     continue
 
             all_spans.sort(key=lambda s: s.timestamp, reverse=True)
