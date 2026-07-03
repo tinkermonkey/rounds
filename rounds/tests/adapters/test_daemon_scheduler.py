@@ -7,6 +7,7 @@ import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.core.models import PollResult
+from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -325,6 +326,138 @@ async def test_investigation_resumes_after_backoff_expires(
     assert scheduler._investigation_failure_count == 0
     assert scheduler._investigation_suspended_until is None
     assert poll_port.execute_investigation_cycle_call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_on_investigation_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification is sent via NotificationPort when failures hit the threshold."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count >= 5:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    assert notification_port.report_summary_call_count == 1
+    summary = notification_port.reported_summaries[0]
+    assert summary["alert"] == "investigation_pipeline_suspended"
+    assert summary["consecutive_failures"] == 5
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_only_once_per_failure_run(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification fires exactly once when threshold is crossed, not on subsequent failures."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+
+    # Pre-set to 4 failures; one more puts us at 5 (threshold), then failures accumulate past 5
+    # with an already-expired suspension so retries run immediately
+    scheduler._investigation_failure_count = 4
+    scheduler._investigation_suspended_until = 0.0  # always expired
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_extra_failures() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count >= 8:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_extra_failures(),
+    )
+
+    # Count crossed 5 only once, so notification fires exactly once
+    assert notification_port.report_summary_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_notification_without_notification_port(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon works normally when no notification_port is configured."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=None,
+    )
+    scheduler.running = True
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count >= 5:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # Should not raise even without a notification port
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    assert scheduler._investigation_failure_count >= 5
 
 
 @pytest.mark.asyncio

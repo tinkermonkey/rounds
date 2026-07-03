@@ -870,6 +870,7 @@ async def bootstrap(
             poll_port=None,  # Will be set after poll_service is created
             poll_interval_seconds=settings.poll_interval_seconds,
             budget_limit=settings.daily_budget_limit,
+            notification_port=notification,
         )
 
     # Investigator (orchestrates investigation workflow)

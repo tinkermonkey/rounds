@@ -10,7 +10,7 @@ import signal
 from datetime import UTC, datetime
 from typing import cast
 
-from rounds.core.ports import PollPort
+from rounds.core.ports import NotificationPort, PollPort
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class DaemonScheduler:
         poll_port: PollPort | None = None,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ):
         """Initialize daemon scheduler.
 
@@ -30,10 +31,13 @@ class DaemonScheduler:
             poll_port: PollPort implementation to call for poll cycles (can be set later).
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert operators when the investigation
+                pipeline is suspended due to persistent failures (optional).
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
         self.budget_limit = budget_limit
+        self.notification_port = notification_port
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
@@ -213,6 +217,27 @@ class DaemonScheduler:
                                         f"{backoff_seconds}s. "
                                         f"Review logs for root cause; daemon poll loop continues."
                                     )
+                                    if (
+                                        self._investigation_failure_count == 5
+                                        and self.notification_port is not None
+                                    ):
+                                        try:
+                                            await self.notification_port.report_summary({
+                                                "alert": "investigation_pipeline_suspended",
+                                                "consecutive_failures": self._investigation_failure_count,
+                                                "suspended_for_seconds": backoff_seconds,
+                                                "message": (
+                                                    f"Rounds investigation pipeline has failed "
+                                                    f"{self._investigation_failure_count} consecutive times. "
+                                                    f"Diagnoses are suspended for {backoff_seconds}s. "
+                                                    f"Review logs for root cause."
+                                                ),
+                                            })
+                                        except Exception as notify_err:
+                                            logger.error(
+                                                f"Failed to send investigation failure alert: {notify_err}",
+                                                exc_info=True,
+                                            )
 
             except asyncio.CancelledError:
                 raise
@@ -299,6 +324,7 @@ class DaemonFactory:
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ) -> DaemonScheduler:
         """Create a new daemon scheduler instance.
 
@@ -306,6 +332,7 @@ class DaemonFactory:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert on persistent failures.
 
         Returns:
             DaemonScheduler instance.
@@ -314,6 +341,7 @@ class DaemonFactory:
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
             budget_limit=budget_limit,
+            notification_port=notification_port,
         )
 
     @staticmethod
@@ -321,6 +349,7 @@ class DaemonFactory:
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ) -> None:
         """Create and run a daemon scheduler (blocking until stopped).
 
@@ -328,11 +357,13 @@ class DaemonFactory:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert on persistent failures.
         """
         daemon = DaemonFactory.create(
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
             budget_limit=budget_limit,
+            notification_port=notification_port,
         )
         await daemon.start()
 
