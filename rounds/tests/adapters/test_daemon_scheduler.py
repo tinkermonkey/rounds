@@ -260,7 +260,7 @@ async def test_daemon_continues_after_investigation_threshold(
         for _ in range(200):
             await asyncio.sleep(0.01)
             if (
-                scheduler._investigation_failure_count == 5
+                scheduler._investigation_failure_count >= 5
                 and poll_port.poll_cycle_count >= 8
             ):
                 await scheduler.stop()
@@ -273,12 +273,58 @@ async def test_daemon_continues_after_investigation_threshold(
         stop_after_suspension(),
     )
 
-    # Failure counter capped at 5 — investigations suspended, not retried indefinitely
-    assert scheduler._investigation_failure_count == 5
+    # At least 5 consecutive failures — investigations suspended with backoff
+    assert scheduler._investigation_failure_count >= 5
+    assert scheduler._investigation_suspended_until is not None
     # Poll loop continued beyond the threshold
     assert poll_port.poll_cycle_count >= 8
-    # Investigation cycle was called exactly 5 times (once per failure, then suspended)
+    # Investigation cycle was called exactly 5 times (once per failure, then suspended for 300s backoff)
     assert poll_port.execute_investigation_cycle_call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_investigation_resumes_after_backoff_expires(
+    poll_port: FakePollPort,
+) -> None:
+    """Investigations retry after the suspension backoff expires, and reset on success."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Simulate being in the suspended state with an already-expired backoff
+    scheduler._investigation_failure_count = 5
+    scheduler._investigation_suspended_until = 0.0  # epoch — always in the past
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    # Investigation succeeds this time (should_fail_investigation defaults to False)
+
+    async def stop_after_reset() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count == 0:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_reset(),
+    )
+
+    assert scheduler._investigation_failure_count == 0
+    assert scheduler._investigation_suspended_until is None
+    assert poll_port.execute_investigation_cycle_call_count >= 1
 
 
 @pytest.mark.asyncio

@@ -39,7 +39,8 @@ class DaemonScheduler:
         self._daily_cost_usd = 0.0
         self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
-        self._investigation_failure_count = 0  # Track consecutive investigation cycle failures
+        self._investigation_failure_count = 0
+        self._investigation_suspended_until: float | None = None
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -166,19 +167,30 @@ class DaemonScheduler:
 
                     # Execute investigation cycle for pending diagnoses
                     if result.investigations_queued > 0:
-                        if self._investigation_failure_count >= 5:
+                        now = loop.time()
+                        if (
+                            self._investigation_failure_count >= 5
+                            and self._investigation_suspended_until is not None
+                            and now < self._investigation_suspended_until
+                        ):
                             logger.warning(
                                 f"Skipping investigation cycle #{cycle_number}: "
-                                f"{self._investigation_failure_count} consecutive failures. "
-                                f"Investigations suspended until next success. "
+                                f"{self._investigation_failure_count} consecutive failures, "
+                                f"investigations suspended. "
                                 f"Review logs for root cause; daemon poll loop continues."
                             )
                         else:
-                            logger.debug(f"Starting investigation cycle #{cycle_number}")
+                            if self._investigation_failure_count >= 5:
+                                logger.info(
+                                    f"Retrying investigation cycle #{cycle_number} after suspension "
+                                    f"(previous consecutive failures: {self._investigation_failure_count})"
+                                )
+                            else:
+                                logger.debug(f"Starting investigation cycle #{cycle_number}")
                             try:
                                 inv_result = await poll_port.execute_investigation_cycle()
-                                # Reset failure counter on successful cycle
                                 self._investigation_failure_count = 0
+                                self._investigation_suspended_until = None
                                 logger.info(
                                     f"Investigation cycle #{cycle_number} completed: "
                                     f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
@@ -187,18 +199,20 @@ class DaemonScheduler:
                                 )
                             except Exception as e:
                                 self._investigation_failure_count += 1
+                                backoff_seconds = max(self.poll_interval_seconds * 5, 300)
+                                self._investigation_suspended_until = loop.time() + backoff_seconds
                                 logger.error(
                                     f"Error in investigation cycle #{cycle_number}: {e} "
                                     f"(consecutive failures: {self._investigation_failure_count})",
                                     exc_info=True,
                                 )
-                                if self._investigation_failure_count == 5:
+                                if self._investigation_failure_count >= 5:
                                     logger.critical(
                                         f"Investigation cycle has failed {self._investigation_failure_count} "
-                                        f"consecutive times. Investigations suspended until next success. "
+                                        f"consecutive times. Suspending investigations for "
+                                        f"{backoff_seconds}s. "
                                         f"Review logs for root cause; daemon poll loop continues."
                                     )
-                                # Don't raise — daemon continues polling; investigations resume on next success
 
             except asyncio.CancelledError:
                 raise
