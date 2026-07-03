@@ -108,6 +108,7 @@ class Diagnosis:
     diagnosed_at: datetime
     model: str  # which model produced this
     cost_usd: float
+    summary: str = ""  # one-paragraph overview of the diagnosis findings
 
     def __post_init__(self) -> None:
         """Validate diagnosis invariants on creation."""

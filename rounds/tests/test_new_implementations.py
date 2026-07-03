@@ -319,6 +319,29 @@ class TestManagementService:
         with pytest.raises(ValueError, match="not found"):
             await service.reinvestigate("nonexistent")
 
+    async def test_reinvestigate_always_writes_notification(
+        self, store: FakeSignatureStorePort, sample_signature: Signature
+    ) -> None:
+        """Reinvestigate must write a report regardless of confidence or previous status."""
+        notification = FakeNotificationPort()
+        service = ManagementService(
+            store=store,
+            telemetry=FakeTelemetryPort(),
+            diagnosis_engine=FakeDiagnosisPort(),
+            notification=notification,
+            triage=TriageEngine(),
+            codebase_path=".",
+        )
+
+        # Use a DIAGNOSED signature — triage would suppress medium/low notifications
+        sample_signature.status = SignatureStatus.DIAGNOSED
+        await store.save(sample_signature)
+
+        await service.reinvestigate("sig-123")
+
+        # Notification must have been called exactly once regardless of triage
+        assert notification.report_call_count == 1
+
 
 # --- CLICommandHandler Tests ---
 
@@ -420,6 +443,18 @@ class TestCLICommandHandler:
 
         assert result["status"] == "success"
         assert result["operation"] == "retriage"
+
+    async def test_reinvestigate_returns_summary_field(
+        self, handler: CLICommandHandler, mock_management: FakeManagementPort
+    ) -> None:
+        """CLI reinvestigate result must include a 'summary' key in the diagnosis dict."""
+        result = await handler.reinvestigate_signature("sig-123")
+
+        assert result["status"] == "success"
+        assert result["operation"] == "reinvestigate"
+        assert "diagnosis" in result
+        assert "summary" in result["diagnosis"]
+        assert "confidence" in result["diagnosis"]
 
     async def test_get_details_json_format(
         self, handler: CLICommandHandler, mock_management: FakeManagementPort,
@@ -540,6 +575,34 @@ class TestMarkdownNotificationAdapter:
         assert "TimeoutError" in content
         assert "api-service" in content
         assert "Connection pool exhausted" in content
+
+    async def test_report_includes_summary_when_present(
+        self, adapter: MarkdownNotificationAdapter, temp_dir: Path,
+        sample_signature: Signature
+    ) -> None:
+        """Report must include the diagnosis summary when the field is populated."""
+        diagnosis_with_summary = Diagnosis(
+            root_cause="Connection pool exhausted",
+            evidence=("Pool size 5", "10 concurrent requests"),
+            suggested_fix="Increase pool size",
+            confidence="high",
+            diagnosed_at=datetime.now(tz=UTC),
+            model="claude-opus-4-6",
+            cost_usd=0.30,
+            summary="The service is failing because the connection pool is undersized for peak load.",
+        )
+
+        await adapter.report(sample_signature, diagnosis_with_summary)
+
+        date_dir = temp_dir / diagnosis_with_summary.diagnosed_at.strftime("%Y-%m-%d")
+        report_files = list(date_dir.glob("*.md"))
+        assert len(report_files) == 1
+
+        content = report_files[0].read_text()
+        assert "api-service" in content
+        assert "TimeoutError" in content
+        assert str(sample_signature.occurrence_count) in content
+        assert "The service is failing because the connection pool is undersized" in content
 
     async def test_report_summary_writes_to_separate_file(
         self, adapter: MarkdownNotificationAdapter, temp_dir: Path

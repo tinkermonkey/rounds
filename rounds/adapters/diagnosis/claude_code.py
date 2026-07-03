@@ -84,6 +84,7 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
                 diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
+                summary=diagnosis.summary,
             )
 
             return diagnosis
@@ -236,6 +237,7 @@ Occurrences: {sig.occurrence_count} (first: {sig.first_seen}, last: {sig.last_se
 
 After reading the relevant source files, respond with a JSON object in exactly this format:
 {{
+  "summary": "One paragraph overview of the diagnosis findings — what is failing, why, and how severe it is",
   "root_cause": "The precise root cause, citing specific code locations and trace evidence",
   "evidence": [
     "evidence point citing a specific file:line or span attribute",
@@ -600,6 +602,9 @@ Codebase is at: {codebase_path}
                 f"Must be one of ['high', 'medium', 'low']"
             )
 
+        # summary is optional; fall back to root_cause for backward compatibility
+        summary = result.get("summary", "") or root_cause
+
         return Diagnosis(
             root_cause=root_cause,
             evidence=evidence,
@@ -608,4 +613,5 @@ Codebase is at: {codebase_path}
             diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be filled in by diagnose()
+            summary=summary,
         )

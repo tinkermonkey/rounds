@@ -327,15 +327,16 @@ class ManagementService(ManagementPort):
             },
         )
 
-        # Send notification if warranted (failure here should NOT revert the persisted diagnosis)
-        # Pass original status to should_notify for correct medium-confidence logic
+        # Always write the report for manually-triggered reinvestigations.
+        # Unlike the automated poll path, the user explicitly requested this
+        # investigation, so they should always receive the result regardless
+        # of confidence level or previous status.
         try:
-            if self.triage.should_notify(signature, diagnosis, original_status=original_status):
-                await self.notification.report(signature, diagnosis)
-                logger.info(
-                    f"Notification sent for reinvestigated signature {signature_id}",
-                    extra={"signature_id": signature_id},
-                )
+            await self.notification.report(signature, diagnosis)
+            logger.info(
+                f"Notification sent for reinvestigated signature {signature_id}",
+                extra={"signature_id": signature_id},
+            )
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis
             logger.error(

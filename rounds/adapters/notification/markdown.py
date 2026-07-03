@@ -277,6 +277,11 @@ class MarkdownNotificationAdapter(NotificationPort):
         lines.append(f"- **Diagnosed At**: {diagnosis.diagnosed_at.isoformat()}")
         lines.append("")
 
+        if diagnosis.summary:
+            lines.append("#### Summary")
+            lines.append(f"{diagnosis.summary}")
+            lines.append("")
+
         lines.append("#### Root Cause")
         lines.append(f"{diagnosis.root_cause}")
         lines.append("")

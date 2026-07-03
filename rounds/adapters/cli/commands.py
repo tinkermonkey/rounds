@@ -450,6 +450,7 @@ class CLICommandHandler:
                     "operation": "reinvestigate",
                     "signature_id": signature_id,
                     "diagnosis": {
+                        "summary": diagnosis.summary,
                         "root_cause": diagnosis.root_cause,
                         "confidence": diagnosis.confidence,
                         "suggested_fix": diagnosis.suggested_fix,

@@ -97,6 +97,7 @@ class OpenAIDiagnosisAdapter(DiagnosisPort):
                 diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
+                summary=diagnosis.summary,
             )
 
             return diagnosis
@@ -361,6 +362,8 @@ Respond with a JSON object in exactly this format:
                 f"Must be one of ['HIGH', 'MEDIUM', 'LOW']"
             )
 
+        summary = result.get("summary", "") or root_cause
+
         return Diagnosis(
             root_cause=root_cause,
             evidence=evidence,
@@ -369,4 +372,5 @@ Respond with a JSON object in exactly this format:
             diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be overwritten by caller
+            summary=summary,
         )

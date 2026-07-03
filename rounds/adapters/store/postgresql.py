@@ -485,6 +485,7 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
             "model": diagnosis.model,
             "cost_usd": diagnosis.cost_usd,
+            "summary": diagnosis.summary,
         }
 
     @staticmethod
@@ -498,4 +499,5 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             diagnosed_at=datetime.fromisoformat(diagnosis_dict["diagnosed_at"]),
             model=diagnosis_dict["model"],
             cost_usd=diagnosis_dict["cost_usd"],
+            summary=diagnosis_dict.get("summary", ""),
         )

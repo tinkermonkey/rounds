@@ -429,6 +429,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
                 "model": diagnosis.model,
                 "cost_usd": diagnosis.cost_usd,
+                "summary": diagnosis.summary,
             }
         )
 
@@ -444,4 +445,5 @@ class SQLiteSignatureStore(SignatureStorePort):
             diagnosed_at=datetime.fromisoformat(data["diagnosed_at"]),
             model=data["model"],
             cost_usd=data["cost_usd"],
+            summary=data.get("summary", ""),
         )
