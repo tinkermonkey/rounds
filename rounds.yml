@@ -1,0 +1,66 @@
+---
+# Rounds deployment playbook
+#
+# Deploys the rounds diagnostic system to target hosts using Docker Compose,
+# templating .env.rounds from vault-encrypted secrets.
+#
+# Usage:
+#   ansible-playbook rounds.yml --ask-vault-pass
+#   ansible-playbook rounds.yml --vault-password-file .vault_pass
+#
+# Prerequisites:
+#   - Docker and Docker Compose V2 installed on target host
+#   - vault/secrets.yml encrypted with: ansible-vault encrypt vault/secrets.yml
+#   - rounds:dist Docker image available on target (build or pull beforehand)
+
+- name: Deploy rounds diagnostic system
+  hosts: t5610
+  become: false
+
+  vars_files:
+    - vault/secrets.yml
+
+  vars:
+    rounds_deploy_dir: "{{ rounds_target_project_dir | default('/opt/rounds') }}"
+
+  tasks:
+    - name: Create deployment directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ rounds_deploy_dir }}"
+        - "{{ rounds_deploy_dir }}/.rounds/reports"
+
+    - name: Copy Docker Compose configuration
+      ansible.builtin.copy:
+        src: docker-compose.rounds.yml
+        dest: "{{ rounds_deploy_dir }}/docker-compose.rounds.yml"
+        mode: "0640"
+
+    - name: Template .env.rounds from vault secrets
+      ansible.builtin.template:
+        src: templates/env.rounds.j2
+        dest: "{{ rounds_deploy_dir }}/.env.rounds"
+        mode: "0600"
+
+    - name: Start rounds service
+      community.docker.docker_compose_v2:
+        project_src: "{{ rounds_deploy_dir }}"
+        files:
+          - docker-compose.rounds.yml
+        state: present
+
+    - name: Verify rounds container is running
+      community.docker.docker_container_info:
+        name: rounds-diagnosis
+      register: rounds_container_info
+
+    - name: Assert rounds container is running
+      ansible.builtin.assert:
+        that:
+          - rounds_container_info.exists
+          - rounds_container_info.container.State.Running
+        fail_msg: "Rounds container failed to start on {{ inventory_hostname }}"
+        success_msg: "Rounds running on {{ inventory_hostname }}"
