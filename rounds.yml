@@ -12,7 +12,7 @@
 # Prerequisites:
 #   - community.docker collection installed (see requirements.yml above)
 #   - Docker and Docker Compose V2 installed on target host
-#   - vault/secrets.yml encrypted with: ansible-vault encrypt vault/secrets.yml
+#   - vault/secrets.yml encrypted with: cp vault/secrets.yml.example vault/secrets.yml && ansible-vault encrypt vault/secrets.yml
 #   - rounds:dist Docker image available on target (build or pull beforehand)
 
 - name: Deploy rounds diagnostic system

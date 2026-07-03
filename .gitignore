@@ -208,3 +208,4 @@ __marimo__/
 
 # Ansible
 .vault_pass
+vault/secrets.yml
