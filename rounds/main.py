@@ -21,6 +21,8 @@ import sys
 import urllib.parse
 from typing import Any, Literal
 
+import httpx
+
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
@@ -729,10 +731,16 @@ async def bootstrap(
         logger.info("Telemetry adapter: SigNoz")
         try:
             await _signoz.verify_connection()
+        except httpx.HTTPStatusError:
+            logger.error(
+                "SigNoz authentication failed at startup — "
+                "check SIGNOZ_API_KEY and restart"
+            )
+            raise
         except Exception:
             logger.warning(
                 "SigNoz connectivity check failed at startup — "
-                "will retry on first poll cycle"
+                "proceeding, errors will surface on first poll cycle"
             )
         telemetry = _signoz
     elif settings.telemetry_backend == "jaeger":

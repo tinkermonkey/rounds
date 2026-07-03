@@ -179,7 +179,7 @@ class TestMainBootstrapIntegration:
 
     @pytest.mark.asyncio
     async def test_connectivity_failure_does_not_block_startup(self, caplog):
-        """bootstrap() should log a WARNING and proceed if verify_connection() fails."""
+        """bootstrap() should log a WARNING and proceed if verify_connection() raises a transient error."""
         import logging
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -190,15 +190,50 @@ class TestMainBootstrapIntegration:
         with caplog.at_level(logging.WARNING):
             try:
                 await adapter.verify_connection()
+            except httpx.HTTPStatusError:
+                import logging as _log
+                _log.getLogger("rounds.main").error(
+                    "SigNoz authentication failed at startup — "
+                    "check SIGNOZ_API_KEY and restart"
+                )
+                raise
             except Exception:
                 import logging as _log
                 _log.getLogger("rounds.main").warning(
                     "SigNoz connectivity check failed at startup — "
-                    "will retry on first poll cycle"
+                    "proceeding, errors will surface on first poll cycle"
                 )
 
         assert any(
-            "will retry on first poll cycle" in r.message
+            "proceeding, errors will surface on first poll cycle" in r.message
+            for r in caplog.records
+        )
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_auth_failure_raises_at_startup(self, caplog):
+        """bootstrap() should log an ERROR and re-raise if verify_connection() raises HTTPStatusError."""
+        import logging
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": "unauthorized"})
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(httpx.HTTPStatusError):
+                try:
+                    await adapter.verify_connection()
+                except httpx.HTTPStatusError:
+                    import logging as _log
+                    _log.getLogger("rounds.main").error(
+                        "SigNoz authentication failed at startup — "
+                        "check SIGNOZ_API_KEY and restart"
+                    )
+                    raise
+
+        assert any(
+            "check SIGNOZ_API_KEY" in r.message
             for r in caplog.records
         )
         await adapter.close()
