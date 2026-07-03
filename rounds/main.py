@@ -647,12 +647,14 @@ async def _verify_signoz_connection(adapter: "SigNozTelemetryAdapter") -> None:
             raise
         _logger.warning(
             "SigNoz connectivity check failed at startup — "
-            "proceeding, errors will surface on first poll cycle"
+            "proceeding, errors will surface on first poll cycle",
+            exc_info=True,
         )
     except Exception:
         _logger.warning(
             "SigNoz connectivity check failed at startup — "
-            "proceeding, errors will surface on first poll cycle"
+            "proceeding, errors will surface on first poll cycle",
+            exc_info=True,
         )
 
 

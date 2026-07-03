@@ -53,6 +53,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self._fingerprinter = fingerprinter
+        self._closed = False
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=self._get_headers(),
@@ -82,13 +83,13 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
-        await self.client.aclose()
+        await self.close()
 
     async def close(self) -> None:
-        """Close the httpx client.
-
-        Must be called when done using the adapter if not using it as a context manager.
-        """
+        """Close the httpx client. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         await self.client.aclose()
 
     async def verify_connection(self) -> None:
