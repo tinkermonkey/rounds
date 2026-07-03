@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
-from rounds.core.models import InvestigationResult, PollResult
+from rounds.core.models import PollResult
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -285,6 +285,9 @@ async def test_investigation_failure_count_resets_on_success(
     )
     scheduler.running = True
 
+    # Pre-set failure counter; the next successful investigation cycle should reset it
+    scheduler._investigation_failure_count = 3
+
     poll_port.set_default_poll_result(
         PollResult(
             errors_found=1,
@@ -294,15 +297,6 @@ async def test_investigation_failure_count_resets_on_success(
             timestamp=datetime.now(UTC),
         )
     )
-    # Three failures, then success
-    poll_port.add_investigation_result(InvestigationResult(
-        diagnoses_produced=(), investigations_attempted=1, investigations_failed=1,
-    ))
-    for _ in range(3):
-        poll_port.investigation_results.insert(0, InvestigationResult(
-            diagnoses_produced=(), investigations_attempted=0, investigations_failed=0,
-        ))
-    poll_port.should_fail_investigation = True
 
     async def stop_after_success() -> None:
         for _ in range(100):
@@ -312,10 +306,6 @@ async def test_investigation_failure_count_resets_on_success(
                 await scheduler.stop()
                 return
         await scheduler.stop()
-
-    # Manually set failure count high, then let a success reset it
-    scheduler._investigation_failure_count = 3
-    poll_port.should_fail_investigation = False  # next cycle succeeds
 
     await asyncio.gather(
         scheduler._run_loop(),
