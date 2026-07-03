@@ -454,6 +454,7 @@ class TestCLICommandHandler:
         assert result["operation"] == "reinvestigate"
         assert "diagnosis" in result
         assert "summary" in result["diagnosis"]
+        assert result["diagnosis"]["summary"] != ""
         assert "confidence" in result["diagnosis"]
 
     async def test_get_details_json_format(

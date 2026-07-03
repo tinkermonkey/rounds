@@ -63,6 +63,7 @@ class FakeDiagnosisPort(DiagnosisPort):
 
         # Generate a canned response
         return Diagnosis(
+            summary=f"Fake summary for {context.signature.error_type} in {context.signature.service}",
             root_cause=f"Root cause for {context.signature.error_type}",
             evidence=(
                 f"Evidence from trace: {context.signature.fingerprint}",

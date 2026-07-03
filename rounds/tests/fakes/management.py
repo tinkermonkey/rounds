@@ -121,6 +121,7 @@ class FakeManagementPort(ManagementPort):
 
         self.reinvestigated_signatures.append(signature_id)
         return Diagnosis(
+            summary="Fake summary of findings",
             root_cause="Fake root cause",
             evidence=("Fake evidence",),
             suggested_fix="Fake fix",
