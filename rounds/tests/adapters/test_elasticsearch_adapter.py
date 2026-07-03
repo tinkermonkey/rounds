@@ -420,6 +420,19 @@ _CHILD_HIT = {
     },
 }
 
+_LOG_HIT = {
+    "_id": "log-1",
+    "_source": {
+        "@timestamp": "2024-01-01T12:05:00Z",
+        "traceId": "abc123",
+        "spanId": "span1",
+        "body": "database connection pool exhausted",
+        "severityText": "ERROR",
+        "attributes": {"component": "db"},
+        "resource": {"attributes": {"service.name": "api"}},
+    },
+}
+
 
 class TestBuildTraceTree:
     """Unit tests for the _build_trace_tree() helper."""
@@ -708,24 +721,11 @@ class TestGetTraces:
 class TestGetCorrelatedLogs:
     """Tests for ElasticsearchTelemetryAdapter.get_correlated_logs()."""
 
-    _LOG_HIT = {
-        "_id": "log-1",
-        "_source": {
-            "@timestamp": "2024-01-01T12:05:00Z",
-            "traceId": "abc123",
-            "spanId": "span1",
-            "body": "database connection pool exhausted",
-            "severityText": "ERROR",
-            "attributes": {"component": "db"},
-            "resource": {"attributes": {"service.name": "api"}},
-        },
-    }
-
     @pytest.mark.asyncio
     async def test_returns_correlated_log_entries(self):
         def handler(request: httpx.Request) -> httpx.Response:
             assert "otel-logs" in request.url.path
-            return httpx.Response(200, json={"hits": {"hits": [self._LOG_HIT]}})
+            return httpx.Response(200, json={"hits": {"hits": [_LOG_HIT]}})
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         logs = await adapter.get_correlated_logs(["abc123"])
