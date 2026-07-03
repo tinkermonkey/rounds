@@ -626,8 +626,8 @@ class TestGetTrace:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        tree = await adapter.get_trace("abc123")
-        assert tree.trace_id == "abc123"
+        tree = await adapter.get_trace("abc123abc123abc123abc123abc12300")
+        assert tree.trace_id == "abc123abc123abc123abc123abc12300"
         assert tree.root_span.span_id == "root-span"
         await adapter.close()
 
@@ -640,7 +640,7 @@ class TestGetTrace:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        tree = await adapter.get_trace("abc123")
+        tree = await adapter.get_trace("abc123abc123abc123abc123abc12300")
         child_ids = {c.span_id for c in tree.root_span.children}
         assert "child-span" in child_ids
         await adapter.close()
@@ -665,7 +665,7 @@ class TestGetTrace:
             httpx.MockTransport(tempo_handler),
         )
         with pytest.raises(ValueError, match="No trace data"):
-            await adapter.get_trace("abc123")
+            await adapter.get_trace("abc123abc123abc123abc123abc12300")
         await adapter.close()
 
     @pytest.mark.asyncio
@@ -678,7 +678,7 @@ class TestGetTrace:
             httpx.MockTransport(tempo_handler),
         )
         with pytest.raises(httpx.HTTPStatusError):
-            await adapter.get_trace("abc123")
+            await adapter.get_trace("abc123abc123abc123abc123abc12300")
         await adapter.close()
 
     @pytest.mark.asyncio
@@ -690,7 +690,7 @@ class TestGetTrace:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        tree = await adapter.get_trace("abc123")
+        tree = await adapter.get_trace("abc123abc123abc123abc123abc12300")
         # child-span has status.code=2 (error)
         assert any(s.span_id == "child-span" for s in tree.error_spans)
         await adapter.close()
@@ -708,7 +708,7 @@ class TestGetTraces:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        traces, info = await adapter.get_traces(["abc123"])
+        traces, info = await adapter.get_traces(["abc123abc123abc123abc123abc12300"])
         assert len(traces) == 1
         assert info.total_returned == 1
         assert not info.is_partial
@@ -751,7 +751,7 @@ class TestGetTraces:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        traces, info = await adapter.get_traces(["abc123", "def456abc789"])
+        traces, info = await adapter.get_traces(["abc123abc123abc123abc123abc12300", "def456def456def456def456def45600"])
         assert len(traces) == 1
         assert info.is_partial
         await adapter.close()
@@ -766,7 +766,7 @@ class TestGetCorrelatedLogs:
             return httpx.Response(200, json=_LOKI_CORRELATED_RESPONSE)
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
-        logs = await adapter.get_correlated_logs(["abc123"])
+        logs = await adapter.get_correlated_logs(["abc123abc123abc123abc123abc12300"])
         assert len(logs) == 1
         assert logs[0].body == "database connection pool exhausted"
         await adapter.close()
@@ -787,7 +787,7 @@ class TestGetCorrelatedLogs:
             return httpx.Response(200, json={"data": {"result": []}})
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
-        await adapter.get_correlated_logs(["abc123"])
+        await adapter.get_correlated_logs(["abc123abc123abc123abc123abc12300"])
         assert captured
         assert "abc123" in captured[0].get("query", "")
         await adapter.close()
@@ -798,7 +798,7 @@ class TestGetCorrelatedLogs:
             return httpx.Response(200, json={"data": {"result": []}})
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
-        logs = await adapter.get_correlated_logs(["abc123"])
+        logs = await adapter.get_correlated_logs(["abc123abc123abc123abc123abc12300"])
         assert logs == []
         await adapter.close()
 
@@ -809,7 +809,7 @@ class TestGetCorrelatedLogs:
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
         with pytest.raises(httpx.HTTPStatusError):
-            await adapter.get_correlated_logs(["abc123"])
+            await adapter.get_correlated_logs(["abc123abc123abc123abc123abc12300"])
         await adapter.close()
 
 

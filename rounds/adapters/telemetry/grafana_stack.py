@@ -62,7 +62,7 @@ def _is_valid_trace_id(trace_id: str) -> bool:
     """
     if not isinstance(trace_id, str):
         return False
-    return bool(trace_id) and all(c in "0123456789abcdefABCDEF" for c in trace_id)
+    return len(trace_id) == 32 and all(c in "0123456789abcdefABCDEF" for c in trace_id)
 
 
 class GrafanaStackTelemetryAdapter(TelemetryPort):
@@ -515,6 +515,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 raise ValueError(f"Invalid trace ID format: {trace_id}")
 
         logs: list[LogEntry] = []
+        window = timedelta(minutes=window_minutes)
 
         try:
             # Build LogQL query to correlate logs with traces
@@ -522,9 +523,13 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             trace_regex = "|".join(trace_ids)
             query = f'{{trace_id=~"{trace_regex}"}}'
 
+            now = datetime.now(UTC)
+            start_ns = int((now - window).timestamp() * 1e9)
+            end_ns = int((now + window).timestamp() * 1e9)
+
             response = await self.loki_client.get(
-                "/loki/api/v1/query",
-                params={"query": query},
+                "/loki/api/v1/query_range",
+                params={"query": query, "start": start_ns, "end": end_ns},
             )
 
             response.raise_for_status()
@@ -669,7 +674,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
-                params={"query": logql_query, "start": start_ns, "end": end_ns, "limit": limit},
+                params={"query": logql_query, "start": start_ns, "end": end_ns, "limit": limit, "direction": "backward"},
             )
             response.raise_for_status()
 
