@@ -627,7 +627,9 @@ Examples:
         nargs="*",
         help="Additional arguments (signature_id for diagnose; sub-command and args for cli-run)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.signature_id = args.rest[0] if args.command == "diagnose" and args.rest else None
+    return args
 
 
 async def bootstrap(
