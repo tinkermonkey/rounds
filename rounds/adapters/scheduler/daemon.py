@@ -222,7 +222,7 @@ class DaemonScheduler:
                                         and self.notification_port is not None
                                     ):
                                         try:
-                                            await self.notification_port.report_summary({
+                                            await self.notification_port.report_alert({
                                                 "alert": "investigation_pipeline_suspended",
                                                 "consecutive_failures": self._investigation_failure_count,
                                                 "suspended_for_seconds": backoff_seconds,

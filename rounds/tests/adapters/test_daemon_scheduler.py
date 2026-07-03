@@ -366,10 +366,10 @@ async def test_notification_sent_on_investigation_threshold(
         stop_after_threshold(),
     )
 
-    assert notification_port.report_summary_call_count == 1
-    summary = notification_port.reported_summaries[0]
-    assert summary["alert"] == "investigation_pipeline_suspended"
-    assert summary["consecutive_failures"] == 5
+    assert notification_port.report_alert_call_count == 1
+    alert = notification_port.reported_alerts[0]
+    assert alert["alert"] == "investigation_pipeline_suspended"
+    assert alert["consecutive_failures"] == 5
 
 
 @pytest.mark.asyncio
@@ -416,7 +416,7 @@ async def test_notification_sent_only_once_per_failure_run(
     )
 
     # Count crossed 5 only once, so notification fires exactly once
-    assert notification_port.report_summary_call_count == 1
+    assert notification_port.report_alert_call_count == 1
 
 
 @pytest.mark.asyncio
@@ -458,6 +458,56 @@ async def test_no_notification_without_notification_port(
     )
 
     assert scheduler._investigation_failure_count >= 5
+
+
+@pytest.mark.asyncio
+async def test_daemon_continues_when_notification_port_fails(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon continues running even when the notification channel raises on report_alert."""
+    notification_port = FakeNotificationPort()
+    notification_port.should_fail = True
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if (
+                scheduler._investigation_failure_count >= 5
+                and poll_port.poll_cycle_count >= 8
+            ):
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # If the try/except guard were absent this gather would raise RuntimeError
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    # Daemon survived the failing notification channel
+    assert scheduler._investigation_failure_count >= 5
+    assert poll_port.poll_cycle_count >= 8
+    # report_alert was attempted (call count incremented before the failure check in the fake)
+    assert notification_port.report_alert_call_count >= 1
 
 
 @pytest.mark.asyncio

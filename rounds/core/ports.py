@@ -490,6 +490,27 @@ class NotificationPort(ABC):
             Exception: If notification channel is unavailable.
         """
 
+    @abstractmethod
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Send an operational alert to the notification channel.
+
+        Used for daemon health events such as investigation pipeline suspension.
+        Alert payloads are distinct from summary statistics and may be formatted
+        differently by adapters (e.g. paging vs. periodic digest).
+
+        Expected keys vary by alert type. For ``investigation_pipeline_suspended``:
+            - ``alert``: alert type identifier string
+            - ``consecutive_failures``: int count of consecutive failures
+            - ``suspended_for_seconds``: int backoff duration
+            - ``message``: human-readable description
+
+        Args:
+            alert: Dictionary describing the alert event.
+
+        Raises:
+            Exception: If notification channel is unavailable.
+        """
+
     async def close(self) -> None:
         """Close connections and clean up resources.
 

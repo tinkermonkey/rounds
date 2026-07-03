@@ -226,6 +226,49 @@ class MarkdownNotificationAdapter(NotificationPort):
                 )
                 raise
 
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Append an operational alert to the alerts markdown file.
+
+        Raises:
+            OSError: If parent directory cannot be created or file cannot be written.
+        """
+        alert_type = alert.get("alert", "unknown")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        lines = [
+            f"## {timestamp} — {alert_type}",
+            "",
+        ]
+        if "message" in alert:
+            lines.extend([alert["message"], ""])
+        for key, value in alert.items():
+            if key not in ("alert", "message"):
+                lines.append(f"- **{key}**: {value}")
+        lines.extend(["", "---", ""])
+        content = "\n".join(lines)
+
+        async with self._lock:
+            try:
+                alerts_file = self.base_dir.parent / "alerts.md"
+                try:
+                    await asyncio.to_thread(alerts_file.parent.mkdir, parents=True, exist_ok=True)
+                except OSError as e:
+                    raise OSError(f"Failed to create alerts directory {alerts_file.parent}: {e}") from e
+
+                existing = ""
+                if await asyncio.to_thread(alerts_file.exists):
+                    existing = await asyncio.to_thread(alerts_file.read_text, encoding="utf-8")
+                await asyncio.to_thread(alerts_file.write_text, existing + content, encoding="utf-8")
+
+                logger.info(f"Wrote alert to {alerts_file}", extra={"alert_type": alert_type})
+
+            except OSError as e:
+                logger.error(
+                    f"Failed to write markdown alert: {e}",
+                    extra={"path": str(alerts_file)},
+                    exc_info=True,
+                )
+                raise
+
 
     def _format_report_entry(
         self, signature: Signature, diagnosis: Diagnosis

@@ -370,6 +370,10 @@ class MockNotificationPort(NotificationPort):
         """Mock implementation."""
         pass
 
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Mock implementation."""
+        pass
+
 
 class MockPollPort(PollPort):
     """Mock implementation of PollPort for testing."""

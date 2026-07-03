@@ -49,6 +49,11 @@ class StdoutNotificationAdapter(NotificationPort):
         summary = self._format_summary(stats)
         await asyncio.to_thread(print, summary)
 
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Print an operational alert to stdout."""
+        formatted = self._format_alert(alert)
+        await asyncio.to_thread(print, formatted)
+
     @staticmethod
     def _format_header(signature: Signature) -> str:
         """Format the report header."""
@@ -120,6 +125,25 @@ class StdoutNotificationAdapter(NotificationPort):
     def _format_footer() -> str:
         """Format the report footer."""
         return "=" * 80
+
+    @staticmethod
+    def _format_alert(alert: dict[str, Any]) -> str:
+        """Format an operational alert."""
+        lines = [
+            "=" * 80,
+            "ROUNDS ALERT",
+            "=" * 80,
+            "",
+            f"Alert: {alert.get('alert', 'unknown')}",
+        ]
+        if "message" in alert:
+            lines.append(f"Message: {alert['message']}")
+        if "consecutive_failures" in alert:
+            lines.append(f"Consecutive Failures: {alert['consecutive_failures']}")
+        if "suspended_for_seconds" in alert:
+            lines.append(f"Suspended For: {alert['suspended_for_seconds']}s")
+        lines.extend(["", "=" * 80])
+        return "\n".join(lines)
 
     @staticmethod
     def _format_summary(stats: dict[str, Any]) -> str:
