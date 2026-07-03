@@ -5,7 +5,6 @@ Uses FakeTelemetryPort for controlled error injection and a real SQLiteSignature
 backed by a temp file to validate on-disk persistence and deduplication semantics.
 """
 
-import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +12,7 @@ import pytest
 
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
 from rounds.core.fingerprint import Fingerprinter
+from rounds.core.investigator import Investigator
 from rounds.core.models import (
     ErrorEvent,
     Severity,
@@ -26,7 +26,6 @@ from rounds.tests.fakes import (
     FakeNotificationPort,
     FakeTelemetryPort,
 )
-from rounds.core.investigator import Investigator
 
 
 def _make_error(

@@ -53,6 +53,10 @@ WORKDIR /workspace/rounds
 # Optional adapters:
 #   asyncpg: PostgreSQL signature store adapter
 #   openai: OpenAI diagnosis adapter
+# Dev/test tooling:
+#   pytest, pytest-asyncio, pytest-cov: Test execution
+#   mypy: Type checking
+#   ruff: Linting
 RUN pip install --no-cache-dir \
     pydantic \
     pydantic-settings \
@@ -63,7 +67,12 @@ RUN pip install --no-cache-dir \
     opentelemetry-sdk \
     opentelemetry-exporter-otlp-proto-http \
     asyncpg \
-    openai
+    openai \
+    pytest \
+    pytest-asyncio \
+    pytest-cov \
+    mypy \
+    ruff
 
 # Create application data directories with orchestrator ownership so that
 # Docker named volumes mounted at these paths inherit the correct permissions
@@ -87,7 +96,11 @@ RUN claude --version && \
 # Verify Python and installed packages
 RUN python3 --version && \
     pip --version && \
-    python3 -c "import httpx; import pydantic; import dotenv; import pydantic_settings; import aiosqlite; import opentelemetry; import asyncpg; import openai"
+    python3 -c "import httpx; import pydantic; import dotenv; import pydantic_settings; import aiosqlite; import opentelemetry; import asyncpg; import openai" && \
+    python3 -c "from opentelemetry.sdk.resources import Resource; from opentelemetry.sdk.trace import TracerProvider; from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter" && \
+    pytest --version && \
+    mypy --version && \
+    ruff --version
 
 # ============================================================================
 # Default command
