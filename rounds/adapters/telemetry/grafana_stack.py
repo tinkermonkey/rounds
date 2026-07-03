@@ -89,6 +89,7 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         self.prometheus_url = prometheus_url.rstrip("/") if prometheus_url else ""
         self._fingerprinter = fingerprinter
 
+        self._closed = False
         self.tempo_client = httpx.AsyncClient(base_url=self.tempo_url, timeout=30.0)
         self.loki_client = httpx.AsyncClient(base_url=self.loki_url, timeout=30.0)
         self.prometheus_client: httpx.AsyncClient | None = None
@@ -119,7 +120,10 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         await self.close()
 
     async def close(self) -> None:
-        """Close all HTTP clients and clean up resources."""
+        """Close all HTTP clients and clean up resources. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         await self.tempo_client.aclose()
         await self.loki_client.aclose()
         if self.prometheus_client:
@@ -172,30 +176,30 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 },
             )
 
-            if response.status_code == 200:
-                data = response.json()
-                streams = data.get("data", {}).get("result", [])
+            response.raise_for_status()
+            data = response.json()
+            streams = data.get("data", {}).get("result", [])
 
-                for stream in streams:
-                    for timestamp, log_line in stream.get("values", []):
-                        # Parse log entry
-                        try:
-                            log_data = json.loads(log_line)
-                            error_event = self._parse_error_from_log(log_data)
-                            if error_event:
-                                errors.append(error_event)
-                        except json.JSONDecodeError as e:
-                            logger.warning(
-                                f"Skipping unparseable log entry (invalid JSON): {e}. "
-                                f"Log line: {log_line[:200]}"
-                            )
-                            continue
-                        except ValueError as e:
-                            logger.warning(
-                                f"Skipping log entry with invalid data: {e}. "
-                                f"Log line: {log_line[:200]}"
-                            )
-                            continue
+            for stream in streams:
+                for timestamp, log_line in stream.get("values", []):
+                    # Parse log entry
+                    try:
+                        log_data = json.loads(log_line)
+                        error_event = self._parse_error_from_log(log_data)
+                        if error_event:
+                            errors.append(error_event)
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"Skipping unparseable log entry (invalid JSON): {e}. "
+                            f"Log line: {log_line[:200]}"
+                        )
+                        continue
+                    except ValueError as e:
+                        logger.warning(
+                            f"Skipping log entry with invalid data: {e}. "
+                            f"Log line: {log_line[:200]}"
+                        )
+                        continue
 
             return errors
 
@@ -454,15 +458,15 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
         """
         from rounds.core.models import PartialResultsInfo
 
-        # Validate all trace IDs upfront
-        for trace_id in trace_ids:
-            if not _is_valid_trace_id(trace_id):
-                raise ValueError(f"Invalid trace ID format: {trace_id}")
+        valid_ids = [tid for tid in trace_ids if _is_valid_trace_id(tid)]
+        invalid_ids = [tid for tid in trace_ids if not _is_valid_trace_id(tid)]
+        if invalid_ids:
+            logger.warning(f"Skipping invalid trace IDs: {invalid_ids}")
 
         traces: list[TraceTree] = []
-        failed_count = 0
+        failed_count = len(invalid_ids)
 
-        for trace_id in trace_ids:
+        for trace_id in valid_ids:
             try:
                 trace = await self.get_trace(trace_id)
                 traces.append(trace)
@@ -517,21 +521,21 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
                 params={"query": query},
             )
 
-            if response.status_code == 200:
-                data = response.json()
-                streams = data.get("data", {}).get("result", [])
+            response.raise_for_status()
+            data = response.json()
+            streams = data.get("data", {}).get("result", [])
 
-                for stream in streams:
-                    for timestamp, log_line in stream.get("values", []):
-                        log_entry = LogEntry(
-                            timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=UTC),
-                            severity=Severity.INFO,
-                            body=log_line,
-                            attributes={},
-                            trace_id=None,
-                            span_id=None,
-                        )
-                        logs.append(log_entry)
+            for stream in streams:
+                for timestamp, log_line in stream.get("values", []):
+                    log_entry = LogEntry(
+                        timestamp=datetime.fromtimestamp(int(timestamp) / 1e9, tz=UTC),
+                        severity=Severity.INFO,
+                        body=log_line,
+                        attributes={},
+                        trace_id=None,
+                        span_id=None,
+                    )
+                    logs.append(log_entry)
 
         except Exception as e:
             logger.error(

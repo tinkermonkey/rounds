@@ -70,6 +70,7 @@ class JaegerTelemetryAdapter(TelemetryPort):
         """
         self.api_url = api_url.rstrip("/")
         self.service_name = service_name
+        self._closed = False
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             timeout=30.0,
@@ -81,10 +82,13 @@ class JaegerTelemetryAdapter(TelemetryPort):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
-        await self.client.aclose()
+        await self.close()
 
     async def close(self) -> None:
-        """Close the httpx client and clean up resources."""
+        """Close the httpx client and clean up resources. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         await self.client.aclose()
 
     async def get_recent_errors(
@@ -141,13 +145,13 @@ class JaegerTelemetryAdapter(TelemetryPort):
                     },
                 )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    traces = data.get("data", [])
+                response.raise_for_status()
+                data = response.json()
+                traces = data.get("data", [])
 
-                    for trace in traces:
-                        error_events = self._extract_error_events(trace)
-                        errors.extend(error_events)
+                for trace in traces:
+                    error_events = self._extract_error_events(trace)
+                    errors.extend(error_events)
 
             return errors
 
@@ -495,15 +499,15 @@ class JaegerTelemetryAdapter(TelemetryPort):
         """
         from rounds.core.models import PartialResultsInfo
 
-        # Validate all trace IDs upfront
-        for trace_id in trace_ids:
-            if not _is_valid_trace_id(trace_id):
-                raise ValueError(f"Invalid trace ID format: {trace_id}")
+        valid_ids = [tid for tid in trace_ids if _is_valid_trace_id(tid)]
+        invalid_ids = [tid for tid in trace_ids if not _is_valid_trace_id(tid)]
+        if invalid_ids:
+            logger.warning(f"Skipping invalid trace IDs: {invalid_ids}")
 
         traces: list[TraceTree] = []
-        failed_count = 0
+        failed_count = len(invalid_ids)
 
-        for trace_id in trace_ids:
+        for trace_id in valid_ids:
             try:
                 trace = await self.get_trace(trace_id)
                 traces.append(trace)
@@ -709,17 +713,17 @@ class JaegerTelemetryAdapter(TelemetryPort):
                         },
                     )
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        traces = data.get("data", [])
+                    response.raise_for_status()
+                    data = response.json()
+                    traces = data.get("data", [])
 
-                        for trace in traces:
-                            error_events = self._extract_error_events(trace)
-                            all_events.extend(error_events)
+                    for trace in traces:
+                        error_events = self._extract_error_events(trace)
+                        all_events.extend(error_events)
 
-                            # Stop if we've collected enough events
-                            if len(all_events) >= limit:
-                                return all_events[:limit]
+                        # Stop if we've collected enough events
+                        if len(all_events) >= limit:
+                            return all_events[:limit]
 
                 except Exception as e:
                     logger.warning(
