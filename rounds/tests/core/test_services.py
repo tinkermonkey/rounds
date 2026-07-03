@@ -1295,3 +1295,108 @@ class TestManagementService:
         # Attempt to retriage non-existent signature
         with pytest.raises(ValueError, match="not found"):
             await management_service.retriage_signature("nonexistent-id")
+
+    @pytest.mark.asyncio
+    async def test_reinvestigate_restores_state_on_diagnosis_failure(
+        self,
+        diagnosis: Diagnosis,
+    ) -> None:
+        """reinvestigate() must restore original status and diagnosis when diagnosis fails."""
+        original_diagnosis = diagnosis
+        signature = Signature(
+            id="sig-001",
+            fingerprint="fp-001",
+            error_type="ConnectionTimeout",
+            service="api",
+            message_template="Connection timeout",
+            stack_hash="stack-hash-001",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+            diagnosis=original_diagnosis,
+        )
+
+        store = FakeSignatureStorePort()
+        await store.save(signature)
+
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_should_fail(True, "LLM temporarily unavailable")
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
+
+        management_service = ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
+        )
+
+        with pytest.raises(RuntimeError, match="LLM temporarily unavailable"):
+            await management_service.reinvestigate(signature.id)
+
+        # Original state must be restored after diagnosis failure
+        restored = await store.get_by_id(signature.id)
+        assert restored is not None
+        assert restored.status == SignatureStatus.DIAGNOSED
+        assert restored.diagnosis == original_diagnosis
+
+    @pytest.mark.asyncio
+    async def test_reinvestigate_restores_state_when_store_also_fails(
+        self,
+        diagnosis: Diagnosis,
+    ) -> None:
+        """reinvestigate() must re-raise the diagnosis error even if the restore store.update() also fails."""
+        original_diagnosis = diagnosis
+        signature = Signature(
+            id="sig-002",
+            fingerprint="fp-002",
+            error_type="TimeoutError",
+            service="worker",
+            message_template="Worker timeout",
+            stack_hash="stack-hash-002",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=3,
+            status=SignatureStatus.DIAGNOSED,
+            diagnosis=original_diagnosis,
+        )
+
+        class StoreFailingOnRestore(FakeSignatureStorePort):
+            """Fails on the second update (the restore call after diagnosis failure)."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.update_count = 0
+
+            async def update(self, sig: Signature) -> None:
+                self.update_count += 1
+                if self.update_count == 2:
+                    raise RuntimeError("Store unavailable during restore")
+                await super().update(sig)
+
+        store = StoreFailingOnRestore()
+        await store.save(signature)
+
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_should_fail(True, "LLM temporarily unavailable")
+        notification = FakeNotificationPort()
+        triage = TriageEngine()
+
+        management_service = ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
+        )
+
+        # The original diagnosis error must be re-raised even when the restore store
+        # update also fails (the store error is logged and swallowed).
+        with pytest.raises(RuntimeError, match="LLM temporarily unavailable"):
+            await management_service.reinvestigate(signature.id)
