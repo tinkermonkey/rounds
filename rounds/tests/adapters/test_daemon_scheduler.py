@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from rounds.adapters.scheduler.daemon import DaemonScheduler
-from rounds.core.models import PollResult
+from rounds.core.models import InvestigationResult, PollResult
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -228,3 +228,98 @@ async def test_start_without_poll_port_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="poll_port must be set"):
         await scheduler.start()
+
+
+@pytest.mark.asyncio
+async def test_daemon_continues_after_investigation_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon poll loop must survive 5+ consecutive investigation failures without crashing."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Each poll cycle returns one queued investigation so the investigation cycle runs
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_enough_failures() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count >= 7:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # _run_loop and the stopper run concurrently; if the loop crashed, gather would raise
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_enough_failures(),
+    )
+
+    # Loop survived and poll cycles continued beyond the 5-failure threshold
+    assert scheduler._investigation_failure_count >= 7
+    assert poll_port.poll_cycle_count >= 7
+
+
+@pytest.mark.asyncio
+async def test_investigation_failure_count_resets_on_success(
+    poll_port: FakePollPort,
+) -> None:
+    """Failure counter resets to zero when an investigation cycle succeeds."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    # Three failures, then success
+    poll_port.add_investigation_result(InvestigationResult(
+        diagnoses_produced=(), investigations_attempted=1, investigations_failed=1,
+    ))
+    for _ in range(3):
+        poll_port.investigation_results.insert(0, InvestigationResult(
+            diagnoses_produced=(), investigations_attempted=0, investigations_failed=0,
+        ))
+    poll_port.should_fail_investigation = True
+
+    async def stop_after_success() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._investigation_failure_count == 0 and \
+               poll_port.execute_investigation_cycle_call_count >= 2:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # Manually set failure count high, then let a success reset it
+    scheduler._investigation_failure_count = 3
+    poll_port.should_fail_investigation = False  # next cycle succeeds
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_success(),
+    )
+
+    assert scheduler._investigation_failure_count == 0

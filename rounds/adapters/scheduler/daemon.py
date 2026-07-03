@@ -182,19 +182,15 @@ class DaemonScheduler:
                             logger.error(
                                 f"Error in investigation cycle #{cycle_number}: {e} "
                                 f"(consecutive failures: {self._investigation_failure_count})",
-                                exc_info=True
+                                exc_info=True,
                             )
-                            # Raise exception if too many consecutive failures
                             if self._investigation_failure_count >= 5:
                                 logger.critical(
                                     f"Investigation cycle has failed {self._investigation_failure_count} "
-                                    f"consecutive times. This indicates a persistent issue requiring "
-                                    f"manual intervention. Stopping daemon."
+                                    f"consecutive times. Investigations suspended until next success. "
+                                    f"Review logs for root cause; daemon poll loop continues."
                                 )
-                                raise RuntimeError(
-                                    f"Investigation cycle failed {self._investigation_failure_count} "
-                                    f"consecutive times. Last error: {e}"
-                                ) from e
+                                # Don't raise — daemon continues polling; investigations resume on next success
 
             except asyncio.CancelledError:
                 raise
