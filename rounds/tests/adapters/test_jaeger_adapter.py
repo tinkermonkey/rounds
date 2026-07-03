@@ -1,6 +1,7 @@
 """Tests for JaegerTelemetryAdapter: list_services, search_logs, search_spans."""
 
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -222,7 +223,7 @@ class TestSearchLogs:
 class TestSearchSpans:
     """Tests for JaegerTelemetryAdapter.search_spans()."""
 
-    _BASE_TRACE = {
+    _BASE_TRACE: ClassVar[dict] = {
         "traceID": "trace1",
         "spans": [
             {

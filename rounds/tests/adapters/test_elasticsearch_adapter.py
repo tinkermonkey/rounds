@@ -1,6 +1,6 @@
 """Tests for ElasticsearchTelemetryAdapter: list_services, search_logs, search_spans."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
 import pytest

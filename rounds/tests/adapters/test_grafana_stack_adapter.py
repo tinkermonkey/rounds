@@ -1,6 +1,7 @@
 """Tests for GrafanaStackTelemetryAdapter: list_services, search_logs, search_spans."""
 
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -102,7 +103,7 @@ class TestSearchLogs:
     Uses Loki's query_range API with LogQL queries.
     """
 
-    _LOKI_STREAM_RESPONSE = {
+    _LOKI_STREAM_RESPONSE: ClassVar[dict] = {
         "data": {
             "result": [
                 {
@@ -227,7 +228,7 @@ class TestSearchSpans:
     Uses Tempo's /api/search API; returns trace-level summaries.
     """
 
-    _TEMPO_RESPONSE = {
+    _TEMPO_RESPONSE: ClassVar[dict] = {
         "traces": [
             {
                 "traceID": "trace1",
