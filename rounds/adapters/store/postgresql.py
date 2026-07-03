@@ -443,11 +443,15 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                     diagnosis = self._deserialize_diagnosis(diagnosis_json)
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                     logger.error(
-                        f"Failed to parse diagnosis for signature {sig_id}: {e}. "
-                        f"Diagnosis will be discarded.",
-                        exc_info=True
+                        f"Data corruption detected: Failed to deserialize diagnosis JSON "
+                        f"for signature {sig_id}. Database integrity compromised. "
+                        f"Root cause: {type(e).__name__}: {e}",
+                        exc_info=True,
                     )
-                    diagnosis = None
+                    raise ValueError(
+                        f"Data corruption in signature {sig_id}: Failed to deserialize diagnosis. "
+                        f"Database may require repair or restoration from backup."
+                    ) from e
 
             # Convert tags array
             tags_set = frozenset(tags) if tags else frozenset()
