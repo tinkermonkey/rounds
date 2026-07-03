@@ -221,6 +221,20 @@ class TestSearchLogs:
         assert captured_params[0]["limit"] == "25"
         await adapter.close()
 
+    @pytest.mark.asyncio
+    async def test_direction_backward_sent(self):
+        captured_params: list[dict] = []
+
+        def loki_handler(request: httpx.Request) -> httpx.Response:
+            if "query_range" in request.url.path:
+                captured_params.append(dict(request.url.params))
+            return httpx.Response(200, json={"data": {"result": []}})
+
+        adapter = _make_adapter(httpx.MockTransport(loki_handler))
+        await adapter.search_logs("error", since=_SINCE)
+        assert captured_params[0].get("direction") == "backward"
+        await adapter.close()
+
 
 class TestSearchSpans:
     """Tests for GrafanaStackTelemetryAdapter.search_spans().
@@ -779,6 +793,14 @@ class TestGetCorrelatedLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
+    async def test_valid_hex_wrong_length_raises_value_error(self):
+        """A hex string that is not 32 chars (128-bit) must be rejected."""
+        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+        with pytest.raises(ValueError, match="Invalid trace ID"):
+            await adapter.get_correlated_logs(["abcdef"])  # 6 chars, valid hex but wrong length
+        await adapter.close()
+
+    @pytest.mark.asyncio
     async def test_trace_id_included_in_loki_query(self):
         captured: list[dict] = []
 
@@ -790,7 +812,36 @@ class TestGetCorrelatedLogs:
         await adapter.get_correlated_logs(["abc123abc123abc123abc123abc12300"])
         assert captured
         assert "abc123" in captured[0].get("query", "")
+        assert "start" in captured[0]
+        assert "end" in captured[0]
         await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_non_default_window_minutes_changes_time_range(self):
+        """A custom window_minutes value should widen the start/end range."""
+        captured_narrow: list[dict] = []
+        captured_wide: list[dict] = []
+
+        def loki_handler_narrow(request: httpx.Request) -> httpx.Response:
+            captured_narrow.append(dict(request.url.params))
+            return httpx.Response(200, json={"data": {"result": []}})
+
+        def loki_handler_wide(request: httpx.Request) -> httpx.Response:
+            captured_wide.append(dict(request.url.params))
+            return httpx.Response(200, json={"data": {"result": []}})
+
+        trace_id = "abc123abc123abc123abc123abc12300"
+        adapter_narrow = _make_adapter(httpx.MockTransport(loki_handler_narrow))
+        await adapter_narrow.get_correlated_logs([trace_id], window_minutes=5)
+        await adapter_narrow.close()
+
+        adapter_wide = _make_adapter(httpx.MockTransport(loki_handler_wide))
+        await adapter_wide.get_correlated_logs([trace_id], window_minutes=60)
+        await adapter_wide.close()
+
+        start_narrow = int(captured_narrow[0]["start"])
+        start_wide = int(captured_wide[0]["start"])
+        assert start_wide < start_narrow  # wider window reaches further back
 
     @pytest.mark.asyncio
     async def test_empty_result_returns_empty(self):

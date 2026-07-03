@@ -523,9 +523,11 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
             trace_regex = "|".join(trace_ids)
             query = f'{{trace_id=~"{trace_regex}"}}'
 
+            # Window is relative to now because per-trace timestamps are not
+            # available in this method's signature.
             now = datetime.now(UTC)
             start_ns = int((now - window).timestamp() * 1e9)
-            end_ns = int((now + window).timestamp() * 1e9)
+            end_ns = int(now.timestamp() * 1e9)
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
@@ -674,7 +676,13 @@ class GrafanaStackTelemetryAdapter(TelemetryPort):
 
             response = await self.loki_client.get(
                 "/loki/api/v1/query_range",
-                params={"query": logql_query, "start": start_ns, "end": end_ns, "limit": limit, "direction": "backward"},
+                params={
+                    "query": logql_query,
+                    "start": start_ns,
+                    "end": end_ns,
+                    "limit": limit,
+                    "direction": "backward",
+                },
             )
             response.raise_for_status()
 
