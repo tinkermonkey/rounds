@@ -21,6 +21,7 @@ import sys
 import urllib.parse
 from typing import Any, Literal
 
+import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
@@ -46,7 +47,6 @@ from rounds.core.poll_service import PollService
 from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
 
-
 # Only hex chars and hyphens are valid in a trace ID.
 # Prevents path traversal and URL/shell injection when the value is forwarded
 # to the telemetry backend as part of an HTTP request path.
@@ -67,7 +67,7 @@ def _validate_trace_id(raw: str) -> str:
     trace_id = raw.strip()
     if not _TRACE_ID_RE.match(trace_id):
         raise ValueError(
-            f"Invalid trace ID {trace_id!r}: must be 8–64 hex characters "
+            f"Invalid trace ID {trace_id!r}: must be 8-64 hex characters "
             "(0-9, a-f, A-F) with optional hyphens."
         )
     return trace_id
@@ -295,6 +295,9 @@ async def _execute_cli_command(
                     raise ValueError("Missing required parameter: trace_id")
                 span.set_attribute("trace_id", args["trace_id"])
                 result = await cli_handler.get_trace_tree(args["trace_id"])
+
+            elif command == "list-services":
+                result = await cli_handler.list_services()
 
             else:
                 error_msg = f"Unknown command: {command}. Use 'help' for available commands."
@@ -553,6 +556,12 @@ Available Commands (JSON format):
       investigate-trace abcdef1234567890abcdef1234567890
       investigate-trace {"trace_id": "abcdef1234567890abcdef1234567890"}
 
+  list-services
+    List all service names visible in the telemetry backend.
+    Returns exact, case-sensitive names as reported by the backend.
+
+    Example: list-services
+
   help
     Show this help message.
 
@@ -619,7 +628,34 @@ Examples:
         nargs="*",
         help="Additional arguments (signature_id for diagnose; sub-command and args for cli-run)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.signature_id = args.rest[0] if args.command == "diagnose" and args.rest else None
+    return args
+
+
+async def _verify_signoz_connection(adapter: "SigNozTelemetryAdapter") -> None:
+    """Verify SigNoz connectivity; raise on 401/403 auth failures, warn on transient errors."""
+    _logger = logging.getLogger(__name__)
+    try:
+        await adapter.verify_connection()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            _logger.error(
+                "SigNoz authentication failed at startup — "
+                "check SIGNOZ_API_KEY and restart"
+            )
+            raise
+        _logger.warning(
+            "SigNoz connectivity check failed at startup — "
+            "proceeding, errors will surface on first poll cycle",
+            exc_info=True,
+        )
+    except Exception:
+        _logger.warning(
+            "SigNoz connectivity check failed at startup — "
+            "proceeding, errors will surface on first poll cycle",
+            exc_info=True,
+        )
 
 
 async def bootstrap(
@@ -680,7 +716,7 @@ async def bootstrap(
         # by removing quoted values that might contain secrets
         sanitized_msg = re.sub(r"'[^']{20,}'", "'[REDACTED]'", sanitized_msg)
 
-        print(f"ERROR: Configuration validation failed.")
+        print("ERROR: Configuration validation failed.")
         print(f"Details: {sanitized_msg}")
         print("Please check your .env.rounds file and ensure all required variables are set.")
         print("See .env.rounds.template for required configuration options.")
@@ -692,11 +728,10 @@ async def bootstrap(
     logger.info("Loading Rounds diagnostic system...")
 
     # Step 2.5: Initialize telemetry if enabled
-    tracer: trace.Tracer | None = None
     if settings.enable_self_telemetry:
         from rounds.telemetry import initialize_telemetry
 
-        tracer = initialize_telemetry(
+        initialize_telemetry(
             service_name=settings.self_telemetry_service_name,
             otlp_endpoint=settings.self_telemetry_otlp_endpoint or None,
             enable_console_export=settings.self_telemetry_console_export,
@@ -704,7 +739,7 @@ async def bootstrap(
         logger.info("Self-telemetry enabled")
     else:
         # Use a no-op tracer if telemetry is disabled
-        tracer = trace.get_tracer(__name__)
+        trace.get_tracer(__name__)
         logger.debug("Self-telemetry disabled")
 
     # Step 3: Instantiate adapters
@@ -713,11 +748,13 @@ async def bootstrap(
     # Telemetry adapter - select based on config
     telemetry: TelemetryPort
     if settings.telemetry_backend == "signoz":
-        telemetry = SigNozTelemetryAdapter(
+        _signoz = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
             api_key=settings.signoz_api_key,
         )
         logger.info("Telemetry adapter: SigNoz")
+        await _verify_signoz_connection(_signoz)
+        telemetry = _signoz
     elif settings.telemetry_backend == "jaeger":
         telemetry = JaegerTelemetryAdapter(
             api_url=settings.jaeger_api_url,
@@ -835,6 +872,7 @@ async def bootstrap(
             poll_port=None,  # Will be set after poll_service is created
             poll_interval_seconds=settings.poll_interval_seconds,
             budget_limit=settings.daily_budget_limit,
+            notification_port=notification,
         )
 
     # Investigator (orchestrates investigation workflow)
@@ -848,6 +886,14 @@ async def bootstrap(
         budget_tracker=scheduler,
     )
 
+    # Resolve service filter: None means all services, non-empty list filters to named services
+    service_names = settings.get_service_names()
+    service_filter: list[str] | None = service_names if service_names else None
+    if service_filter:
+        logger.info(f"Service filter active: {service_filter}")
+    else:
+        logger.info("Service filter: all services")
+
     # Poll service (implements PollPort)
     poll_service = PollService(
         telemetry=telemetry,
@@ -856,7 +902,7 @@ async def bootstrap(
         triage=triage,
         investigator=investigator,
         lookback_minutes=settings.error_lookback_minutes,
-        services=None,  # None means all services
+        services=service_filter,
         batch_size=settings.poll_batch_size,
     )
 
@@ -997,7 +1043,7 @@ async def bootstrap(
                 from rounds.telemetry import shutdown_telemetry
 
                 shutdown_telemetry()
-            except Exception as e:
+            except Exception:
                 logger.error("Failed to shutdown self-telemetry", exc_info=True)
 
         # Re-raise first critical error after all cleanup attempts

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-# Add the rounds directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add the workspace directory to path so that 'rounds' package is importable
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from rounds.core.models import (
     Diagnosis,
@@ -21,12 +21,13 @@ from rounds.core.models import (
     PollResult,
     Severity,
     Signature,
+    SignatureDetails,
     SignatureStatus,
     SpanNode,
     StackFrame,
     TraceTree,
 )
-from tests.fakes import (
+from rounds.tests.fakes import (
     FakeDiagnosisPort,
     FakeManagementPort,
     FakeNotificationPort,
@@ -734,7 +735,19 @@ class TestFakeManagementPort:
     async def test_get_signature_details(self) -> None:
         """Should return pre-configured signature details."""
         port = FakeManagementPort()
-        details = {"status": "new", "count": 5}
+        sig = Signature(
+            id="sig-001",
+            fingerprint="abc123",
+            error_type="ValueError",
+            service="svc",
+            message_template="err",
+            stack_hash="h1",
+            first_seen=datetime(2024, 1, 1),
+            last_seen=datetime(2024, 1, 1),
+            occurrence_count=5,
+            status=SignatureStatus.NEW,
+        )
+        details = SignatureDetails(signature=sig, recent_events=(), related_signatures=())
         port.set_signature_details("sig-001", details)
 
         result = await port.get_signature_details("sig-001")

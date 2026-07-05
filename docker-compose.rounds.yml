@@ -28,17 +28,12 @@ services:
     user: nurse
     restart: unless-stopped
 
-    # Environment configuration from file
+    # Environment configuration from file — all settings including run mode,
+    # notification backend, and paths come from .env.rounds so that operators
+    # changing those values via vault/secrets.yml (Ansible) or .env.rounds.template
+    # are not silently overridden here.
     env_file:
       - .env.rounds
-
-    # Environment variable overrides
-    environment:
-      CODEBASE_PATH: /workspace/target
-      STORE_SQLITE_PATH: /app/data/signatures.db
-      NOTIFICATION_OUTPUT_DIR: /app/reports
-      NOTIFICATION_BACKEND: markdown
-      RUN_MODE: daemon
 
     # Resource limits
     deploy:

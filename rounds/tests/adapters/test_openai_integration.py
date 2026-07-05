@@ -1,7 +1,7 @@
 """Integration tests for OpenAI diagnosis adapter."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -89,9 +89,8 @@ async def test_diagnose_flow_success(mock_openai_client) -> None:
     from rounds.core.models import (
         ErrorEvent,
         InvestigationContext,
-        LogEntry,
-        Signature,
         Severity,
+        Signature,
         StackFrame,
     )
 
@@ -182,12 +181,9 @@ async def test_diagnose_flow_success(mock_openai_client) -> None:
 async def test_diagnose_handles_malformed_json(mock_openai_client) -> None:
     """Test diagnose() handles malformed JSON from OpenAI."""
     from rounds.core.models import (
-        ErrorEvent,
         InvestigationContext,
         Signature,
         SignatureStatus,
-        Severity,
-        StackFrame,
     )
 
     adapter = OpenAIDiagnosisAdapter(
@@ -354,9 +350,9 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
     from rounds.core.models import (
         ErrorEvent,
         InvestigationContext,
+        Severity,
         Signature,
         SignatureStatus,
-        Severity,
         StackFrame,
     )
 

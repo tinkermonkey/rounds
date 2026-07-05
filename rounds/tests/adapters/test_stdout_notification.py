@@ -1,14 +1,13 @@
 """Unit tests for StdoutNotificationAdapter."""
 
-import asyncio
-from datetime import datetime, timezone
-from io import StringIO
 import sys
+from datetime import UTC, datetime
+from io import StringIO
 
 import pytest
 
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
-from rounds.core.models import Diagnosis, Signature, Severity
+from rounds.core.models import Diagnosis, Signature
 
 
 @pytest.fixture
@@ -23,8 +22,8 @@ def sample_signature():
         error_type="ValueError",
         message_template="Invalid input: {value}",
         stack_hash="abc123def456",
-        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
         tags=["test", "critical"],
@@ -41,7 +40,7 @@ def sample_diagnosis():
         confidence="high",
         model="claude-3-5-sonnet-20241022",
         cost_usd=0.05,
-        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC),
     )
 
 
@@ -86,8 +85,8 @@ async def test_send_with_empty_tags(sample_signature, sample_diagnosis):
         error_type="RuntimeError",
         message_template="Runtime error occurred",
         stack_hash="xyz789",
-        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
         tags=[],
@@ -121,7 +120,7 @@ async def test_send_with_low_confidence(sample_signature):
         model="claude-3-5-sonnet-20241022",
         confidence="low",
         cost_usd=0.02,
-        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC),
     )
 
     adapter = StdoutNotificationAdapter()
@@ -151,7 +150,7 @@ async def test_send_with_complex_json(sample_signature):
         model="claude-3-5-sonnet-20241022",
         confidence="medium",
         cost_usd=0.08,
-        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=timezone.utc),
+        diagnosed_at=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC),
     )
 
     adapter = StdoutNotificationAdapter()
@@ -184,8 +183,8 @@ async def test_send_with_special_characters(sample_diagnosis):
         error_type="ValueError: Can't parse 'foo'",
         message_template="Parse error: {input}",
         stack_hash="special123",
-        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=3,
         status=SignatureStatus.NEW,
         tags=["tag-with-dashes", "unicode-test-λ"],
@@ -221,8 +220,8 @@ async def test_send_high_occurrence_count(sample_diagnosis):
         error_type="TimeoutError",
         message_template="Operation timed out",
         stack_hash="timeout999",
-        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        first_seen=datetime(2026, 1, 15, 10, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=9999,
         status=SignatureStatus.NEW,
         tags=["critical"],

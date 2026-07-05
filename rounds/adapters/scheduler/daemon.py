@@ -10,7 +10,7 @@ import signal
 from datetime import UTC, datetime
 from typing import cast
 
-from rounds.core.ports import PollPort
+from rounds.core.ports import NotificationPort, PollPort
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class DaemonScheduler:
         poll_port: PollPort | None = None,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ):
         """Initialize daemon scheduler.
 
@@ -30,16 +31,20 @@ class DaemonScheduler:
             poll_port: PollPort implementation to call for poll cycles (can be set later).
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert operators when the investigation
+                pipeline is suspended due to persistent failures (optional).
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
         self.budget_limit = budget_limit
+        self.notification_port = notification_port
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
         self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
-        self._investigation_failure_count = 0  # Track consecutive investigation cycle failures
+        self._investigation_failure_count = 0
+        self._investigation_suspended_until: float | None = None
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -166,35 +171,73 @@ class DaemonScheduler:
 
                     # Execute investigation cycle for pending diagnoses
                     if result.investigations_queued > 0:
-                        logger.debug(f"Starting investigation cycle #{cycle_number}")
-                        try:
-                            inv_result = await poll_port.execute_investigation_cycle()
-                            # Reset failure counter on successful cycle
-                            self._investigation_failure_count = 0
-                            logger.info(
-                                f"Investigation cycle #{cycle_number} completed: "
-                                f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
-                                f"{inv_result.investigations_failed} failed "
-                                f"(out of {inv_result.investigations_attempted} attempted)"
+                        now = loop.time()
+                        if (
+                            self._investigation_failure_count >= 5
+                            and self._investigation_suspended_until is not None
+                            and now < self._investigation_suspended_until
+                        ):
+                            logger.warning(
+                                f"Skipping investigation cycle #{cycle_number}: "
+                                f"{self._investigation_failure_count} consecutive failures, "
+                                f"investigations suspended. "
+                                f"Review logs for root cause; daemon poll loop continues."
                             )
-                        except Exception as e:
-                            self._investigation_failure_count += 1
-                            logger.error(
-                                f"Error in investigation cycle #{cycle_number}: {e} "
-                                f"(consecutive failures: {self._investigation_failure_count})",
-                                exc_info=True
-                            )
-                            # Raise exception if too many consecutive failures
+                        else:
                             if self._investigation_failure_count >= 5:
-                                logger.critical(
-                                    f"Investigation cycle has failed {self._investigation_failure_count} "
-                                    f"consecutive times. This indicates a persistent issue requiring "
-                                    f"manual intervention. Stopping daemon."
+                                logger.info(
+                                    f"Retrying investigation cycle #{cycle_number} after suspension "
+                                    f"(previous consecutive failures: {self._investigation_failure_count})"
                                 )
-                                raise RuntimeError(
-                                    f"Investigation cycle failed {self._investigation_failure_count} "
-                                    f"consecutive times. Last error: {e}"
-                                ) from e
+                            else:
+                                logger.debug(f"Starting investigation cycle #{cycle_number}")
+                            try:
+                                inv_result = await poll_port.execute_investigation_cycle()
+                                self._investigation_failure_count = 0
+                                self._investigation_suspended_until = None
+                                logger.info(
+                                    f"Investigation cycle #{cycle_number} completed: "
+                                    f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
+                                    f"{inv_result.investigations_failed} failed "
+                                    f"(out of {inv_result.investigations_attempted} attempted)"
+                                )
+                            except Exception as e:
+                                self._investigation_failure_count += 1
+                                backoff_seconds = max(self.poll_interval_seconds * 5, 300)
+                                self._investigation_suspended_until = loop.time() + backoff_seconds
+                                logger.error(
+                                    f"Error in investigation cycle #{cycle_number}: {e} "
+                                    f"(consecutive failures: {self._investigation_failure_count})",
+                                    exc_info=True,
+                                )
+                                if self._investigation_failure_count >= 5:
+                                    logger.critical(
+                                        f"Investigation cycle has failed {self._investigation_failure_count} "
+                                        f"consecutive times. Suspending investigations for "
+                                        f"{backoff_seconds}s. "
+                                        f"Review logs for root cause; daemon poll loop continues."
+                                    )
+                                    if (
+                                        self._investigation_failure_count == 5
+                                        and self.notification_port is not None
+                                    ):
+                                        try:
+                                            await self.notification_port.report_alert({
+                                                "alert": "investigation_pipeline_suspended",
+                                                "consecutive_failures": self._investigation_failure_count,
+                                                "suspended_for_seconds": backoff_seconds,
+                                                "message": (
+                                                    f"Rounds investigation pipeline has failed "
+                                                    f"{self._investigation_failure_count} consecutive times. "
+                                                    f"Diagnoses are suspended for {backoff_seconds}s. "
+                                                    f"Review logs for root cause."
+                                                ),
+                                            })
+                                        except Exception as notify_err:
+                                            logger.error(
+                                                f"Failed to send investigation failure alert: {notify_err}",
+                                                exc_info=True,
+                                            )
 
             except asyncio.CancelledError:
                 raise
@@ -281,6 +324,7 @@ class DaemonFactory:
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ) -> DaemonScheduler:
         """Create a new daemon scheduler instance.
 
@@ -288,6 +332,7 @@ class DaemonFactory:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert on persistent failures.
 
         Returns:
             DaemonScheduler instance.
@@ -296,6 +341,7 @@ class DaemonFactory:
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
             budget_limit=budget_limit,
+            notification_port=notification_port,
         )
 
     @staticmethod
@@ -303,6 +349,7 @@ class DaemonFactory:
         poll_port: PollPort,
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
+        notification_port: NotificationPort | None = None,
     ) -> None:
         """Create and run a daemon scheduler (blocking until stopped).
 
@@ -310,11 +357,13 @@ class DaemonFactory:
             poll_port: PollPort implementation to call for poll cycles.
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
+            notification_port: NotificationPort to alert on persistent failures.
         """
         daemon = DaemonFactory.create(
             poll_port=poll_port,
             poll_interval_seconds=poll_interval_seconds,
             budget_limit=budget_limit,
+            notification_port=notification_port,
         )
         await daemon.start()
 

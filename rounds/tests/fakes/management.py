@@ -121,6 +121,7 @@ class FakeManagementPort(ManagementPort):
 
         self.reinvestigated_signatures.append(signature_id)
         return Diagnosis(
+            summary="Fake summary of findings",
             root_cause="Fake root cause",
             evidence=("Fake evidence",),
             suggested_fix="Fake fix",
@@ -180,6 +181,12 @@ class FakeManagementPort(ManagementPort):
         if self.should_fail:
             raise ValueError(self.fail_message)
         raise KeyError(f"Trace not found: {trace_id}")
+
+    async def list_services(self) -> list[str]:
+        """Return empty list; override in specific tests as needed."""
+        if self.should_fail:
+            raise ValueError(self.fail_message)
+        return []
 
     def set_signature_details(
         self, signature_id: str, details: SignatureDetails

@@ -104,6 +104,42 @@ async def test_row_parsing_with_invalid_status(
 
 
 @pytest.mark.asyncio
+async def test_wal_journal_mode_is_enabled(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """SQLite store must use WAL journal mode for concurrent read/write safety."""
+    store, _db_path = temp_db
+
+    conn = await store._get_connection()
+    try:
+        cursor = await conn.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
+    finally:
+        await store._return_connection(conn)
+
+    assert row is not None
+    assert row[0] == "wal", f"Expected WAL journal mode, got: {row[0]}"
+
+
+@pytest.mark.asyncio
+async def test_busy_timeout_is_set_on_new_connections(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """New connections must have a non-zero busy_timeout to handle transient locks."""
+    store, _db_path = temp_db
+
+    conn = await store._get_connection()
+    try:
+        cursor = await conn.execute("PRAGMA busy_timeout")
+        row = await cursor.fetchone()
+    finally:
+        await store._return_connection(conn)
+
+    assert row is not None
+    assert int(row[0]) > 0, f"Expected positive busy_timeout, got: {row[0]}"
+
+
+@pytest.mark.asyncio
 async def test_row_parsing_with_negative_occurrence_count(
     temp_db: tuple[SQLiteSignatureStore, Path],
 ) -> None:

@@ -1,0 +1,7 @@
+---
+# Ansible collection dependencies for the rounds deployment playbook.
+#
+# Install before running rounds.yml:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.docker

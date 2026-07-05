@@ -53,6 +53,7 @@ class SigNozTelemetryAdapter(TelemetryPort):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self._fingerprinter = fingerprinter
+        self._closed = False
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=self._get_headers(),
@@ -82,14 +83,50 @@ class SigNozTelemetryAdapter(TelemetryPort):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
-        await self.client.aclose()
+        await self.close()
 
     async def close(self) -> None:
-        """Close the httpx client.
-
-        Must be called when done using the adapter if not using it as a context manager.
-        """
+        """Close the httpx client. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         await self.client.aclose()
+
+    async def verify_connection(self) -> None:
+        """Verify connectivity and authentication with the SigNoz API.
+
+        Makes a lightweight GET request to the SigNoz health endpoint.
+        Any 2xx or 4xx response (other than 401/403) confirms the server is reachable.
+        Only ConnectError, TimeoutException, or auth failures (401/403) are propagated.
+
+        Raises:
+            httpx.ConnectError: If SigNoz cannot be reached at the configured URL.
+            httpx.HTTPStatusError: If authentication fails (401 or 403).
+            httpx.TimeoutException: If the request times out.
+        """
+        try:
+            response = await self.client.get("/api/v1/health", timeout=10.0)
+            if response.status_code in (401, 403):
+                raise httpx.HTTPStatusError(
+                    f"SigNoz authentication failed (HTTP {response.status_code}): "
+                    "check SIGNOZ_API_KEY",
+                    request=response.request,
+                    response=response,
+                )
+            logger.info(f"SigNoz connection verified: {self.api_url}")
+        except httpx.ConnectError as e:
+            logger.error(f"Cannot connect to SigNoz at {self.api_url}: {e}", exc_info=True)
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"SigNoz authentication failed (HTTP {e.response.status_code}) "
+                f"at {self.api_url}",
+                exc_info=True,
+            )
+            raise
+        except httpx.TimeoutException as e:
+            logger.error(f"SigNoz connection timed out at {self.api_url}: {e}", exc_info=True)
+            raise
 
     async def get_recent_errors(
         self, since: datetime, services: list[str] | None = None
@@ -691,6 +728,45 @@ class SigNozTelemetryAdapter(TelemetryPort):
             raise
         except Exception as e:
             logger.error(f"Unexpected error searching spans: {e}", exc_info=True)
+            raise
+
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in SigNoz.
+
+        Queries GET /api/v1/services which returns all services that have
+        sent telemetry. Service names are returned exactly as SigNoz reports
+        them (case-sensitive).
+
+        Returns:
+            Sorted list of service name strings.
+
+        Raises:
+            httpx.HTTPError: If the API request fails.
+        """
+        try:
+            response = await self.client.get("/api/v1/services")
+            response.raise_for_status()
+
+            data = response.json()
+
+            # SigNoz returns: {"data": [{"serviceName": "...", ...}, ...]}
+            services_data = data.get("data", [])
+            if not isinstance(services_data, list):
+                logger.warning(f"Unexpected /api/v1/services response shape: {type(services_data)}")
+                return []
+
+            names = [
+                item["serviceName"]
+                for item in services_data
+                if isinstance(item, dict) and item.get("serviceName")
+            ]
+            return sorted(set(names))
+
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to list services from SigNoz: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error listing services: {e}", exc_info=True)
             raise
 
     async def get_events_for_signature(

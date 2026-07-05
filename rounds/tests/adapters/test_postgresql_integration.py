@@ -182,6 +182,8 @@ class TestPostgreSQLTransactions:
             evidence=("Pool exhausted",),
             suggested_fix="Increase pool size",
             confidence="high",
+            diagnosed_at=datetime.now(UTC),
+            model="claude-3-haiku",
             cost_usd=0.05,
         )
 

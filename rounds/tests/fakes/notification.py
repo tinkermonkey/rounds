@@ -16,8 +16,10 @@ class FakeNotificationPort(NotificationPort):
         """Initialize with empty notification history."""
         self.reported_diagnoses: list[tuple[Signature, Diagnosis]] = []
         self.reported_summaries: list[dict[str, Any]] = []
+        self.reported_alerts: list[dict[str, Any]] = []
         self.report_call_count = 0
         self.report_summary_call_count = 0
+        self.report_alert_call_count = 0
         self.should_fail: bool = False
         self.fail_message: str = "Notification failed"
 
@@ -44,6 +46,18 @@ class FakeNotificationPort(NotificationPort):
             raise RuntimeError(self.fail_message)
 
         self.reported_summaries.append(stats)
+
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Report an operational alert.
+
+        Captures the alert for test assertions.
+        """
+        self.report_alert_call_count += 1
+
+        if self.should_fail:
+            raise RuntimeError(self.fail_message)
+
+        self.reported_alerts.append(alert)
 
     def get_last_diagnosis_report(self) -> tuple[Signature, Diagnosis] | None:
         """Get the most recent diagnosis report, if any."""
@@ -80,7 +94,9 @@ class FakeNotificationPort(NotificationPort):
         """Reset all collected notifications and state."""
         self.reported_diagnoses.clear()
         self.reported_summaries.clear()
+        self.reported_alerts.clear()
         self.report_call_count = 0
         self.report_summary_call_count = 0
+        self.report_alert_call_count = 0
         self.should_fail = False
         self.fail_message = "Notification failed"

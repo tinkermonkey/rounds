@@ -10,7 +10,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from rounds.core.models import Diagnosis, InvestigationContext, LogEntry, TraceInvestigation, TraceTree
+from rounds.core.models import (
+    Diagnosis,
+    InvestigationContext,
+    LogEntry,
+    TraceInvestigation,
+    TraceTree,
+)
 from rounds.core.ports import DiagnosisPort
 
 logger = logging.getLogger(__name__)
@@ -91,6 +97,7 @@ class OpenAIDiagnosisAdapter(DiagnosisPort):
                 diagnosed_at=datetime.now(UTC),
                 model=self.model,
                 cost_usd=estimated_cost,
+                summary=diagnosis.summary,
             )
 
             return diagnosis
@@ -186,13 +193,15 @@ Last Seen: {context.signature.last_seen}
 ## Task
 Based on the error events, traces, logs, and codebase context above, provide:
 
-1. **Root Cause**: The underlying cause of this error pattern. Be specific and cite evidence.
-2. **Evidence**: List 3-5 key pieces of evidence supporting your conclusion.
-3. **Suggested Fix**: A concrete, actionable fix that would prevent this error.
-4. **Confidence**: Rate your confidence as HIGH, MEDIUM, or LOW.
+1. **Summary**: A one-paragraph overview of findings for quick scanning.
+2. **Root Cause**: The underlying cause of this error pattern. Be specific and cite evidence.
+3. **Evidence**: List 3-5 key pieces of evidence supporting your conclusion.
+4. **Suggested Fix**: A concrete, actionable fix that would prevent this error.
+5. **Confidence**: Rate your confidence as HIGH, MEDIUM, or LOW.
 
 Respond with a JSON object in exactly this format:
 {
+  "summary": "One-paragraph overview of findings",
   "root_cause": "The root cause explanation",
   "evidence": ["evidence point 1", "evidence point 2", "evidence point 3"],
   "suggested_fix": "The suggested fix",
@@ -355,6 +364,8 @@ Respond with a JSON object in exactly this format:
                 f"Must be one of ['HIGH', 'MEDIUM', 'LOW']"
             )
 
+        summary = result.get("summary", "") or root_cause
+
         return Diagnosis(
             root_cause=root_cause,
             evidence=evidence,
@@ -363,4 +374,5 @@ Respond with a JSON object in exactly this format:
             diagnosed_at=datetime.now(UTC),
             model=self.model,
             cost_usd=0.0,  # Will be overwritten by caller
+            summary=summary,
         )

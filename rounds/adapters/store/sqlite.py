@@ -9,7 +9,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import aiosqlite
 
@@ -44,8 +43,9 @@ class SQLiteSignatureStore(SignatureStorePort):
                 conn = self._pool.pop()
             else:
                 conn = await aiosqlite.connect(str(self.db_path))
-                # Enable foreign keys
                 await conn.execute("PRAGMA foreign_keys = ON")
+                # Retry for up to 5 seconds if the database is briefly locked
+                await conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
     async def _return_connection(self, conn: aiosqlite.Connection) -> None:
@@ -58,6 +58,15 @@ class SQLiteSignatureStore(SignatureStorePort):
 
     async def close_pool(self) -> None:
         """Close all pooled connections."""
+        # Merge the WAL file back into the main database on clean shutdown.
+        if self._schema_initialized:
+            try:
+                wal_conn = await aiosqlite.connect(str(self.db_path))
+                await wal_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                await wal_conn.close()
+            except Exception:
+                logger.warning("WAL checkpoint on shutdown failed", exc_info=True)
+
         async with self._pool_lock:
             for conn in self._pool:
                 await conn.close()
@@ -81,6 +90,11 @@ class SQLiteSignatureStore(SignatureStorePort):
             # Create connection inline to avoid nested lock acquisition
             conn = await aiosqlite.connect(str(self.db_path))
             try:
+                # WAL mode allows concurrent reads during writes, preventing lock
+                # contention during long-running daemon operation.
+                await conn.execute("PRAGMA journal_mode = WAL")
+                # NORMAL sync is safe under WAL and avoids excessive fsync overhead.
+                await conn.execute("PRAGMA synchronous = NORMAL")
                 await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS signatures (
@@ -430,6 +444,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 "diagnosed_at": diagnosis.diagnosed_at.isoformat(),
                 "model": diagnosis.model,
                 "cost_usd": diagnosis.cost_usd,
+                "summary": diagnosis.summary,
             }
         )
 
@@ -445,4 +460,5 @@ class SQLiteSignatureStore(SignatureStorePort):
             diagnosed_at=datetime.fromisoformat(data["diagnosed_at"]),
             model=data["model"],
             cost_usd=data["cost_usd"],
+            summary=data.get("summary", ""),
         )

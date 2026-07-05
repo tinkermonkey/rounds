@@ -210,6 +210,21 @@ class TelemetryPort(ABC):
             Exception: If telemetry backend is unreachable.
         """
 
+    @abstractmethod
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in the telemetry backend.
+
+        Used to enumerate instrumented services for filter configuration
+        and service-to-host mapping.
+
+        Returns:
+            Sorted list of service name strings, exactly as reported by
+            the telemetry backend (case-sensitive).
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
+        """
+
     async def close(self) -> None:
         """Close connections and clean up resources.
 
@@ -470,6 +485,27 @@ class NotificationPort(ABC):
 
         Args:
             stats: Dictionary with summary statistics.
+
+        Raises:
+            Exception: If notification channel is unavailable.
+        """
+
+    @abstractmethod
+    async def report_alert(self, alert: dict[str, Any]) -> None:
+        """Send an operational alert to the notification channel.
+
+        Used for daemon health events such as investigation pipeline suspension.
+        Alert payloads are distinct from summary statistics and may be formatted
+        differently by adapters (e.g. paging vs. periodic digest).
+
+        Expected keys vary by alert type. For ``investigation_pipeline_suspended``:
+            - ``alert``: alert type identifier string
+            - ``consecutive_failures``: int count of consecutive failures
+            - ``suspended_for_seconds``: int backoff duration
+            - ``message``: human-readable description
+
+        Args:
+            alert: Dictionary describing the alert event.
 
         Raises:
             Exception: If notification channel is unavailable.
@@ -752,4 +788,17 @@ class ManagementPort(ABC):
         Raises:
             KeyError: If the trace does not exist in the telemetry backend.
             Exception: If the telemetry backend is unreachable.
+        """
+
+    @abstractmethod
+    async def list_services(self) -> list[str]:
+        """Return all service names visible in the telemetry backend.
+
+        Delegates to the underlying TelemetryPort implementation.
+
+        Returns:
+            Sorted list of service name strings (exact, case-sensitive).
+
+        Raises:
+            Exception: If telemetry backend is unreachable.
         """
