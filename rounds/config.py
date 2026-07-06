@@ -559,6 +559,34 @@ class Settings(BaseSettings):
             )
         return result
 
+    def get_effective_service_map(self) -> dict[str, tuple[str, str]]:
+        """Merge service_host_map into the agent-node service map (BA Req 5).
+
+        SERVICE_HOST_MAP entries route via the configured host acting as the
+        agent node's mcp_key, with codebase_path as the workspace. When a
+        service name appears in both SERVICE_HOST_MAP and
+        AGENT_NODE_SERVICE_MAP, the AGENT_NODE_SERVICE_MAP entry wins.
+        """
+        merged: dict[str, tuple[str, str]] = {
+            service_name: (host, self.codebase_path)
+            for service_name, host in self.get_service_host_map().items()
+        }
+        merged.update(self.get_agent_node_service_map())
+        return merged
+
+    def get_effective_agent_node_host_map(self) -> dict[str, str]:
+        """Merge service_host_map hosts into the agent node host lookup table.
+
+        SERVICE_HOST_MAP supplies the SSH-reachable host directly rather than
+        an mcp_key, so get_effective_service_map() uses each host as its own
+        mcp_key. This registers the identity mapping needed for
+        SshAgentNodeClient to resolve it, unless AGENT_NODE_HOST_MAP already
+        defines that key explicitly.
+        """
+        merged = {host: host for host in self.get_service_host_map().values()}
+        merged.update(self.get_agent_node_host_map())
+        return merged
+
 
 def load_settings(env_file: str | None = None) -> Settings:
     """Load application settings from environment.

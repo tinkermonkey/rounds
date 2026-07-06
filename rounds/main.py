@@ -848,9 +848,9 @@ async def bootstrap(
 
         service_map = {
             service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
-            for service_name, (mcp_key, workspace) in settings.get_agent_node_service_map().items()
+            for service_name, (mcp_key, workspace) in settings.get_effective_service_map().items()
         }
-        agent_node_client = SshAgentNodeClient(host_map=settings.get_agent_node_host_map())
+        agent_node_client = SshAgentNodeClient(host_map=settings.get_effective_agent_node_host_map())
         fallback = OpenAIDiagnosisAdapter(
             api_key=settings.openai_api_key,
             model=settings.openai_model,

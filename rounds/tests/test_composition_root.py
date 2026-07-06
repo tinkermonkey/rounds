@@ -246,6 +246,48 @@ class TestAdapterInstantiation:
         }
         assert adapter.budget_usd == settings.agent_node_budget_usd
 
+    def test_agent_node_service_map_overlap_with_service_host_map_takes_precedence(
+        self,
+    ) -> None:
+        """BA Req 5: AGENT_NODE_SERVICE_MAP wins when a service is in both maps.
+
+        Mirrors the wiring in main.py's composition root: the effective
+        service map merges SERVICE_HOST_MAP into AGENT_NODE_SERVICE_MAP, with
+        the agent-node entry taking precedence for overlapping service names,
+        and the shared host also becomes a resolvable mcp_key for unmapped
+        services in the merged host map.
+        """
+        from rounds.adapters.diagnosis._client import SshAgentNodeClient
+        from rounds.adapters.diagnosis.agent_node import ServiceMapping
+
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "SERVICE_HOST_MAP": '{"my-api": "t5610", "worker": "petit-cochon"}',
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+            },
+        ):
+            settings = load_settings()
+
+        service_map = {
+            service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
+            for service_name, (mcp_key, workspace) in settings.get_effective_service_map().items()
+        }
+        client = SshAgentNodeClient(host_map=settings.get_effective_agent_node_host_map())
+
+        assert service_map == {
+            "my-api": ServiceMapping(mcp_key="node1", workspace="workspace-a"),
+            "worker": ServiceMapping(mcp_key="petit-cochon", workspace=settings.codebase_path),
+        }
+        assert client._host_map == {
+            "t5610": "t5610",
+            "petit-cochon": "petit-cochon",
+            "node1": "host-a",
+        }
+
     def test_notification_adapter_instantiation(self) -> None:
         """Instantiate stdout notification adapter with configuration."""
         from rounds.adapters.notification.stdout import StdoutNotificationAdapter

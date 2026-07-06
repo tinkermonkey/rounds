@@ -151,6 +151,69 @@ class TestGetAgentNodeHostMap:
             _settings(agent_node_host_map='{"node1": 42}')
 
 
+class TestGetEffectiveServiceMap:
+    """Tests for Settings.get_effective_service_map() (BA Req 5 precedence rule)."""
+
+    def test_empty_maps_return_empty_dict(self) -> None:
+        s = _settings(service_host_map="", agent_node_service_map="")
+        assert s.get_effective_service_map() == {}
+
+    def test_service_host_map_only_uses_host_as_mcp_key_and_codebase_path_as_workspace(
+        self,
+    ) -> None:
+        s = _settings(
+            service_host_map='{"my-api": "t5610"}',
+            codebase_path="/srv/target",
+        )
+        assert s.get_effective_service_map() == {"my-api": ("t5610", "/srv/target")}
+
+    def test_agent_node_service_map_only_is_passed_through(self) -> None:
+        s = _settings(agent_node_service_map="my-api:node1:workspace-a")
+        assert s.get_effective_service_map() == {"my-api": ("node1", "workspace-a")}
+
+    def test_no_overlap_merges_both_maps(self) -> None:
+        s = _settings(
+            service_host_map='{"worker": "petit-cochon"}',
+            agent_node_service_map="my-api:node1:workspace-a",
+            codebase_path="/srv/target",
+        )
+        assert s.get_effective_service_map() == {
+            "worker": ("petit-cochon", "/srv/target"),
+            "my-api": ("node1", "workspace-a"),
+        }
+
+    def test_overlap_agent_node_service_map_takes_precedence(self) -> None:
+        s = _settings(
+            service_host_map='{"my-api": "t5610"}',
+            agent_node_service_map="my-api:node1:workspace-a",
+            codebase_path="/srv/target",
+        )
+        assert s.get_effective_service_map() == {"my-api": ("node1", "workspace-a")}
+
+
+class TestGetEffectiveAgentNodeHostMap:
+    """Tests for Settings.get_effective_agent_node_host_map()."""
+
+    def test_empty_maps_return_empty_dict(self) -> None:
+        s = _settings(service_host_map="", agent_node_host_map="")
+        assert s.get_effective_agent_node_host_map() == {}
+
+    def test_service_host_map_hosts_become_identity_entries(self) -> None:
+        s = _settings(service_host_map='{"my-api": "t5610"}')
+        assert s.get_effective_agent_node_host_map() == {"t5610": "t5610"}
+
+    def test_agent_node_host_map_entries_are_included(self) -> None:
+        s = _settings(agent_node_host_map='{"node1": "host-a"}')
+        assert s.get_effective_agent_node_host_map() == {"node1": "host-a"}
+
+    def test_explicit_agent_node_host_map_entry_overrides_identity_entry(self) -> None:
+        s = _settings(
+            service_host_map='{"my-api": "t5610"}',
+            agent_node_host_map='{"t5610": "renamed-host"}',
+        )
+        assert s.get_effective_agent_node_host_map() == {"t5610": "renamed-host"}
+
+
 class TestAgentNodeBudget:
     """Tests for Settings.agent_node_budget_usd validation."""
 
