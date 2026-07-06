@@ -10,14 +10,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .fingerprint import Fingerprinter
-from .investigator import BudgetTracker, Investigator
+from .investigator import Investigator
 from .models import (
     InvestigationResult,
     PollResult,
     Signature,
     SignatureStatus,
 )
-from .ports import PollPort, SignatureStorePort, TelemetryPort
+from .ports import BudgetTracker, PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)

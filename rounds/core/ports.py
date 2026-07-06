@@ -12,6 +12,7 @@ Port Interface Categories:
    - DiagnosisPort: LLM-powered root cause analysis
    - UsageQueryPort: Query actual diagnosis cost from OTLP usage data
    - NotificationPort: Report findings to developers
+   - BudgetTracker: Track accumulated spend per round step
 
 2. **Driving Ports** (adapters/external systems call into core)
    - PollPort: Entry point for poll and investigation cycles
@@ -21,7 +22,7 @@ Port Interface Categories:
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from .models import (
     Diagnosis,
@@ -31,6 +32,7 @@ from .models import (
     LogEntry,
     PartialResultsInfo,
     PollResult,
+    RoundStep,
     Signature,
     SignatureDetails,
     SignatureStatus,
@@ -551,6 +553,19 @@ class NotificationPort(ABC):
             Exception: If resource cleanup fails.
         """
         pass
+
+
+class BudgetTracker(Protocol):
+    """Protocol for tracking accumulated spend against a budget.
+
+    Costs are attributed per RoundStep so spend can be broken down across
+    the full poll -> fingerprint -> diagnose -> confirm cycle, not just the
+    diagnose step where LLM calls currently occur.
+    """
+
+    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
+        """Record a cost incurred by a rounds step towards the daily budget."""
+        ...
 
 
 # ============================================================================

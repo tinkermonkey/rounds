@@ -6,26 +6,12 @@ external diagnosis services.
 """
 
 import logging
-from typing import Protocol
 
-from .models import Diagnosis, InvestigationContext, RoundStep, Signature
-from .ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
+from .models import Diagnosis, InvestigationContext, Signature
+from .ports import BudgetTracker, DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
-
-
-class BudgetTracker(Protocol):
-    """Protocol for budget tracking (used by DaemonScheduler).
-
-    Costs are attributed per RoundStep so spend can be broken down across
-    the full poll -> fingerprint -> diagnose -> confirm cycle, not just the
-    diagnose step where LLM calls currently occur.
-    """
-
-    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
-        """Record a cost incurred by a rounds step towards the daily budget."""
-        ...
 
 
 class Investigator:

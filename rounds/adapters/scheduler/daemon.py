@@ -42,7 +42,7 @@ class DaemonScheduler:
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
-        self._cost_by_step: dict[str, float] = defaultdict(float)
+        self._cost_by_step: dict[RoundStep, float] = defaultdict(float)
         self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0
@@ -306,7 +306,7 @@ class DaemonScheduler:
                 )
 
     @property
-    def cost_by_step(self) -> dict[str, float]:
+    def cost_by_step(self) -> dict[RoundStep, float]:
         """Read-only snapshot of today's accumulated cost, broken down by RoundStep."""
         return dict(self._cost_by_step)
 
