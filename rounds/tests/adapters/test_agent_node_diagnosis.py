@@ -9,12 +9,18 @@ from rounds.adapters.diagnosis.agent_node import AgentNodeDiagnosisAdapter, Serv
 from rounds.core.models import (
     ErrorEvent,
     InvestigationContext,
+    LogEntry,
     Severity,
     Signature,
     SignatureStatus,
+    SpanNode,
     StackFrame,
+    TraceInvestigation,
+    TraceTree,
 )
+from rounds.core.ports import DiagnosisPort
 from rounds.tests.fakes.diagnosis import FakeDiagnosisPort
+from rounds.tests.fakes.usage import FakeUsageQueryPort
 
 
 class FakeAgentNodeClient:
@@ -31,6 +37,42 @@ class FakeAgentNodeClient:
             raise self.error
         assert self.response is not None
         return self.response
+
+
+class NotImplementedFallback(DiagnosisPort):
+    """Fallback DiagnosisPort whose investigate_trace() always raises
+    NotImplementedError, mirroring OpenAIDiagnosisAdapter's real behavior."""
+
+    async def diagnose(self, context: InvestigationContext) -> Any:
+        raise NotImplementedError
+
+    async def estimate_cost(self, context: InvestigationContext) -> float:
+        return 0.0
+
+    async def investigate_trace(
+        self,
+        trace: TraceTree,
+        codebase_path: str,
+        correlated_logs: tuple[LogEntry, ...] = (),
+    ) -> TraceInvestigation:
+        raise NotImplementedError("OpenAI adapter does not support trace investigation.")
+
+
+def _trace(trace_id: str = "trace-xyz", service: str = "mapped-service") -> TraceTree:
+    return TraceTree(
+        trace_id=trace_id,
+        root_span=SpanNode(
+            span_id="span-1",
+            parent_id=None,
+            service=service,
+            operation="handle_request",
+            duration_ms=10.0,
+            status="error",
+            attributes={},
+            events=(),
+        ),
+        error_spans=(),
+    )
 
 
 def _investigation_context(service: str = "mapped-service") -> InvestigationContext:
@@ -284,32 +326,226 @@ class TestEstimateCost:
 
 
 class TestInvestigateTrace:
-    """Tests for investigate_trace() delegation to the fallback adapter."""
+    """Tests for investigate_trace() routing by the trace's root service."""
 
     @pytest.mark.asyncio
-    async def test_investigate_trace_delegates_to_fallback(
+    async def test_mapped_service_invokes_agent_node_client(
         self,
         adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
         fallback: FakeDiagnosisPort,
     ) -> None:
-        from rounds.core.models import SpanNode, TraceTree
+        client.response = {
+            "summary": "Handles an incoming API request end-to-end",
+            "code_flow": [
+                "Step 1: mapped-service handler.py:42 — receives request",
+            ],
+            "services_involved": ["mapped-service"],
+            "key_findings": ["No notable issues found"],
+        }
 
-        trace = TraceTree(
-            trace_id="trace-xyz",
-            root_span=SpanNode(
-                span_id="span-1",
-                parent_id=None,
-                service="mapped-service",
-                operation="handle_request",
-                duration_ms=10.0,
-                status="error",
-                attributes={},
-                events=(),
-            ),
-            error_spans=(),
+        trace = _trace()
+        result = await adapter.investigate_trace(trace, codebase_path="/workspace/target")
+
+        assert result.trace_id == "trace-xyz"
+        assert result.model == "agent-node:node1"
+        assert result.summary == "Handles an incoming API request end-to-end"
+        assert result.cost_usd == 0.0
+        assert len(client.calls) == 1
+
+        mcp_key, workspace, prompt = client.calls[0]
+        assert mcp_key == "node1"
+        assert workspace == "/workspace/target"
+        assert "Workspace: /workspace/target" in prompt
+        assert "Trace ID: trace-xyz" in prompt
+
+    @pytest.mark.asyncio
+    async def test_unmapped_service_delegates_to_fallback(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        trace = _trace(service="unmapped-service")
+
+        result = await adapter.investigate_trace(trace, codebase_path="/workspace/target")
+
+        assert len(client.calls) == 0
+        assert result.model == "fake-model"
+
+    @pytest.mark.asyncio
+    async def test_unmapped_service_fallback_not_implemented_returns_minimal(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+    ) -> None:
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=NotImplementedFallback(),
+            usage_query=None,
+            budget_usd=2.0,
         )
+        trace = _trace(service="unmapped-service")
 
         result = await adapter.investigate_trace(trace, codebase_path="/workspace/target")
 
         assert result.trace_id == "trace-xyz"
-        assert result.model == "fake-model"
+        assert result.summary == "Trace investigation unavailable for unmapped service"
+        assert result.code_flow == ()
+        assert result.services_involved == ()
+        assert result.key_findings == ()
+        assert result.cost_usd == 0.0
+
+    @pytest.mark.asyncio
+    async def test_estimated_cost_exceeding_budget_raises_before_invoking_client(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=None,
+            budget_usd=0.01,
+        )
+        trace = _trace()
+
+        with pytest.raises(ValueError, match="exceeds budget"):
+            await adapter.investigate_trace(trace, codebase_path="/workspace/target")
+
+        assert len(client.calls) == 0
+
+
+class TestCostResolution:
+    """Tests for _resolve_cost() wiring into diagnose() and investigate_trace()."""
+
+    @pytest.mark.asyncio
+    async def test_diagnose_cost_resolved_via_usage_query(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        usage_query = FakeUsageQueryPort()
+        usage_query.set_cost("trace-001", 1.23)
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=2.0,
+        )
+        client.response = {
+            "summary": "Connection pool exhausted",
+            "root_cause": "Pool size hardcoded too low",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Increase pool size",
+            "confidence": "HIGH",
+        }
+
+        diagnosis = await adapter.diagnose(_investigation_context())
+
+        assert diagnosis.cost_usd == 1.23
+        assert usage_query.queries == ["trace-001"]
+
+    @pytest.mark.asyncio
+    async def test_diagnose_cost_defaults_to_zero_when_no_usage_data_found(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        usage_query = FakeUsageQueryPort()  # no cost configured for any trace
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=2.0,
+        )
+        client.response = {
+            "summary": "Connection pool exhausted",
+            "root_cause": "Pool size hardcoded too low",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Increase pool size",
+            "confidence": "HIGH",
+        }
+
+        diagnosis = await adapter.diagnose(_investigation_context())
+
+        assert diagnosis.cost_usd == 0.0
+
+    @pytest.mark.asyncio
+    async def test_diagnose_cost_query_failure_does_not_block_diagnosis(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        usage_query = FakeUsageQueryPort()
+        usage_query.should_fail = True
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=2.0,
+        )
+        client.response = {
+            "summary": "Connection pool exhausted",
+            "root_cause": "Pool size hardcoded too low",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Increase pool size",
+            "confidence": "HIGH",
+        }
+
+        diagnosis = await adapter.diagnose(_investigation_context())
+
+        assert diagnosis.cost_usd == 0.0
+
+    @pytest.mark.asyncio
+    async def test_investigate_trace_cost_resolved_via_usage_query(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        usage_query = FakeUsageQueryPort()
+        usage_query.set_cost("trace-xyz", 0.42)
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=2.0,
+        )
+        client.response = {
+            "summary": "Handles an incoming API request end-to-end",
+            "code_flow": ["Step 1: mapped-service — receives request"],
+            "services_involved": ["mapped-service"],
+            "key_findings": [],
+        }
+
+        result = await adapter.investigate_trace(_trace(), codebase_path="/workspace/target")
+
+        assert result.cost_usd == 0.42
+        assert usage_query.queries == ["trace-xyz"]
+
+    @pytest.mark.asyncio
+    async def test_investigate_trace_cost_defaults_to_zero_when_usage_query_none(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        client.response = {
+            "summary": "Handles an incoming API request end-to-end",
+            "code_flow": ["Step 1: mapped-service — receives request"],
+            "services_involved": ["mapped-service"],
+            "key_findings": [],
+        }
+
+        result = await adapter.investigate_trace(_trace(), codebase_path="/workspace/target")
+
+        assert result.cost_usd == 0.0

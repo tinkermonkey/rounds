@@ -8,11 +8,15 @@ unmapped services fall back to another DiagnosisPort implementation
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 from rounds.adapters.diagnosis._client import AgentNodeClient
-from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
+from rounds.adapters.diagnosis._parsing import (
+    parse_diagnosis_result,
+    parse_trace_investigation_result,
+)
 from rounds.core.models import (
     Diagnosis,
     InvestigationContext,
@@ -56,7 +60,8 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             client: Transport used to invoke diagnosis on a remote agent node.
             fallback: DiagnosisPort used for services absent from service_map.
             usage_query: Optional port for resolving actual OTLP-based cost.
-                Unused until cost resolution is wired up (deferred).
+                When None, cost_usd on returned Diagnosis/TraceInvestigation
+                objects defaults to 0.0 rather than an estimate.
             budget_usd: Budget per diagnosis in USD, used for pre-flight gating.
         """
         self._service_map = service_map
@@ -88,7 +93,9 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
 
             prompt = self._build_diagnosis_prompt(context, mapping.workspace)
             raw = await self._client.invoke(mapping.mcp_key, mapping.workspace, prompt)
-            return parse_diagnosis_result(raw, model=f"agent-node:{mapping.mcp_key}")
+            diagnosis = parse_diagnosis_result(raw, model=f"agent-node:{mapping.mcp_key}")
+            cost_usd = await self._resolve_cost(self._context_trace_id(context))
+            return replace(diagnosis, cost_usd=cost_usd)
         except (ValueError, TimeoutError, RuntimeError) as e:
             logger.error(
                 f"Agent node diagnosis failed for service={context.signature.service!r} "
@@ -100,8 +107,9 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
     async def estimate_cost(self, context: InvestigationContext) -> float:
         """Heuristic pre-flight budget estimate (same formula pattern as claude_code.py).
 
-        Note: Returns a heuristic estimate, not an OTLP-resolved cost. Actual
-        cost resolution via usage_query is deferred to a later phase.
+        Note: Used only for pre-flight budget gating before invoking the
+        agent node. The cost_usd on the returned Diagnosis is resolved
+        separately from OTLP usage data via _resolve_cost().
         """
         base_cost = 0.30
         context_size = (
@@ -118,12 +126,185 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
         codebase_path: str,
         correlated_logs: tuple[LogEntry, ...] = (),
     ) -> TraceInvestigation:
-        """Delegate trace investigation to the fallback adapter.
+        """Explain a trace's code flow via the agent node owning its root service.
 
-        Agent-node-delegated trace investigation is deferred to a later phase;
-        for now this defers entirely to the fallback DiagnosisPort.
+        Routes by the trace's root span service (there is no signature to key
+        off in this path, unlike diagnose()). Services absent from the service
+        map fall back to the fallback DiagnosisPort; if the fallback does not
+        support trace investigation (raises NotImplementedError), a minimal
+        TraceInvestigation is returned instead of propagating the error.
+
+        Raises:
+            ValueError: If the estimated cost exceeds budget_usd, or if the
+                agent node's response contains no parseable JSON or is missing
+                required fields.
+            TimeoutError: If the agent node invocation times out.
+            RuntimeError: If the agent node invocation fails.
         """
-        return await self._fallback.investigate_trace(trace, codebase_path, correlated_logs)
+        root_service = self._extract_root_service(trace)
+        mapping = self._service_map.get(root_service)
+        if mapping is None:
+            try:
+                return await self._fallback.investigate_trace(
+                    trace, codebase_path, correlated_logs
+                )
+            except NotImplementedError:
+                cost_usd = await self._resolve_cost(trace.trace_id)
+                return TraceInvestigation(
+                    trace_id=trace.trace_id,
+                    summary="Trace investigation unavailable for unmapped service",
+                    code_flow=(),
+                    services_involved=(),
+                    key_findings=(),
+                    model="agent-node:unmapped",
+                    cost_usd=cost_usd,
+                    investigated_at=datetime.now(UTC),
+                )
+
+        try:
+            estimated_cost = self._estimate_trace_cost(trace, correlated_logs)
+            if estimated_cost > self.budget_usd:
+                raise ValueError(
+                    f"Investigation cost ${estimated_cost:.2f} exceeds budget ${self.budget_usd:.2f}"
+                )
+
+            prompt = self._build_trace_investigation_prompt(
+                trace, correlated_logs, mapping.workspace
+            )
+            raw = await self._client.invoke(mapping.mcp_key, mapping.workspace, prompt)
+            investigation = parse_trace_investigation_result(
+                raw, trace.trace_id, model=f"agent-node:{mapping.mcp_key}", cost_usd=0.0
+            )
+            cost_usd = await self._resolve_cost(trace.trace_id)
+            return replace(investigation, cost_usd=cost_usd)
+        except (ValueError, TimeoutError, RuntimeError) as e:
+            logger.error(
+                f"Agent node trace investigation failed for trace_id={trace.trace_id!r} "
+                f"mcp_key={mapping.mcp_key!r}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    def _extract_root_service(self, trace: TraceTree) -> str:
+        """Determine the owning service from a trace's root span."""
+        return trace.root_span.service
+
+    def _context_trace_id(self, context: InvestigationContext) -> str:
+        """Best-effort trace ID for correlating a diagnosis with OTLP usage data."""
+        if context.trace_data:
+            return context.trace_data[0].trace_id
+        if context.recent_events:
+            return context.recent_events[0].trace_id
+        return ""
+
+    async def _resolve_cost(self, trace_id: str) -> float:
+        """Resolve the actual diagnosis cost from OTLP usage data via usage_query.
+
+        Returns 0.0 when usage_query is not configured, no trace ID is
+        available, no usage data is found, or the query fails — cost
+        resolution never blocks diagnosis or investigation.
+        """
+        if self._usage_query is None or not trace_id:
+            return 0.0
+        try:
+            return await self._usage_query.query_diagnosis_cost(trace_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve OTLP usage cost for trace_id={trace_id!r}: {e}",
+                exc_info=True,
+            )
+            return 0.0
+
+    def _estimate_trace_cost(
+        self, trace: TraceTree, correlated_logs: tuple[LogEntry, ...]
+    ) -> float:
+        """Heuristic pre-flight budget estimate for trace investigation."""
+        base_cost = 0.30
+        context_size = len(correlated_logs)
+        queue = [trace.root_span]
+        while queue:
+            node = queue.pop()
+            context_size += 1
+            queue.extend(node.children)
+        additional_cost = (context_size / 10) * 0.01
+        return base_cost + additional_cost
+
+    def _build_trace_investigation_prompt(
+        self,
+        trace: TraceTree,
+        correlated_logs: tuple[LogEntry, ...],
+        workspace: str,
+    ) -> str:
+        """Build a trace investigation prompt for the agent node.
+
+        Follows the structure of ClaudeCodeDiagnosisAdapter's trace
+        investigation prompt, but references `workspace` instead of
+        `codebase_path` since the agent node's source is already mounted.
+        """
+        prompt = f"""You are an expert software engineer explaining how a distributed request flows through a codebase.
+Workspace: {workspace}
+
+Use your file reading tools (Read, Glob, Grep) to find and read the source files
+referenced in the span service names and operation names below.
+Read the actual code before writing your explanation.
+
+---
+
+## Trace ID: {trace.trace_id}
+
+## Span Tree
+"""
+        prompt += self._format_span_tree(trace.root_span)
+
+        if trace.error_spans:
+            prompt += "\n## Error Spans\n"
+            for span in trace.error_spans:
+                prompt += f"- [{span.service}] {span.operation} ({span.duration_ms:.1f}ms)\n"
+                relevant_attrs = {
+                    k: v
+                    for k, v in span.attributes.items()
+                    if any(
+                        kw in k.lower()
+                        for kw in ("error", "exception", "message", "status", "http", "db", "rpc")
+                    )
+                }
+                for k, v in list(relevant_attrs.items())[:8]:
+                    prompt += f"  {k}: {v}\n"
+
+        if correlated_logs:
+            prompt += f"\n## Correlated Logs ({len(correlated_logs)} entries)\n"
+            for log in correlated_logs[:15]:
+                prompt += f"[{log.severity.value}] {log.timestamp}  {log.body[:200]}\n"
+
+        prompt += f"""
+---
+
+## Your Task
+
+1. Use Glob/Grep to locate the source files for the services and operations listed in the span tree.
+2. Read the relevant handlers, functions, and middleware that appear in the trace.
+3. Trace the request from the root span through to the leaf spans, citing specific file:line references.
+
+## Response Format
+
+Respond with a JSON object in exactly this format:
+{{
+  "summary": "One paragraph explaining what this request does end-to-end",
+  "code_flow": [
+    "Step 1: <service> <file:line> — description of what happens here",
+    "Step 2: ...",
+    "Step 3: ..."
+  ],
+  "services_involved": ["service-a", "service-b"],
+  "key_findings": [
+    "Notable observation about the code or request pattern",
+    "Performance note or architectural observation"
+  ]
+}}
+
+Workspace is at: {workspace}
+"""
+        return prompt
 
     def _build_diagnosis_prompt(self, context: InvestigationContext, workspace: str) -> str:
         """Build a diagnosis prompt for the agent node.
