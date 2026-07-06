@@ -422,9 +422,13 @@ class Settings(BaseSettings):
         """Ensure backend-specific API keys are set when required.
 
         Cross-field validation for backend-specific configuration:
+        - Claude Code backend requires anthropic_api_key or claude_code_oauth_token
         - OpenAI backend requires openai_api_key
+        - Agent node backend requires agent_node_service_map, agent_node_host_map,
+          and openai_api_key (used as fallback for unmapped services)
         - GitHub notification requires github_token and github_repo
         - PostgreSQL store requires store_postgresql_url
+        - Elasticsearch telemetry warns when no credentials are configured
         """
         # Validate diagnosis backend dependencies
         if self.diagnosis_backend == "claude_code":
