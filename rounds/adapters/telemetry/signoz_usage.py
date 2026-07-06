@@ -165,6 +165,8 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
                 if not isinstance(items, list):
                     raise TypeError(f"expected 'list' to be a list, got {type(items).__name__}")
                 for item in items:
+                    if not isinstance(item, dict):
+                        raise TypeError(f"expected list item to be an object, got {type(item).__name__}")
                     cost = self._parse_cost(item)
                     if cost is not None:
                         total_cost += cost
@@ -196,6 +198,8 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
         """
         try:
             log_data = item.get("data", {})
+            if not isinstance(log_data, dict):
+                return None
             for attr_key in ("attributes_number", "attributes_string"):
                 attrs = log_data.get(attr_key)
                 if isinstance(attrs, dict) and "cost_usd" in attrs:

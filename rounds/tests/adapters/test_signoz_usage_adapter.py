@@ -161,9 +161,46 @@ class TestQueryDiagnosisCost:
     @pytest.mark.asyncio
     async def test_unexpected_response_shape_returns_zero(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            # A JSON array instead of the expected object makes `.get()` raise
-            # AttributeError - this should still resolve to 0.0, not raise.
+            # A JSON array instead of the expected object triggers an
+            # isinstance check that raises TypeError - this should still
+            # resolve to 0.0, not raise.
             return httpx.Response(200, json=["unexpected", "shape"])
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
+        assert cost == 0.0
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_non_dict_list_item_returns_zero(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # A "list" array containing a non-object entry (e.g. a bare
+            # string) triggers an isinstance check that raises TypeError
+            # instead of an AttributeError from calling .get() on it.
+            return httpx.Response(
+                200,
+                json={"data": {"result": [{"list": ["not-an-object"]}]}},
+            )
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
+        assert cost == 0.0
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_non_dict_item_data_returns_zero(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # A list item whose "data" field isn't an object should be
+            # skipped by _parse_cost (returns None) rather than raising
+            # AttributeError from calling .get() on it.
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "result": [{"list": [{"timestamp": "2024-01-01T00:00:00Z", "data": "not-an-object"}]}]
+                    }
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
