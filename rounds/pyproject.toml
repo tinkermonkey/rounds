@@ -74,6 +74,10 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_no_return = true
 
+[[tool.mypy.overrides]]
+module = "openai"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
