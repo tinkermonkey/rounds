@@ -180,7 +180,8 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             except NotImplementedError as e:
                 logger.error(
                     f"Fallback diagnosis adapter does not support trace investigation "
-                    f"for unmapped service={root_service!r} trace_id={trace.trace_id!r}."
+                    f"for unmapped service={root_service!r} trace_id={trace.trace_id!r}.",
+                    exc_info=True,
                 )
                 raise ValueError(
                     f"Cannot investigate trace {trace.trace_id!r}: service "
@@ -260,7 +261,8 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             return 0.0
         try:
             return await self._usage_query.query_diagnosis_cost(trace_id)
-        except (TimeoutError, ConnectionError, OSError) as e:
+        except OSError as e:
+            # Covers TimeoutError and ConnectionError, both OSError subclasses.
             logger.warning(
                 f"Failed to resolve OTLP usage cost for trace_id={trace_id!r}: {e}",
                 exc_info=True,
