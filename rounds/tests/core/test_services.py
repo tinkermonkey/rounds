@@ -999,31 +999,7 @@ class TestDiagnosisParsingValidation:
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if root_cause is missing."""
-        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-
-        adapter = ClaudeCodeDiagnosisAdapter()
-
-        # Create a mock context (not used in parsing)
-        sig = Signature(
-            id="sig",
-            fingerprint="fp",
-            error_type="Error",
-            service="service",
-            message_template="msg",
-            stack_hash="hash",
-            first_seen=datetime.now(UTC),
-            last_seen=datetime.now(UTC),
-            occurrence_count=1,
-            status=SignatureStatus.NEW,
-        )
-        context = InvestigationContext(
-            signature=sig,
-            recent_events=(),
-            trace_data=(),
-            related_logs=(),
-            codebase_path="/app",
-            historical_context=(),
-        )
+        from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
 
         # Result missing root_cause
         result = {
@@ -1033,36 +1009,13 @@ class TestDiagnosisParsingValidation:
         }
 
         with pytest.raises(ValueError, match="root_cause"):
-            adapter._parse_diagnosis_result(result, context)
+            parse_diagnosis_result(result, model="claude-opus")
 
     def test_diagnosis_parser_requires_valid_confidence(
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if confidence is invalid."""
-        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-
-        adapter = ClaudeCodeDiagnosisAdapter()
-
-        sig = Signature(
-            id="sig",
-            fingerprint="fp",
-            error_type="Error",
-            service="service",
-            message_template="msg",
-            stack_hash="hash",
-            first_seen=datetime.now(UTC),
-            last_seen=datetime.now(UTC),
-            occurrence_count=1,
-            status=SignatureStatus.NEW,
-        )
-        context = InvestigationContext(
-            signature=sig,
-            recent_events=(),
-            trace_data=(),
-            related_logs=(),
-            codebase_path="/app",
-            historical_context=(),
-        )
+        from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
 
         # Result with invalid confidence
         result = {
@@ -1073,7 +1026,7 @@ class TestDiagnosisParsingValidation:
         }
 
         with pytest.raises(ValueError, match="Invalid confidence"):
-            adapter._parse_diagnosis_result(result, context)
+            parse_diagnosis_result(result, model="claude-opus")
 
 
 @pytest.mark.asyncio
