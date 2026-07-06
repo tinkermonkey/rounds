@@ -145,14 +145,38 @@ class TestDiagnoseMappedService:
         assert "--add-dir" not in prompt
 
     @pytest.mark.asyncio
-    async def test_malformed_json_response_raises_without_crashing_pipeline(
+    async def test_client_error_propagates_with_logging(
         self,
         adapter: AgentNodeDiagnosisAdapter,
         client: FakeAgentNodeClient,
     ) -> None:
+        """A ValueError raised by the client itself (e.g. no parseable JSON found)
+        propagates through the adapter unchanged."""
         client.error = ValueError("Agent node 'worker-host' returned no parseable JSON.")
 
         with pytest.raises(ValueError, match="no parseable JSON"):
+            await adapter.diagnose(_investigation_context())
+
+    @pytest.mark.asyncio
+    async def test_client_timeout_error_propagates(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        client.error = TimeoutError("Agent node invocation timed out after 120 seconds")
+
+        with pytest.raises(TimeoutError, match="timed out"):
+            await adapter.diagnose(_investigation_context())
+
+    @pytest.mark.asyncio
+    async def test_client_runtime_error_propagates(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        client.error = RuntimeError("Agent node process exited with non-zero status")
+
+        with pytest.raises(RuntimeError, match="non-zero status"):
             await adapter.diagnose(_investigation_context())
 
     @pytest.mark.asyncio
@@ -165,6 +189,46 @@ class TestDiagnoseMappedService:
 
         with pytest.raises(ValueError, match="root_cause"):
             await adapter.diagnose(_investigation_context())
+
+    @pytest.mark.asyncio
+    async def test_response_with_wrong_evidence_type_raises_value_error(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        """A response that is valid JSON but has the wrong shape (evidence as a
+        string instead of a list) is rejected by parse_diagnosis_result rather
+        than crashing the pipeline."""
+        client.response = {
+            "summary": "bad shape",
+            "root_cause": "something failed",
+            "evidence": "not-a-list",
+            "suggested_fix": "fix it",
+            "confidence": "LOW",
+        }
+
+        with pytest.raises(ValueError, match="'evidence' must be a list"):
+            await adapter.diagnose(_investigation_context())
+
+    @pytest.mark.asyncio
+    async def test_estimated_cost_exceeding_budget_raises_before_invoking_client(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=None,
+            budget_usd=0.01,
+        )
+
+        with pytest.raises(ValueError, match="exceeds budget"):
+            await adapter.diagnose(_investigation_context())
+
+        assert len(client.calls) == 0
 
 
 class TestDiagnoseFallback:

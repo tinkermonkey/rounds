@@ -8,7 +8,8 @@ unmapped services fall back to another DiagnosisPort implementation
 """
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from typing import Any
 
 from rounds.adapters.diagnosis._client import AgentNodeClient
 from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
@@ -68,8 +69,9 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
         """Diagnose via the owning agent node, or delegate to the fallback adapter.
 
         Raises:
-            ValueError: If the agent node's response contains no parseable JSON
-                or is missing required diagnosis fields.
+            ValueError: If the estimated cost exceeds budget_usd, or if the
+                agent node's response contains no parseable JSON or is missing
+                required diagnosis fields.
             TimeoutError: If the agent node invocation times out.
             RuntimeError: If the agent node invocation fails.
         """
@@ -78,10 +80,15 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             return await self._fallback.diagnose(context)
 
         try:
+            estimated_cost = await self.estimate_cost(context)
+            if estimated_cost > self.budget_usd:
+                raise ValueError(
+                    f"Diagnosis cost ${estimated_cost:.2f} exceeds budget ${self.budget_usd:.2f}"
+                )
+
             prompt = self._build_diagnosis_prompt(context, mapping.workspace)
             raw = await self._client.invoke(mapping.mcp_key, mapping.workspace, prompt)
-            diagnosis = parse_diagnosis_result(raw, model=f"agent-node:{mapping.mcp_key}")
-            return replace(diagnosis, cost_usd=0.0)
+            return parse_diagnosis_result(raw, model=f"agent-node:{mapping.mcp_key}")
         except (ValueError, TimeoutError, RuntimeError) as e:
             logger.error(
                 f"Agent node diagnosis failed for service={context.signature.service!r} "
@@ -157,15 +164,34 @@ Occurrences: {sig.occurrence_count} (first: {sig.first_seen}, last: {sig.last_se
 
         if context.trace_data:
             prompt += f"\n## Distributed Traces ({len(context.trace_data)} traces)\n"
+            prompt += (
+                "Each trace shows the complete call chain. "
+                "Spans marked [ERROR] are where failures occurred.\n"
+            )
             for trace in context.trace_data[:3]:
                 prompt += f"\n### Trace {trace.trace_id}\n"
+                if trace.root_span:
+                    prompt += self._format_span_tree(trace.root_span)
                 if trace.error_spans:
-                    prompt += "**Error span details:**\n"
+                    prompt += "\n**Error span details:**\n"
                     for span in trace.error_spans[:5]:
                         prompt += (
                             f"- {span.service}: {span.operation} "
                             f"({span.duration_ms:.1f}ms)\n"
                         )
+                        relevant_attrs = {
+                            k: v
+                            for k, v in span.attributes.items()
+                            if any(
+                                kw in k.lower()
+                                for kw in (
+                                    "error", "exception", "message",
+                                    "status", "http", "db", "rpc",
+                                )
+                            )
+                        }
+                        for k, v in list(relevant_attrs.items())[:8]:
+                            prompt += f"  {k}: {v}\n"
 
         if context.related_logs:
             prompt += f"\n## Correlated Logs ({len(context.related_logs)} entries)\n"
@@ -211,3 +237,23 @@ After reading the relevant source files, respond with a JSON object in exactly t
 Workspace is at: {workspace}
 """
         return prompt
+
+    def _format_span_tree(self, node: "Any", depth: int = 0) -> str:
+        """Recursively format a SpanNode tree into readable text.
+
+        Args:
+            node: SpanNode to format.
+            depth: Current indentation depth.
+
+        Returns:
+            Multi-line string showing the span hierarchy.
+        """
+        indent = "  " * depth
+        status = " [ERROR]" if node.status == "error" else ""
+        line = (
+            f"{indent}• {node.service}: {node.operation}"
+            f" ({node.duration_ms:.1f}ms){status}\n"
+        )
+        for child in node.children:
+            line += self._format_span_tree(child, depth + 1)
+        return line
