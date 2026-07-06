@@ -14,6 +14,7 @@ class FakeUsageQueryPort(UsageQueryPort):
         self.costs: dict[str, float] = {}
         self.queries: list[str] = []
         self.should_fail: bool = False
+        self.should_raise_bug: bool = False
 
     def set_cost(self, trace_id: str, cost_usd: float) -> None:
         """Configure the cost to return for a specific trace ID."""
@@ -23,5 +24,7 @@ class FakeUsageQueryPort(UsageQueryPort):
         """Return the configured cost for trace_id, or 0.0 if unset."""
         self.queries.append(trace_id)
         if self.should_fail:
-            raise RuntimeError("Usage query failed")
+            raise OSError("Usage query failed")
+        if self.should_raise_bug:
+            raise RuntimeError("Programming bug in usage query implementation")
         return self.costs.get(trace_id, 0.0)

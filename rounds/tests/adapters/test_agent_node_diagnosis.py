@@ -467,7 +467,7 @@ class TestInvestigateTrace:
         assert result.model == "fake-model"
 
     @pytest.mark.asyncio
-    async def test_unmapped_service_fallback_not_implemented_returns_minimal(
+    async def test_unmapped_service_fallback_not_implemented_raises(
         self,
         service_map: dict[str, ServiceMapping],
         client: FakeAgentNodeClient,
@@ -481,14 +481,8 @@ class TestInvestigateTrace:
         )
         trace = _trace(service="unmapped-service")
 
-        result = await adapter.investigate_trace(trace, codebase_path="/workspace/target")
-
-        assert result.trace_id == "trace-xyz"
-        assert result.summary == "Trace investigation unavailable for unmapped service"
-        assert result.code_flow == ()
-        assert result.services_involved == ()
-        assert result.key_findings == ()
-        assert result.cost_usd == 0.0
+        with pytest.raises(ValueError, match="unmapped-service"):
+            await adapter.investigate_trace(trace, codebase_path="/workspace/target")
 
     @pytest.mark.asyncio
     async def test_estimated_cost_exceeding_budget_raises_before_invoking_client(
@@ -658,3 +652,33 @@ class TestCostResolution:
         result = await adapter.investigate_trace(_trace(), codebase_path="/workspace/target")
 
         assert result.cost_usd == 0.0
+
+    @pytest.mark.asyncio
+    async def test_diagnose_cost_query_bug_is_not_swallowed(
+        self,
+        service_map: dict[str, ServiceMapping],
+        client: FakeAgentNodeClient,
+        fallback: FakeDiagnosisPort,
+    ) -> None:
+        """A RuntimeError from usage_query (e.g. a programming bug in the
+        UsageQueryPort implementation) must propagate rather than being
+        silently converted to a $0.00 cost."""
+        usage_query = FakeUsageQueryPort()
+        usage_query.should_raise_bug = True
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=2.0,
+        )
+        client.response = {
+            "summary": "Connection pool exhausted",
+            "root_cause": "Pool size hardcoded too low",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Increase pool size",
+            "confidence": "HIGH",
+        }
+
+        with pytest.raises(RuntimeError, match="Programming bug"):
+            await adapter.diagnose(_investigation_context())

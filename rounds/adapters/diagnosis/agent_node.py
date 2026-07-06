@@ -9,7 +9,6 @@ unmapped services fall back to another DiagnosisPort implementation
 
 import logging
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from typing import Any
 
 from rounds.adapters.diagnosis._client import AgentNodeClient
@@ -159,13 +158,15 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
         Routes by the trace's root span service (there is no signature to key
         off in this path, unlike diagnose()). Services absent from the service
         map fall back to the fallback DiagnosisPort; if the fallback does not
-        support trace investigation (raises NotImplementedError), a minimal
-        TraceInvestigation is returned instead of propagating the error.
+        support trace investigation (raises NotImplementedError), a ValueError
+        is raised rather than returning a stub result, since a stub would be
+        indistinguishable from a genuine investigation to downstream callers.
 
         Raises:
-            ValueError: If the estimated cost exceeds budget_usd, or if the
+            ValueError: If the estimated cost exceeds budget_usd, if the
                 agent node's response contains no parseable JSON or is missing
-                required fields.
+                required fields, or if the service is unmapped and the
+                fallback adapter does not support trace investigation.
             TimeoutError: If the agent node invocation times out.
             RuntimeError: If the agent node invocation fails.
         """
@@ -176,23 +177,19 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
                 return await self._fallback.investigate_trace(
                     trace, codebase_path, correlated_logs
                 )
-            except NotImplementedError:
-                logger.warning(
+            except NotImplementedError as e:
+                logger.error(
                     f"Fallback diagnosis adapter does not support trace investigation "
-                    f"for unmapped service={root_service!r} trace_id={trace.trace_id!r}; "
-                    "returning a stub TraceInvestigation with empty fields."
+                    f"for unmapped service={root_service!r} trace_id={trace.trace_id!r}."
                 )
-                cost_usd = await self._resolve_cost(trace.trace_id)
-                return TraceInvestigation(
-                    trace_id=trace.trace_id,
-                    summary="Trace investigation unavailable for unmapped service",
-                    code_flow=(),
-                    services_involved=(),
-                    key_findings=(),
-                    model="agent-node:unmapped",
-                    cost_usd=cost_usd,
-                    investigated_at=datetime.now(UTC),
-                )
+                raise ValueError(
+                    f"Cannot investigate trace {trace.trace_id!r}: service "
+                    f"{root_service!r} is not present in the agent node service map, "
+                    "and the configured fallback diagnosis adapter does not support "
+                    "trace investigation. Add this service to the agent node service "
+                    "map, or configure a fallback adapter that implements "
+                    "investigate_trace()."
+                ) from e
 
         try:
             estimated_cost = self._estimate_trace_cost(trace, correlated_logs)
@@ -263,7 +260,7 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             return 0.0
         try:
             return await self._usage_query.query_diagnosis_cost(trace_id)
-        except (TimeoutError, ConnectionError, RuntimeError) as e:
+        except (TimeoutError, ConnectionError, OSError) as e:
             logger.warning(
                 f"Failed to resolve OTLP usage cost for trace_id={trace_id!r}: {e}",
                 exc_info=True,
