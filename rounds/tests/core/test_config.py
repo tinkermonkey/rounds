@@ -9,12 +9,12 @@ from rounds.config import Settings
 
 def _settings(**kwargs: Any) -> Settings:
     """Create a Settings instance isolated from any .env file."""
-    return Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        diagnosis_backend="openai",
-        openai_api_key="sk-test",
-        **kwargs,
-    )
+    defaults: dict[str, Any] = {
+        "diagnosis_backend": "openai",
+        "openai_api_key": "sk-test",
+    }
+    defaults.update(kwargs)
+    return Settings(_env_file=None, **defaults)  # type: ignore[call-arg]
 
 
 class TestGetServiceNames:
@@ -135,8 +135,7 @@ class TestValidateBackendDependencies:
             )
 
     def test_agent_node_backend_with_service_map_succeeds(self):
-        s = Settings(  # type: ignore[call-arg]
-            _env_file=None,
+        s = _settings(
             diagnosis_backend="agent_node",
             agent_node_service_map="my-api:node1:workspace-a",
         )
