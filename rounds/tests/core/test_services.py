@@ -25,6 +25,7 @@ from rounds.core.models import (
 from rounds.core.poll_service import PollService
 from rounds.core.triage import TriageEngine
 from rounds.tests.fakes import (
+    FakeBudgetTracker,
     FakeDiagnosisPort,
     FakeNotificationPort,
     FakeSignatureStorePort,
@@ -1197,6 +1198,119 @@ class TestNotificationFailureHandling:
         # Investigation should raise the store error
         with pytest.raises(Exception, match="Database connection failed"):
             await investigator.investigate(signature)
+
+
+@pytest.mark.asyncio
+class TestBudgetTracking:
+    """Tests that Investigator and PollService record costs against a BudgetTracker.
+
+    Guards against silent breakage of the budget safety feature: if the
+    record_cost call signature or step names change, these tests should fail.
+    """
+
+    async def test_investigate_records_diagnose_and_confirm_costs(
+        self,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """investigate() should record "diagnose" cost from the diagnosis and a "confirm" cost."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_default_cost(0.42)
+        notification = FakeNotificationPort()
+        budget_tracker = FakeBudgetTracker()
+
+        investigator = Investigator(
+            telemetry,
+            store,
+            diagnosis_engine,
+            notification,
+            triage_engine,
+            "/app",
+            budget_tracker=budget_tracker,
+        )
+
+        await investigator.investigate(signature)
+
+        assert budget_tracker.recorded_costs == [
+            ("diagnose", 0.42),
+            ("confirm", 0.0),
+        ]
+
+    async def test_investigate_without_budget_tracker_does_not_raise(
+        self,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """investigate() should work fine when no budget_tracker is configured."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        diagnosis = await investigator.investigate(signature)
+        assert diagnosis is not None
+
+    async def test_poll_cycle_records_poll_and_fingerprint_costs(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """execute_poll_cycle() should record "poll" and "fingerprint" costs."""
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        budget_tracker = FakeBudgetTracker()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            budget_tracker=budget_tracker,
+        )
+
+        await poll_service.execute_poll_cycle()
+
+        assert budget_tracker.recorded_costs == [
+            ("poll", 0.0),
+            ("fingerprint", 0.0),
+        ]
+
+    async def test_poll_cycle_without_budget_tracker_does_not_raise(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """execute_poll_cycle() should work fine when no budget_tracker is configured."""
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        result = await poll_service.execute_poll_cycle()
+        assert result.errors_found == 1
 
 
 @pytest.mark.asyncio
