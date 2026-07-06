@@ -143,10 +143,28 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
             response.raise_for_status()
 
             data = response.json()
+            if not isinstance(data, dict):
+                raise TypeError(f"expected response body to be an object, got {type(data).__name__}")
+
+            inner = data.get("data", {})
+            if not isinstance(inner, dict):
+                raise TypeError(f"expected 'data' to be an object, got {type(inner).__name__}")
+
+            results = inner.get("result", [])
+            if not isinstance(results, list):
+                raise TypeError(f"expected 'result' to be a list, got {type(results).__name__}")
+
             total_cost = 0.0
             found = False
-            for result in data.get("data", {}).get("result", []):
-                for item in result.get("list", []):
+            for result in results:
+                if not isinstance(result, dict):
+                    raise TypeError(
+                        f"expected result entry to be an object, got {type(result).__name__}"
+                    )
+                items = result.get("list", [])
+                if not isinstance(items, list):
+                    raise TypeError(f"expected 'list' to be a list, got {type(items).__name__}")
+                for item in items:
                     cost = self._parse_cost(item)
                     if cost is not None:
                         total_cost += cost
@@ -159,7 +177,7 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
                 f"Failed to query usage cost for trace_id={trace_id!r}: {e}", exc_info=True
             )
             return 0.0
-        except (ValueError, AttributeError, KeyError) as e:
+        except (ValueError, TypeError, KeyError) as e:
             # Malformed response body: non-JSON payload, or JSON that isn't
             # shaped like the expected {"data": {"result": [...]}} structure.
             # Programming errors elsewhere in this method are intentionally
