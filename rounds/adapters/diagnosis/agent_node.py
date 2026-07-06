@@ -21,12 +21,16 @@ from rounds.core.models import (
     Diagnosis,
     InvestigationContext,
     LogEntry,
+    Severity,
     TraceInvestigation,
     TraceTree,
 )
 from rounds.core.ports import DiagnosisPort, UsageQueryPort
 
 logger = logging.getLogger(__name__)
+
+# BA Req 9: AgentNodeDiagnosisAdapter is scoped to ERROR-level diagnosis only.
+_ERROR_LEVEL_SEVERITIES = frozenset({Severity.ERROR, Severity.FATAL})
 
 
 @dataclass(frozen=True)
@@ -40,8 +44,9 @@ class ServiceMapping:
 class AgentNodeDiagnosisAdapter(DiagnosisPort):
     """Routes diagnosis to the agent node owning a service's source, or falls back.
 
-    Diagnosis is scoped to ERROR-level signatures; WARN-level signatures are
-    not expected to reach this adapter.
+    Diagnosis is scoped to ERROR-level signatures (BA Req 9): diagnose()
+    raises ValueError for signatures whose recent events are all below
+    ERROR severity.
     """
 
     def __init__(
@@ -68,27 +73,43 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
         self._client = client
         self._fallback = fallback
         self._usage_query = usage_query
-        self.budget_usd = budget_usd
+        self._budget_usd = budget_usd
+
+    @property
+    def budget_usd(self) -> float:
+        """Per-diagnosis budget in USD, read-only to prevent bypassing the budget gate."""
+        return self._budget_usd
 
     async def diagnose(self, context: InvestigationContext) -> Diagnosis:
         """Diagnose via the owning agent node, or delegate to the fallback adapter.
 
         Raises:
-            ValueError: If the estimated cost exceeds budget_usd, or if the
-                agent node's response contains no parseable JSON or is missing
+            ValueError: If the signature has no ERROR-or-higher severity events,
+                if the estimated cost exceeds budget_usd, or if the agent
+                node's response contains no parseable JSON or is missing
                 required diagnosis fields.
             TimeoutError: If the agent node invocation times out.
             RuntimeError: If the agent node invocation fails.
         """
+        if not self._is_error_level(context):
+            message = (
+                f"Signature {context.signature.fingerprint!r} "
+                f"(service={context.signature.service!r}) has no ERROR-or-higher "
+                "severity events; AgentNodeDiagnosisAdapter is scoped to "
+                "ERROR-level diagnosis only."
+            )
+            logger.error(message)
+            raise ValueError(message)
+
         mapping = self._service_map.get(context.signature.service)
         if mapping is None:
             return await self._fallback.diagnose(context)
 
         try:
             estimated_cost = await self.estimate_cost(context)
-            if estimated_cost > self.budget_usd:
+            if estimated_cost > self._budget_usd:
                 raise ValueError(
-                    f"Diagnosis cost ${estimated_cost:.2f} exceeds budget ${self.budget_usd:.2f}"
+                    f"Diagnosis cost ${estimated_cost:.2f} exceeds budget ${self._budget_usd:.2f}"
                 )
 
             prompt = self._build_diagnosis_prompt(context, mapping.workspace)
@@ -149,6 +170,11 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
                     trace, codebase_path, correlated_logs
                 )
             except NotImplementedError:
+                logger.warning(
+                    f"Fallback diagnosis adapter does not support trace investigation "
+                    f"for unmapped service={root_service!r} trace_id={trace.trace_id!r}; "
+                    "returning a stub TraceInvestigation with empty fields."
+                )
                 cost_usd = await self._resolve_cost(trace.trace_id)
                 return TraceInvestigation(
                     trace_id=trace.trace_id,
@@ -163,9 +189,9 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
 
         try:
             estimated_cost = self._estimate_trace_cost(trace, correlated_logs)
-            if estimated_cost > self.budget_usd:
+            if estimated_cost > self._budget_usd:
                 raise ValueError(
-                    f"Investigation cost ${estimated_cost:.2f} exceeds budget ${self.budget_usd:.2f}"
+                    f"Investigation cost ${estimated_cost:.2f} exceeds budget ${self._budget_usd:.2f}"
                 )
 
             prompt = self._build_trace_investigation_prompt(
@@ -185,6 +211,18 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             )
             raise
 
+    def _is_error_level(self, context: InvestigationContext) -> bool:
+        """Whether the signature has at least one ERROR-or-higher severity event.
+
+        Signatures with no recent events are allowed through rather than
+        rejected, since severity cannot be determined from an empty context.
+        """
+        if not context.recent_events:
+            return True
+        return any(
+            event.severity in _ERROR_LEVEL_SEVERITIES for event in context.recent_events
+        )
+
     def _extract_root_service(self, trace: TraceTree) -> str:
         """Determine the owning service from a trace's root span."""
         return trace.root_span.service
@@ -201,14 +239,17 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
         """Resolve the actual diagnosis cost from OTLP usage data via usage_query.
 
         Returns 0.0 when usage_query is not configured, no trace ID is
-        available, no usage data is found, or the query fails — cost
-        resolution never blocks diagnosis or investigation.
+        available, no usage data is found, or the query fails with an
+        expected I/O error — cost resolution never blocks diagnosis or
+        investigation. Unexpected errors (e.g. programming bugs in a
+        usage_query implementation) are not swallowed, since silently
+        under-reporting cost could mask budget overruns.
         """
         if self._usage_query is None or not trace_id:
             return 0.0
         try:
             return await self._usage_query.query_diagnosis_cost(trace_id)
-        except Exception as e:
+        except (TimeoutError, ConnectionError, RuntimeError) as e:
             logger.warning(
                 f"Failed to resolve OTLP usage cost for trace_id={trace_id!r}: {e}",
                 exc_info=True,

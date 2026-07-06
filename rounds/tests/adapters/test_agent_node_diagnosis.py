@@ -75,7 +75,9 @@ def _trace(trace_id: str = "trace-xyz", service: str = "mapped-service") -> Trac
     )
 
 
-def _investigation_context(service: str = "mapped-service") -> InvestigationContext:
+def _investigation_context(
+    service: str = "mapped-service", severity: Severity = Severity.ERROR
+) -> InvestigationContext:
     error_event = ErrorEvent(
         trace_id="trace-001",
         span_id="span-001",
@@ -92,7 +94,7 @@ def _investigation_context(service: str = "mapped-service") -> InvestigationCont
         ),
         timestamp=datetime.now(UTC),
         attributes={},
-        severity=Severity.ERROR,
+        severity=severity,
     )
 
     signature = Signature(
@@ -290,6 +292,84 @@ class TestDiagnoseFallback:
         assert len(client.calls) == 0
         assert len(fallback.diagnose_calls) == 1
         assert diagnosis.model == "fake-model"
+
+
+class TestBudgetUsd:
+    """Tests that budget_usd is a read-only property, not a mutable attribute."""
+
+    def test_budget_usd_reflects_constructor_value(
+        self, adapter: AgentNodeDiagnosisAdapter
+    ) -> None:
+        assert adapter.budget_usd == 2.0
+
+    def test_budget_usd_cannot_be_assigned(self, adapter: AgentNodeDiagnosisAdapter) -> None:
+        with pytest.raises(AttributeError):
+            adapter.budget_usd = 100.0  # type: ignore[misc]
+
+
+class TestSeverityScoping:
+    """Tests for BA Req 9's ERROR-only scoping (diagnose() rejects sub-ERROR signatures)."""
+
+    @pytest.mark.asyncio
+    async def test_warn_severity_events_raise_value_error(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        context = _investigation_context(severity=Severity.WARN)
+
+        with pytest.raises(ValueError, match="ERROR-level diagnosis"):
+            await adapter.diagnose(context)
+
+        assert len(client.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_fatal_severity_events_are_accepted(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        client.response = {
+            "summary": "Out of memory",
+            "root_cause": "Unbounded cache growth",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Add cache eviction",
+            "confidence": "HIGH",
+        }
+        context = _investigation_context(severity=Severity.FATAL)
+
+        diagnosis = await adapter.diagnose(context)
+
+        assert diagnosis.root_cause == "Unbounded cache growth"
+        assert len(client.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_recent_events_are_accepted(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        """Severity cannot be determined without events, so diagnosis proceeds."""
+        client.response = {
+            "summary": "Connection pool exhausted",
+            "root_cause": "Pool size hardcoded too low",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Increase pool size",
+            "confidence": "HIGH",
+        }
+        context = _investigation_context()
+        context = InvestigationContext(
+            signature=context.signature,
+            recent_events=(),
+            trace_data=context.trace_data,
+            related_logs=context.related_logs,
+            codebase_path=context.codebase_path,
+            historical_context=context.historical_context,
+        )
+
+        diagnosis = await adapter.diagnose(context)
+
+        assert diagnosis.root_cause == "Pool size hardcoded too low"
 
 
 class TestEstimateCost:
