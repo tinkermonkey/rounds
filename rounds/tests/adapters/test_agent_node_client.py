@@ -35,6 +35,7 @@ class TestSshAgentNodeClientInvoke:
         called_cmd = mock_run.call_args.args[0]
         assert called_cmd == [
             "ssh",
+            "--",
             "worker-host",
             "claude -p 'diagnose this' --output-format json --cwd /workspace/target",
         ]
@@ -51,7 +52,7 @@ class TestSshAgentNodeClientInvoke:
                 mcp_key="node1", workspace="/workspace/target", prompt=tricky_prompt
             )
 
-        remote_command = mock_run.call_args.args[0][2]
+        remote_command = mock_run.call_args.args[0][3]
         # The prompt must appear as a single shell-quoted token so the remote
         # shell does not execute embedded metacharacters as separate commands.
         assert shlex.split(remote_command)[2] == tricky_prompt

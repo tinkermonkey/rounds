@@ -77,7 +77,10 @@ class SshAgentNodeClient:
                 workspace,
             )
         )
-        cmd = ["ssh", host, remote_command]
+        # `--` stops ssh from interpreting `host` as an option flag (e.g. a
+        # misconfigured value like "-oProxyCommand=..." would otherwise be
+        # parsed as an ssh option rather than the target host).
+        cmd = ["ssh", "--", host, remote_command]
 
         def _run_ssh() -> str:
             """Synchronous wrapper for the remote subprocess call."""
@@ -121,15 +124,21 @@ class SshAgentNodeClient:
                         f"Agent node {host!r} returned error: {outer.get('result', 'unknown')}"
                     )
                 text_to_parse = outer.get("result", "") or output
-        except json.JSONDecodeError:
-            pass  # raw output, parse as-is below
+        except json.JSONDecodeError as e:
+            logger.debug(
+                f"Agent node {host!r} output is not an envelope JSON object, "
+                f"treating as raw output: {e}"
+            )
 
         try:
             parsed: dict[str, Any] = json.loads(text_to_parse)
             if isinstance(parsed, dict) and parsed:
                 return parsed
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug(
+                f"Agent node {host!r} output is not a bare JSON object, "
+                f"falling back to embedded block search: {e}"
+            )
 
         block = self._find_json_object(text_to_parse)
         if block is not None:
@@ -156,6 +165,7 @@ class SshAgentNodeClient:
             if stripped.startswith("{"):
                 in_json = True
                 brace_count = 0
+                json_buffer = []
 
             if in_json:
                 json_buffer.append(line)
