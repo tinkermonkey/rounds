@@ -159,9 +159,13 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
                 f"Failed to query usage cost for trace_id={trace_id!r}: {e}", exc_info=True
             )
             return 0.0
-        except Exception as e:
+        except (ValueError, AttributeError, KeyError) as e:
+            # Malformed response body: non-JSON payload, or JSON that isn't
+            # shaped like the expected {"data": {"result": [...]}} structure.
+            # Programming errors elsewhere in this method are intentionally
+            # not caught here, so they surface instead of being reported as 0.0.
             logger.warning(
-                f"Unexpected error querying usage cost for trace_id={trace_id!r}: {e}",
+                f"Malformed usage cost response for trace_id={trace_id!r}: {e}",
                 exc_info=True,
             )
             return 0.0

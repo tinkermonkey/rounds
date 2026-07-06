@@ -29,8 +29,8 @@ async def test_budget_exceeded_blocks_diagnosis(
     )
 
     # Record costs that exceed budget
-    await scheduler.record_diagnosis_cost(3.00)
-    await scheduler.record_diagnosis_cost(2.50)
+    await scheduler.record_cost("diagnose", 3.00)
+    await scheduler.record_cost("diagnose", 2.50)
 
     # Budget should be exceeded
     assert await scheduler._is_budget_exceeded() is True
@@ -49,7 +49,7 @@ async def test_budget_resets_on_date_change(
     )
 
     # Record cost on current date
-    await scheduler.record_diagnosis_cost(8.00)
+    await scheduler.record_cost("diagnose", 8.00)
     assert scheduler._daily_cost_usd == 8.00
 
     original_date = scheduler._budget_date
@@ -58,7 +58,7 @@ async def test_budget_resets_on_date_change(
     scheduler._budget_date = original_date - timedelta(days=1)
 
     # Record cost on today (new date) - should reset budget
-    await scheduler.record_diagnosis_cost(2.00)
+    await scheduler.record_cost("diagnose", 2.00)
     assert scheduler._daily_cost_usd == 2.00
     # Budget date should have been updated to today
     assert scheduler._budget_date == original_date
@@ -75,14 +75,40 @@ async def test_record_diagnosis_cost_accumulates(
         budget_limit=100.00,
     )
 
-    await scheduler.record_diagnosis_cost(10.50)
+    await scheduler.record_cost("diagnose", 10.50)
     assert scheduler._daily_cost_usd == 10.50
 
-    await scheduler.record_diagnosis_cost(15.25)
+    await scheduler.record_cost("diagnose", 15.25)
     assert scheduler._daily_cost_usd == 25.75
 
-    await scheduler.record_diagnosis_cost(5.00)
+    await scheduler.record_cost("diagnose", 5.00)
     assert scheduler._daily_cost_usd == 30.75
+
+
+@pytest.mark.asyncio
+async def test_record_cost_tracks_per_step_breakdown(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that costs are attributed to their originating RoundStep."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=100.00,
+    )
+
+    await scheduler.record_cost("poll", 0.0)
+    await scheduler.record_cost("fingerprint", 0.0)
+    await scheduler.record_cost("diagnose", 1.25)
+    await scheduler.record_cost("diagnose", 0.75)
+    await scheduler.record_cost("confirm", 0.0)
+
+    assert scheduler.cost_by_step == {
+        "poll": 0.0,
+        "fingerprint": 0.0,
+        "diagnose": 2.0,
+        "confirm": 0.0,
+    }
+    assert scheduler._daily_cost_usd == 2.0
 
 
 @pytest.mark.asyncio
@@ -96,7 +122,7 @@ async def test_no_budget_limit_allows_unlimited_costs(
         budget_limit=None,
     )
 
-    await scheduler.record_diagnosis_cost(1000.00)
+    await scheduler.record_cost("diagnose", 1000.00)
     assert await scheduler._is_budget_exceeded() is False
 
 
@@ -210,7 +236,7 @@ async def test_concurrent_cost_recording_is_thread_safe(
 
     # Record costs concurrently to test lock protection
     tasks = [
-        scheduler.record_diagnosis_cost(1.0) for _ in range(10)
+        scheduler.record_cost("diagnose", 1.0) for _ in range(10)
     ]
     await asyncio.gather(*tasks)
 

@@ -148,6 +148,28 @@ class TestQueryDiagnosisCost:
         assert cost == 0.0
         await adapter.close()
 
+    @pytest.mark.asyncio
+    async def test_malformed_json_response_returns_zero(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"not valid json", headers={"content-type": "application/json"})
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
+        assert cost == 0.0
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_response_shape_returns_zero(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # A JSON array instead of the expected object makes `.get()` raise
+            # AttributeError - this should still resolve to 0.0, not raise.
+            return httpx.Response(200, json=["unexpected", "shape"])
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
+        assert cost == 0.0
+        await adapter.close()
+
 
 class TestClientReuse:
     """Tests for SigNozUsageQueryAdapter's optional shared httpx.AsyncClient."""

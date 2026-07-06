@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from .fingerprint import Fingerprinter
-from .investigator import Investigator
+from .investigator import BudgetTracker, Investigator
 from .models import (
     InvestigationResult,
     PollResult,
@@ -43,6 +43,7 @@ class PollService(PollPort):
         lookback_minutes: int = 15,
         services: list[str] | None = None,
         batch_size: int | None = None,
+        budget_tracker: BudgetTracker | None = None,
     ):
         self.telemetry = telemetry
         self.store = store
@@ -52,6 +53,7 @@ class PollService(PollPort):
         self.lookback_minutes = lookback_minutes
         self.services = services
         self.batch_size = batch_size
+        self.budget_tracker = budget_tracker
 
     async def execute_poll_cycle(self) -> PollResult:
         """Check for new errors, fingerprint, dedup, and queue investigations.
@@ -133,6 +135,14 @@ class PollService(PollPort):
                     exc_info=True,
                 )
                 errors_failed_to_process += 1
+
+        if self.budget_tracker:
+            # Fetching errors and fingerprinting them are pure telemetry
+            # queries and hashing/regex logic today (no LLM calls), so cost
+            # is always 0.0 - recorded so these steps appear in per-step
+            # cost accounting alongside the diagnose and confirm steps.
+            await self.budget_tracker.record_cost("poll", 0.0)
+            await self.budget_tracker.record_cost("fingerprint", 0.0)
 
         return PollResult(
             errors_found=len(errors),

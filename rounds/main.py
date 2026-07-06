@@ -942,6 +942,7 @@ async def bootstrap(
         lookback_minutes=settings.error_lookback_minutes,
         services=service_filter,
         batch_size=settings.poll_batch_size,
+        budget_tracker=scheduler,
     )
 
     # Set poll_port in scheduler if it was created

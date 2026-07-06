@@ -96,6 +96,10 @@ class SignatureStatus(Enum):
 
 Confidence: TypeAlias = Literal["high", "medium", "low"]
 
+# The four stages of a rounds cycle, used to attribute cost tracking
+# (see BudgetTracker.record_cost) to the step that incurred it.
+RoundStep: TypeAlias = Literal["poll", "fingerprint", "diagnose", "confirm"]
+
 
 @dataclass(frozen=True)
 class Diagnosis:
