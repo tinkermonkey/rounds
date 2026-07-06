@@ -58,7 +58,9 @@ class SshAgentNodeClient:
             ValueError: If mcp_key cannot be resolved to a host, or the
                 response contains no parseable JSON dict.
             TimeoutError: If the SSH command times out.
-            RuntimeError: If the SSH command returns a non-zero exit code.
+            RuntimeError: If the SSH command returns a non-zero exit code,
+                or if the `ssh` binary could not be executed (e.g. missing
+                or lacking permissions).
         """
         host = self._resolve_host(mcp_key)
 
@@ -102,6 +104,10 @@ class SshAgentNodeClient:
                     f"Agent node SSH invocation on {host!r} timed out "
                     f"after {self._timeout_seconds} seconds"
                 )
+            except OSError as e:
+                raise RuntimeError(
+                    f"Agent node SSH invocation on {host!r} could not be started: {e}"
+                ) from e
 
         try:
             output = await asyncio.to_thread(_run_ssh)

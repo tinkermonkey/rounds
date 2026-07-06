@@ -124,6 +124,13 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
                 exc_info=True,
             )
             raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during agent node diagnosis for "
+                f"service={context.signature.service!r} mcp_key={mapping.mcp_key!r}: {e}",
+                exc_info=True,
+            )
+            raise
 
     async def estimate_cost(self, context: InvestigationContext) -> float:
         """Heuristic pre-flight budget estimate (same formula pattern as claude_code.py).
@@ -207,6 +214,13 @@ class AgentNodeDiagnosisAdapter(DiagnosisPort):
             logger.error(
                 f"Agent node trace investigation failed for trace_id={trace.trace_id!r} "
                 f"mcp_key={mapping.mcp_key!r}: {e}",
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during agent node trace investigation for "
+                f"trace_id={trace.trace_id!r} mcp_key={mapping.mcp_key!r}: {e}",
                 exc_info=True,
             )
             raise

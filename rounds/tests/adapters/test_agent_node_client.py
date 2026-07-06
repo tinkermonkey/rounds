@@ -133,6 +133,19 @@ class TestSshAgentNodeClientInvoke:
                 )
 
     @pytest.mark.asyncio
+    async def test_missing_ssh_binary_raises_runtime_error(self) -> None:
+        client = SshAgentNodeClient(host_map={"node1": "worker-host"})
+
+        with patch(
+            "subprocess.run",
+            side_effect=FileNotFoundError("no such file or directory: 'ssh'"),
+        ):
+            with pytest.raises(RuntimeError, match="worker-host"):
+                await client.invoke(
+                    mcp_key="node1", workspace="/workspace/target", prompt="diagnose"
+                )
+
+    @pytest.mark.asyncio
     async def test_malformed_json_raises_value_error(self) -> None:
         client = SshAgentNodeClient(host_map={"node1": "worker-host"})
 

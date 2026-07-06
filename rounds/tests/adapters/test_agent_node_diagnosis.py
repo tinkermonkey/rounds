@@ -274,6 +274,20 @@ class TestDiagnoseMappedService:
 
         assert len(client.calls) == 0
 
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_is_logged_and_propagates(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        """An exception type not in (ValueError, TimeoutError, RuntimeError) —
+        e.g. a TypeError from malformed LLM data or a buggy client — should
+        still be logged with service/mcp_key context before propagating."""
+        client.error = TypeError("unsupported operand type(s)")
+
+        with pytest.raises(TypeError, match="unsupported operand type"):
+            await adapter.diagnose(_investigation_context())
+
 
 class TestDiagnoseFallback:
     """Tests for diagnose() when the service is absent from the service map."""
@@ -496,6 +510,21 @@ class TestInvestigateTrace:
             await adapter.investigate_trace(trace, codebase_path="/workspace/target")
 
         assert len(client.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_is_logged_and_propagates(
+        self,
+        adapter: AgentNodeDiagnosisAdapter,
+        client: FakeAgentNodeClient,
+    ) -> None:
+        """Exception types outside (ValueError, TimeoutError, RuntimeError) —
+        e.g. an AttributeError from a buggy UsageQueryPort — are still logged
+        with trace_id/mcp_key context before propagating."""
+        client.error = AttributeError("'NoneType' object has no attribute 'get'")
+        trace = _trace()
+
+        with pytest.raises(AttributeError, match="has no attribute"):
+            await adapter.investigate_trace(trace, codebase_path="/workspace/target")
 
 
 class TestCostResolution:
