@@ -147,3 +147,39 @@ class TestQueryDiagnosisCost:
         cost = await adapter.query_diagnosis_cost(VALID_TRACE_ID)
         assert cost == 0.0
         await adapter.close()
+
+
+class TestClientReuse:
+    """Tests for SigNozUsageQueryAdapter's optional shared httpx.AsyncClient."""
+
+    @pytest.mark.asyncio
+    async def test_default_construction_owns_its_client(self) -> None:
+        adapter = SigNozUsageQueryAdapter(api_url="http://signoz-test:3301")
+        assert adapter._owns_client is True
+        await adapter.client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_injected_client_is_reused(self) -> None:
+        shared_client = httpx.AsyncClient(base_url="http://signoz-test:3301")
+        adapter = SigNozUsageQueryAdapter(
+            api_url="http://signoz-test:3301", client=shared_client
+        )
+        assert adapter.client is shared_client
+        assert adapter._owns_client is False
+        await shared_client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_close_does_not_close_injected_client(self) -> None:
+        shared_client = httpx.AsyncClient(base_url="http://signoz-test:3301")
+        adapter = SigNozUsageQueryAdapter(
+            api_url="http://signoz-test:3301", client=shared_client
+        )
+        await adapter.close()
+        assert shared_client.is_closed is False
+        await shared_client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_close_closes_owned_client(self) -> None:
+        adapter = SigNozUsageQueryAdapter(api_url="http://signoz-test:3301")
+        await adapter.close()
+        assert adapter.client.is_closed is True

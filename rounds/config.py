@@ -147,6 +147,19 @@ class Settings(BaseSettings):
             "Example: my-api:node1:workspace-a,worker:node2:workspace-b"
         ),
     )
+    agent_node_host_map: str = Field(
+        default="",
+        description=(
+            "JSON map from agent-node mcp_key to SSH-reachable hostname. "
+            "Used by the agent_node diagnosis backend to resolve the SSH "
+            "target for a given mcp_key. "
+            'Example: AGENT_NODE_HOST_MAP={"node1":"host-a","node2":"host-b"}'
+        ),
+    )
+    agent_node_budget_usd: float = Field(
+        default=2.0,
+        description="Budget per diagnosis for the agent_node backend in USD",
+    )
 
     # Notification configuration
     notification_backend: Literal["stdout", "markdown", "github_issue"] = Field(
@@ -318,6 +331,36 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("agent_node_host_map")
+    @classmethod
+    def validate_agent_node_host_map(cls, v: str) -> str:
+        """Validate AGENT_NODE_HOST_MAP is valid JSON with string keys and values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"AGENT_NODE_HOST_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
+        return v
+
+    @field_validator("agent_node_budget_usd")
+    @classmethod
+    def validate_agent_node_budget(cls, v: float) -> float:
+        """Ensure per-diagnosis budget is non-negative."""
+        if v < 0:
+            raise ValueError("agent_node_budget_usd must be non-negative")
+        return v
+
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval(cls, v: int) -> int:
@@ -394,10 +437,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "openai_api_key must be set when diagnosis_backend is 'openai'"
             )
-        if self.diagnosis_backend == "agent_node" and not self.get_agent_node_service_map():
-            raise ValueError(
-                "agent_node_service_map must be set when diagnosis_backend is 'agent_node'"
-            )
+        if self.diagnosis_backend == "agent_node":
+            if not self.get_agent_node_service_map():
+                raise ValueError(
+                    "agent_node_service_map must be set when diagnosis_backend is 'agent_node'"
+                )
+            if not self.get_agent_node_host_map():
+                raise ValueError(
+                    "agent_node_host_map must be set when diagnosis_backend is 'agent_node'"
+                )
+            if not self.openai_api_key:
+                raise ValueError(
+                    "openai_api_key must be set when diagnosis_backend is 'agent_node' "
+                    "(OpenAIDiagnosisAdapter is required as fallback for services not "
+                    "present in agent_node_service_map)"
+                )
 
         # Validate notification backend dependencies
         if self.notification_backend == "github_issue":
@@ -480,6 +534,25 @@ class Settings(BaseSettings):
                 continue
             service_name, mcp_key, workspace = (p.strip() for p in entry.split(":"))
             result[service_name] = (mcp_key, workspace)
+        return result
+
+    def get_agent_node_host_map(self) -> dict[str, str]:
+        """Parse agent_node_host_map string into a dict mapping mcp_key -> ssh hostname.
+
+        Returns an empty dict when AGENT_NODE_HOST_MAP is not configured.
+        Expects JSON format: ``{"node1": "host-a", "node2": "host-b"}``
+        """
+        v = self.agent_node_host_map.strip()
+        if not v:
+            return {}
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"AGENT_NODE_HOST_MAP must be a JSON object, got {type(result).__name__}")
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
         return result
 
 

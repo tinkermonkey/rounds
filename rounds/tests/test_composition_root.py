@@ -204,6 +204,48 @@ class TestAdapterInstantiation:
         assert adapter.model == settings.claude_model
         assert adapter.budget_usd == settings.claude_code_budget_usd
 
+    def test_agent_node_diagnosis_adapter_instantiation(self) -> None:
+        """Instantiate AgentNodeDiagnosisAdapter with configuration, as main.py does."""
+        from rounds.adapters.diagnosis._client import SshAgentNodeClient
+        from rounds.adapters.diagnosis.agent_node import (
+            AgentNodeDiagnosisAdapter,
+            ServiceMapping,
+        )
+        from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
+
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+            },
+        ):
+            settings = load_settings()
+
+        service_map = {
+            service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
+            for service_name, (mcp_key, workspace) in settings.get_agent_node_service_map().items()
+        }
+        client = SshAgentNodeClient(host_map=settings.get_agent_node_host_map())
+        fallback = OpenAIDiagnosisAdapter(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            budget_usd=settings.openai_budget_usd,
+        )
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=None,
+            budget_usd=settings.agent_node_budget_usd,
+        )
+        assert adapter._service_map == {
+            "my-api": ServiceMapping(mcp_key="node1", workspace="workspace-a")
+        }
+        assert adapter.budget_usd == settings.agent_node_budget_usd
+
     def test_notification_adapter_instantiation(self) -> None:
         """Instantiate stdout notification adapter with configuration."""
         from rounds.adapters.notification.stdout import StdoutNotificationAdapter
@@ -365,6 +407,61 @@ class TestDependencyWiring:
             assert investigator.telemetry is telemetry
             assert investigator.diagnosis_engine is diagnosis
             assert investigator.notification is notification
+
+
+class TestBootstrapAgentNodeBackend:
+    """Test that bootstrap() wires the agent_node diagnosis backend end-to-end."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_wires_agent_node_diagnosis_backend(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DIAGNOSIS_BACKEND=agent_node constructs the full adapter chain in daemon mode."""
+        from rounds.main import bootstrap
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "test.db")
+            env = {
+                "TELEMETRY_BACKEND": "jaeger",
+                "JAEGER_API_URL": "http://localhost:16686",
+                "STORE_BACKEND": "sqlite",
+                "STORE_SQLITE_PATH": db_path,
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+                "NOTIFICATION_BACKEND": "stdout",
+                "RUN_MODE": "daemon",
+            }
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch(
+                    "rounds.adapters.scheduler.daemon.DaemonScheduler.start",
+                    new=AsyncMock(),
+                ),
+                caplog.at_level("INFO"),
+            ):
+                await bootstrap()
+
+        assert "Diagnosis adapter: Agent Node (1 mapped services)" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_agent_node_backend_reuses_signoz_client_for_usage_query(self) -> None:
+        """When telemetry_backend is signoz, the usage query adapter shares its httpx client."""
+        from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
+        from rounds.adapters.telemetry.signoz_usage import SigNozUsageQueryAdapter
+
+        signoz = SigNozTelemetryAdapter(api_url="http://localhost:3301", api_key="")
+        usage_query = SigNozUsageQueryAdapter(
+            api_url="http://localhost:3301", api_key="", client=signoz.client
+        )
+        assert usage_query.client is signoz.client
+        assert usage_query._owns_client is False
+
+        # Closing the usage adapter must not tear down the shared telemetry client.
+        await usage_query.close()
+        assert signoz.client.is_closed is False
+        await signoz.close()
 
 
 class TestBootstrapFunction:

@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 class SigNozUsageQueryAdapter(UsageQueryPort):
     """SigNoz-backed usage/cost query adapter via REST API."""
 
-    def __init__(self, api_url: str, api_key: str = "", lookback_hours: int = 24):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str = "",
+        lookback_hours: int = 24,
+        client: httpx.AsyncClient | None = None,
+    ):
         """Initialize SigNoz usage query adapter.
 
         Args:
@@ -33,12 +39,17 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
             api_key: Optional API key for SIGNOZ-API-KEY header authentication
             lookback_hours: How far back to search for usage/cost log entries
                 correlated with a trace ID.
+            client: Optional pre-built httpx.AsyncClient to reuse (e.g. the
+                SigNoz telemetry adapter's client), avoiding a redundant
+                connection pool. When provided, close() will not close it —
+                the owner of the shared client is responsible for that.
         """
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.lookback_hours = lookback_hours
         self._closed = False
-        self.client = httpx.AsyncClient(
+        self._owns_client = client is None
+        self.client = client or httpx.AsyncClient(
             base_url=self.api_url,
             headers=self._get_headers(),
             timeout=30.0,
@@ -63,11 +74,16 @@ class SigNozUsageQueryAdapter(UsageQueryPort):
         await self.close()
 
     async def close(self) -> None:
-        """Close the httpx client. Safe to call multiple times."""
+        """Close the httpx client. Safe to call multiple times.
+
+        No-op when the client was injected (reused from another adapter) —
+        the owner of the shared client is responsible for closing it.
+        """
         if self._closed:
             return
         self._closed = True
-        await self.client.aclose()
+        if self._owns_client:
+            await self.client.aclose()
 
     async def query_diagnosis_cost(self, trace_id: str) -> float:
         """Query the actual diagnosis cost (in USD) for a given trace.

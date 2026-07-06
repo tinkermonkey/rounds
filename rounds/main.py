@@ -747,6 +747,7 @@ async def bootstrap(
 
     # Telemetry adapter - select based on config
     telemetry: TelemetryPort
+    _signoz_adapter: SigNozTelemetryAdapter | None = None
     if settings.telemetry_backend == "signoz":
         _signoz = SigNozTelemetryAdapter(
             api_url=settings.signoz_api_url,
@@ -755,6 +756,7 @@ async def bootstrap(
         logger.info("Telemetry adapter: SigNoz")
         await _verify_signoz_connection(_signoz)
         telemetry = _signoz
+        _signoz_adapter = _signoz
     elif settings.telemetry_backend == "jaeger":
         telemetry = JaegerTelemetryAdapter(
             api_url=settings.jaeger_api_url,
@@ -835,6 +837,42 @@ async def bootstrap(
             budget_usd=settings.openai_budget_usd,
         )
         logger.info("Diagnosis adapter: OpenAI")
+    elif settings.diagnosis_backend == "agent_node":
+        from rounds.adapters.diagnosis._client import SshAgentNodeClient
+        from rounds.adapters.diagnosis.agent_node import (
+            AgentNodeDiagnosisAdapter,
+            ServiceMapping,
+        )
+        from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
+        from rounds.adapters.telemetry.signoz_usage import SigNozUsageQueryAdapter
+
+        service_map = {
+            service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
+            for service_name, (mcp_key, workspace) in settings.get_agent_node_service_map().items()
+        }
+        agent_node_client = SshAgentNodeClient(host_map=settings.get_agent_node_host_map())
+        fallback = OpenAIDiagnosisAdapter(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            budget_usd=settings.openai_budget_usd,
+        )
+        usage_query = (
+            SigNozUsageQueryAdapter(
+                api_url=settings.signoz_api_url,
+                api_key=settings.signoz_api_key,
+                client=_signoz_adapter.client,
+            )
+            if _signoz_adapter is not None
+            else None
+        )
+        diagnosis_engine = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=agent_node_client,
+            fallback=fallback,
+            usage_query=usage_query,
+            budget_usd=settings.agent_node_budget_usd,
+        )
+        logger.info(f"Diagnosis adapter: Agent Node ({len(service_map)} mapped services)")
     else:
         logger.error(f"Unknown diagnosis backend: {settings.diagnosis_backend}")
         sys.exit(1)

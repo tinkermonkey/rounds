@@ -123,6 +123,46 @@ class TestGetAgentNodeServiceMap:
             _settings(agent_node_service_map="my-api:node1:workspace-a,bad-entry")
 
 
+class TestGetAgentNodeHostMap:
+    """Tests for Settings.get_agent_node_host_map()."""
+
+    def test_empty_string_returns_empty_dict(self) -> None:
+        s = _settings(agent_node_host_map="")
+        assert s.get_agent_node_host_map() == {}
+
+    def test_json_string(self) -> None:
+        s = _settings(agent_node_host_map='{"node1": "host-a", "node2": "host-b"}')
+        assert s.get_agent_node_host_map() == {"node1": "host-a", "node2": "host-b"}
+
+    def test_default_returns_empty_dict(self) -> None:
+        s = _settings()
+        assert s.get_agent_node_host_map() == {}
+
+    def test_json_array_raises_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="AGENT_NODE_HOST_MAP must be a JSON object"):
+            _settings(agent_node_host_map="[1, 2, 3]")
+
+    def test_malformed_json_raises_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="AGENT_NODE_HOST_MAP must be valid JSON"):
+            _settings(agent_node_host_map="not json")
+
+    def test_non_string_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="AGENT_NODE_HOST_MAP values must be strings"):
+            _settings(agent_node_host_map='{"node1": 42}')
+
+
+class TestAgentNodeBudget:
+    """Tests for Settings.agent_node_budget_usd validation."""
+
+    def test_default_budget(self) -> None:
+        s = _settings()
+        assert s.agent_node_budget_usd == 2.0
+
+    def test_negative_budget_raises_at_construction(self) -> None:
+        with pytest.raises(Exception, match="agent_node_budget_usd must be non-negative"):
+            _settings(agent_node_budget_usd=-1.0)
+
+
 class TestValidateBackendDependencies:
     """Tests for the agent_node branch of Settings.validate_backend_dependencies()."""
 
@@ -134,9 +174,31 @@ class TestValidateBackendDependencies:
                 agent_node_service_map="",
             )
 
-    def test_agent_node_backend_with_service_map_succeeds(self) -> None:
+    def test_agent_node_backend_requires_host_map(self) -> None:
+        with pytest.raises(Exception, match="agent_node_host_map must be set"):
+            Settings(  # type: ignore[call-arg]
+                _env_file=None,
+                diagnosis_backend="agent_node",
+                agent_node_service_map="my-api:node1:workspace-a",
+                agent_node_host_map="",
+                openai_api_key="sk-test",
+            )
+
+    def test_agent_node_backend_requires_openai_api_key_for_fallback(self) -> None:
+        with pytest.raises(Exception, match="openai_api_key must be set"):
+            Settings(  # type: ignore[call-arg]
+                _env_file=None,
+                diagnosis_backend="agent_node",
+                agent_node_service_map="my-api:node1:workspace-a",
+                agent_node_host_map='{"node1": "host-a"}',
+                openai_api_key="",
+            )
+
+    def test_agent_node_backend_with_full_config_succeeds(self) -> None:
         s = _settings(
             diagnosis_backend="agent_node",
             agent_node_service_map="my-api:node1:workspace-a",
+            agent_node_host_map='{"node1": "host-a"}',
         )
         assert s.get_agent_node_service_map() == {"my-api": ("node1", "workspace-a")}
+        assert s.get_agent_node_host_map() == {"node1": "host-a"}
