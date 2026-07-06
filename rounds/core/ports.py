@@ -10,6 +10,7 @@ Port Interface Categories:
    - TelemetryPort: Retrieve errors, traces, logs
    - SignatureStorePort: Persist and query signatures
    - DiagnosisPort: LLM-powered root cause analysis
+   - UsageQueryPort: Query actual diagnosis cost from OTLP usage data
    - NotificationPort: Report findings to developers
 
 2. **Driving Ports** (adapters/external systems call into core)
@@ -446,6 +447,34 @@ class DiagnosisPort(ABC):
             TimeoutError: If the LLM invocation exceeds the configured timeout.
             RuntimeError: If the LLM backend returns an error.
             ValueError: If the response cannot be parsed.
+        """
+
+
+class UsageQueryPort(ABC):
+    """Port for querying actual diagnosis cost from OTLP usage data.
+
+    Cost tracking via OTLP is architecturally separate from observability
+    telemetry (TelemetryPort), since it queries usage/cost data rather than
+    traces, logs, or errors.
+
+    Adapters implementing this port should query the telemetry backend's
+    usage/cost records correlated by trace ID and return the actual cost
+    incurred, as reported by the LLM provider (as opposed to a heuristic
+    pre-flight estimate).
+    """
+
+    @abstractmethod
+    async def query_diagnosis_cost(self, trace_id: str) -> float:
+        """Query the actual diagnosis cost (in USD) for a given trace.
+
+        Args:
+            trace_id: OpenTelemetry trace ID correlating the diagnosis
+                invocation to its usage/cost data.
+
+        Returns:
+            Actual cost in USD. Returns 0.0 when usage data is unavailable
+            (e.g. not yet reported, backend unreachable, or no matching
+            records found).
         """
 
 

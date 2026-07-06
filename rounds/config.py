@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     )
 
     # Diagnosis engine configuration
-    diagnosis_backend: Literal["claude_code", "openai"] = Field(
+    diagnosis_backend: Literal["claude_code", "openai", "agent_node"] = Field(
         default="claude_code",
         description="Diagnosis engine backend type",
     )
@@ -137,6 +137,15 @@ class Settings(BaseSettings):
     openai_budget_usd: float = Field(
         default=2.0,
         description="Budget per diagnosis for OpenAI in USD",
+    )
+    agent_node_service_map: str = Field(
+        default="",
+        description=(
+            "Comma-separated service-to-agent-node mappings for the agent_node "
+            "diagnosis backend. Each entry is a colon-separated triple: "
+            "signoz_service_name:mcp_key:workspace_name. "
+            "Example: my-api:node1:workspace-a,worker:node2:workspace-b"
+        ),
     )
 
     # Notification configuration
@@ -289,6 +298,26 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("agent_node_service_map")
+    @classmethod
+    def validate_agent_node_service_map(cls, v: str) -> str:
+        """Validate AGENT_NODE_SERVICE_MAP entries are well-formed triples."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        for entry in stripped.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split(":")
+            if len(parts) != 3 or not all(p.strip() for p in parts):
+                raise ValueError(
+                    "AGENT_NODE_SERVICE_MAP entries must be "
+                    "'signoz_service_name:mcp_key:workspace_name' triples, "
+                    f"got malformed entry: {entry!r}"
+                )
+        return v
+
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval(cls, v: int) -> int:
@@ -365,6 +394,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "openai_api_key must be set when diagnosis_backend is 'openai'"
             )
+        if self.diagnosis_backend == "agent_node" and not self.get_agent_node_service_map():
+            raise ValueError(
+                "agent_node_service_map must be set when diagnosis_backend is 'agent_node'"
+            )
 
         # Validate notification backend dependencies
         if self.notification_backend == "github_issue":
@@ -429,6 +462,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
+        return result
+
+    def get_agent_node_service_map(self) -> dict[str, tuple[str, str]]:
+        """Parse agent_node_service_map string into a dict mapping service -> (mcp_key, workspace).
+
+        Returns an empty dict when AGENT_NODE_SERVICE_MAP is not configured.
+        Expects comma-separated triples: ``signoz_service_name:mcp_key:workspace_name``
+        """
+        v = self.agent_node_service_map.strip()
+        if not v:
+            return {}
+        result: dict[str, tuple[str, str]] = {}
+        for entry in v.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            service_name, mcp_key, workspace = (p.strip() for p in entry.split(":"))
+            result[service_name] = (mcp_key, workspace)
         return result
 
 
