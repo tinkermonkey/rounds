@@ -12,7 +12,7 @@ from rounds.core.models import (
 
 
 @pytest.fixture
-def mock_openai_client():
+def mock_openai_client() -> MagicMock:
     """Create a mock OpenAI client."""
     mock = MagicMock()
     # The OpenAI client is synchronous, not async
@@ -84,7 +84,7 @@ async def test_budget_tracking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnose_flow_success(mock_openai_client) -> None:
+async def test_diagnose_flow_success(mock_openai_client: MagicMock) -> None:
     """Test successful diagnose() flow with JSON parsing."""
     from rounds.core.models import (
         ErrorEvent,
@@ -178,7 +178,7 @@ async def test_diagnose_flow_success(mock_openai_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnose_handles_malformed_json(mock_openai_client) -> None:
+async def test_diagnose_handles_malformed_json(mock_openai_client: MagicMock) -> None:
     """Test diagnose() handles malformed JSON from OpenAI."""
     from rounds.core.models import (
         InvestigationContext,
@@ -228,7 +228,7 @@ async def test_diagnose_handles_malformed_json(mock_openai_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnose_handles_multiline_json(mock_openai_client) -> None:
+async def test_diagnose_handles_multiline_json(mock_openai_client: MagicMock) -> None:
     """Test diagnose() parses multi-line pretty-printed JSON."""
     from rounds.core.models import (
         InvestigationContext,
@@ -291,7 +291,7 @@ That's my diagnosis."""
 
 
 @pytest.mark.asyncio
-async def test_diagnose_rejects_invalid_confidence(mock_openai_client) -> None:
+async def test_diagnose_rejects_invalid_confidence(mock_openai_client: MagicMock) -> None:
     """Test diagnose() rejects invalid confidence levels."""
     from rounds.core.models import (
         InvestigationContext,
@@ -345,7 +345,7 @@ async def test_diagnose_rejects_invalid_confidence(mock_openai_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnose_enforces_budget(mock_openai_client) -> None:
+async def test_diagnose_enforces_budget(mock_openai_client: MagicMock) -> None:
     """Test diagnose() rejects diagnoses exceeding budget."""
     from rounds.core.models import (
         ErrorEvent,
@@ -416,7 +416,7 @@ async def test_diagnose_enforces_budget(mock_openai_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnose_handles_missing_required_fields(mock_openai_client) -> None:
+async def test_diagnose_handles_missing_required_fields(mock_openai_client: MagicMock) -> None:
     """Test diagnose() validates required fields in OpenAI response."""
     from rounds.core.models import (
         InvestigationContext,

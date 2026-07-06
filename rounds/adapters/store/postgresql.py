@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import asyncpg  # type: ignore[import-not-found,import-untyped]
+import asyncpg  # type: ignore[import-untyped]
 
 from rounds.core.models import Diagnosis, Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort

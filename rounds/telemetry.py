@@ -120,7 +120,7 @@ def shutdown_telemetry() -> None:
     try:
         provider = trace.get_tracer_provider()
         if hasattr(provider, "shutdown"):
-            provider.shutdown()  # type: ignore[attr-defined]
+            provider.shutdown()
             logger.info("OpenTelemetry telemetry shut down successfully")
     except Exception as e:
         logger.warning(f"Failed to shutdown telemetry gracefully: {e}", exc_info=True)

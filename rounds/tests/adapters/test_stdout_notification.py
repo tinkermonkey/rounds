@@ -11,7 +11,7 @@ from rounds.core.models import Diagnosis, Signature
 
 
 @pytest.fixture
-def sample_signature():
+def sample_signature() -> Signature:
     """Create a sample signature for testing."""
     from rounds.core.models import SignatureStatus
 
@@ -26,12 +26,12 @@ def sample_signature():
         last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=5,
         status=SignatureStatus.NEW,
-        tags=["test", "critical"],
+        tags=frozenset({"test", "critical"}),
     )
 
 
 @pytest.fixture
-def sample_diagnosis():
+def sample_diagnosis() -> Diagnosis:
     """Create a sample diagnosis for testing."""
     return Diagnosis(
         root_cause="Invalid input",
@@ -45,7 +45,7 @@ def sample_diagnosis():
 
 
 @pytest.mark.asyncio
-async def test_send_basic_output(sample_signature, sample_diagnosis):
+async def test_send_basic_output(sample_signature: Signature, sample_diagnosis: Diagnosis) -> None:
     """Test basic output formatting and structure."""
     adapter = StdoutNotificationAdapter()
 
@@ -74,7 +74,7 @@ async def test_send_basic_output(sample_signature, sample_diagnosis):
 
 
 @pytest.mark.asyncio
-async def test_send_with_empty_tags(sample_signature, sample_diagnosis):
+async def test_send_with_empty_tags(sample_signature: Signature, sample_diagnosis: Diagnosis) -> None:
     """Test output with signature that has no tags."""
     from rounds.core.models import SignatureStatus
 
@@ -89,7 +89,7 @@ async def test_send_with_empty_tags(sample_signature, sample_diagnosis):
         last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=1,
         status=SignatureStatus.NEW,
-        tags=[],
+        tags=frozenset(),
     )
 
     adapter = StdoutNotificationAdapter()
@@ -111,7 +111,7 @@ async def test_send_with_empty_tags(sample_signature, sample_diagnosis):
 
 
 @pytest.mark.asyncio
-async def test_send_with_low_confidence(sample_signature):
+async def test_send_with_low_confidence(sample_signature: Signature) -> None:
     """Test output with low confidence diagnosis."""
     low_confidence_diagnosis = Diagnosis(
         root_cause="Unknown",
@@ -141,7 +141,7 @@ async def test_send_with_low_confidence(sample_signature):
 
 
 @pytest.mark.asyncio
-async def test_send_with_complex_json(sample_signature):
+async def test_send_with_complex_json(sample_signature: Signature) -> None:
     """Test output with complex nested diagnosis."""
     complex_diagnosis = Diagnosis(
         root_cause="DB timeout - Connection pool exhausted",
@@ -172,7 +172,7 @@ async def test_send_with_complex_json(sample_signature):
 
 
 @pytest.mark.asyncio
-async def test_send_with_special_characters(sample_diagnosis):
+async def test_send_with_special_characters(sample_diagnosis: Diagnosis) -> None:
     """Test output with special characters in signature fields."""
     from rounds.core.models import SignatureStatus
 
@@ -187,7 +187,7 @@ async def test_send_with_special_characters(sample_diagnosis):
         last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=3,
         status=SignatureStatus.NEW,
-        tags=["tag-with-dashes", "unicode-test-λ"],
+        tags=frozenset({"tag-with-dashes", "unicode-test-λ"}),
     )
 
     adapter = StdoutNotificationAdapter()
@@ -209,7 +209,7 @@ async def test_send_with_special_characters(sample_diagnosis):
 
 
 @pytest.mark.asyncio
-async def test_send_high_occurrence_count(sample_diagnosis):
+async def test_send_high_occurrence_count(sample_diagnosis: Diagnosis) -> None:
     """Test output with very high occurrence count."""
     from rounds.core.models import SignatureStatus
 
@@ -224,7 +224,7 @@ async def test_send_high_occurrence_count(sample_diagnosis):
         last_seen=datetime(2026, 1, 15, 10, 30, 0, tzinfo=UTC),
         occurrence_count=9999,
         status=SignatureStatus.NEW,
-        tags=["critical"],
+        tags=frozenset({"critical"}),
     )
 
     adapter = StdoutNotificationAdapter()

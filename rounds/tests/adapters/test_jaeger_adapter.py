@@ -1,7 +1,7 @@
 """Tests for JaegerTelemetryAdapter: list_services, search_logs, search_spans."""
 
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -52,7 +52,7 @@ class TestListServices:
     """Tests for JaegerTelemetryAdapter.list_services()."""
 
     @pytest.mark.asyncio
-    async def test_returns_sorted_service_names(self):
+    async def test_returns_sorted_service_names(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/api/services"
             return httpx.Response(200, json=_SERVICES_RESPONSE)
@@ -63,7 +63,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_data_returns_empty_list(self):
+    async def test_empty_data_returns_empty_list(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": []})
 
@@ -73,7 +73,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_malformed_response_returns_empty_list(self):
+    async def test_malformed_response_returns_empty_list(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": "not-a-list"})
 
@@ -83,7 +83,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_skips_empty_service_names(self):
+    async def test_skips_empty_service_names(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": ["real-service", "", None]})
 
@@ -93,7 +93,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
 
@@ -110,7 +110,7 @@ class TestSearchLogs:
     """
 
     @pytest.mark.asyncio
-    async def test_extracts_log_entries_from_span_events(self):
+    async def test_extracts_log_entries_from_span_events(self) -> None:
         call_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -129,7 +129,7 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_keyword_filter_excludes_non_matching_logs(self):
+    async def test_keyword_filter_excludes_non_matching_logs(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["alpha-service"]})
@@ -141,7 +141,7 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_query_returns_all_logs(self):
+    async def test_empty_query_returns_all_logs(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["alpha-service"]})
@@ -153,7 +153,7 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_limits_queried_services(self):
+    async def test_service_filter_limits_queried_services(self) -> None:
         queried_services: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -169,7 +169,7 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_service_names_skipped(self):
+    async def test_invalid_service_names_skipped(self) -> None:
         queried_services: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -180,12 +180,14 @@ class TestSearchLogs:
             return httpx.Response(200, json={"data": []})
 
         adapter = _make_adapter(httpx.MockTransport(handler))
-        await adapter.search_logs("error", since=_SINCE, services=["valid-svc", "bad name!"])
+        await adapter.search_logs(
+            "error", since=_SINCE, services=["valid-svc", "bad name!"]
+        )
         assert "bad name!" not in queried_services
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_log_entry_timestamp_parsed_from_microseconds(self):
+    async def test_log_entry_timestamp_parsed_from_microseconds(self) -> None:
         ts_us = int(_SINCE.timestamp() * 1e6)
         trace = {
             "traceID": "t1",
@@ -223,7 +225,7 @@ class TestSearchLogs:
 class TestSearchSpans:
     """Tests for JaegerTelemetryAdapter.search_spans()."""
 
-    _BASE_TRACE: ClassVar[dict] = {
+    _BASE_TRACE: ClassVar[dict[str, Any]] = {
         "traceID": "trace1",
         "spans": [
             {
@@ -243,7 +245,7 @@ class TestSearchSpans:
     }
 
     @pytest.mark.asyncio
-    async def test_returns_span_summaries(self):
+    async def test_returns_span_summaries(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})
@@ -260,8 +262,8 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_has_error_true_passes_error_tag(self):
-        captured_params: list[dict] = []
+    async def test_has_error_true_passes_error_tag(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
@@ -275,22 +277,25 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_has_error_false_excludes_error_spans(self):
+    async def test_has_error_false_excludes_error_spans(self) -> None:
         """has_error=False should filter out spans flagged as errors post-fetch."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})
             return httpx.Response(200, json={"data": [self._BASE_TRACE]})
 
         adapter = _make_adapter(httpx.MockTransport(handler))
-        spans = await adapter.search_spans(since=_SINCE, has_error=False, services=["api"])
+        spans = await adapter.search_spans(
+            since=_SINCE, has_error=False, services=["api"]
+        )
         # _BASE_TRACE has error=true tag, so it should be filtered out
         assert all(not s.has_error for s in spans)
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_operation_filter_passed_as_param(self):
-        captured_params: list[dict] = []
+    async def test_operation_filter_passed_as_param(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
@@ -299,12 +304,14 @@ class TestSearchSpans:
             return httpx.Response(200, json={"data": []})
 
         adapter = _make_adapter(httpx.MockTransport(handler))
-        await adapter.search_spans(since=_SINCE, services=["api"], operation="GET /users")
+        await adapter.search_spans(
+            since=_SINCE, services=["api"], operation="GET /users"
+        )
         assert any(p.get("operation") == "GET /users" for p in captured_params)
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_attribute_filter_applied_post_fetch(self):
+    async def test_attribute_filter_applied_post_fetch(self) -> None:
         """Attribute filters are applied locally after fetching spans."""
         trace_no_match = {
             "traceID": "trace2",
@@ -325,7 +332,9 @@ class TestSearchSpans:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})
-            return httpx.Response(200, json={"data": [self._BASE_TRACE, trace_no_match]})
+            return httpx.Response(
+                200, json={"data": [self._BASE_TRACE, trace_no_match]}
+            )
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         spans = await adapter.search_spans(
@@ -335,7 +344,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_limits_queried_services(self):
+    async def test_service_filter_limits_queried_services(self) -> None:
         queried_services: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -350,7 +359,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_results_sorted_descending_by_timestamp(self):
+    async def test_results_sorted_descending_by_timestamp(self) -> None:
         earlier = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         later = datetime(2024, 1, 1, 12, 0, 30, tzinfo=UTC)
 
@@ -446,7 +455,7 @@ class TestGetRecentErrors:
     """Tests for JaegerTelemetryAdapter.get_recent_errors()."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_events_from_error_spans(self):
+    async def test_returns_error_events_from_error_spans(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})
@@ -459,7 +468,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_no_error_spans_returns_empty(self):
+    async def test_no_error_spans_returns_empty(self) -> None:
         trace_no_error = {
             "traceID": "t1",
             "spans": [
@@ -487,7 +496,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_limits_queried_services(self):
+    async def test_service_filter_limits_queried_services(self) -> None:
         queried: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -502,7 +511,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_service_names_skipped(self):
+    async def test_invalid_service_names_skipped(self) -> None:
         queried: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -517,7 +526,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})
@@ -533,7 +542,7 @@ class TestGetTrace:
     """Tests for JaegerTelemetryAdapter.get_trace()."""
 
     @pytest.mark.asyncio
-    async def test_returns_trace_tree(self):
+    async def test_returns_trace_tree(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert "/api/traces/abc111def222abc1" in request.url.path
             return httpx.Response(200, json={"data": [_TRACE_WITH_PARENT_CHILD]})
@@ -545,7 +554,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_child_span_attached_to_root(self):
+    async def test_child_span_attached_to_root(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": [_TRACE_WITH_PARENT_CHILD]})
 
@@ -556,14 +565,16 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_trace_id_raises_value_error(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_invalid_trace_id_raises_value_error(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         with pytest.raises(ValueError, match="Invalid trace ID"):
             await adapter.get_trace("not-hex!")
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_data_raises_value_error(self):
+    async def test_empty_data_raises_value_error(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": []})
 
@@ -573,7 +584,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
 
@@ -583,7 +594,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_error_spans_collected(self):
+    async def test_error_spans_collected(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": [_TRACE_WITH_PARENT_CHILD]})
 
@@ -598,7 +609,7 @@ class TestGetTraces:
     """Tests for JaegerTelemetryAdapter.get_traces()."""
 
     @pytest.mark.asyncio
-    async def test_returns_traces_for_valid_ids(self):
+    async def test_returns_traces_for_valid_ids(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": [_TRACE_SINGLE_SPAN]})
 
@@ -610,8 +621,10 @@ class TestGetTraces:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_input_returns_empty(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_empty_input_returns_empty(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         traces, info = await adapter.get_traces([])
         assert traces == []
         assert info.total_requested == 0
@@ -619,15 +632,17 @@ class TestGetTraces:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_ids_counted_as_partial(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_invalid_ids_counted_as_partial(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         traces, info = await adapter.get_traces(["not-hex!"])
         assert traces == []
         assert info.is_partial
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_failed_fetch_counted_as_partial(self):
+    async def test_failed_fetch_counted_as_partial(self) -> None:
         call_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -638,7 +653,9 @@ class TestGetTraces:
             return httpx.Response(500, text="Error")
 
         adapter = _make_adapter(httpx.MockTransport(handler))
-        traces, info = await adapter.get_traces(["def333abc444def3", "abc999def000abc9"])
+        traces, info = await adapter.get_traces(
+            ["def333abc444def3", "abc999def000abc9"]
+        )
         assert len(traces) == 1
         assert info.is_partial
         await adapter.close()
@@ -648,7 +665,7 @@ class TestGetCorrelatedLogs:
     """Tests for JaegerTelemetryAdapter.get_correlated_logs()."""
 
     @pytest.mark.asyncio
-    async def test_extracts_logs_from_trace_spans(self):
+    async def test_extracts_logs_from_trace_spans(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": [_TRACE_SINGLE_SPAN]})
 
@@ -660,21 +677,25 @@ class TestGetCorrelatedLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_trace_ids_returns_empty(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_empty_trace_ids_returns_empty(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         logs = await adapter.get_correlated_logs([])
         assert logs == []
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_trace_id_raises_value_error(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_invalid_trace_id_raises_value_error(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         with pytest.raises(ValueError, match="Invalid trace ID"):
             await adapter.get_correlated_logs(["not-hex!"])
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_span_without_logs_returns_no_entries(self):
+    async def test_span_without_logs_returns_no_entries(self) -> None:
         trace = {
             "traceID": "t1",
             "spans": [
@@ -704,7 +725,7 @@ class TestGetEventsForSignature:
     """Tests for JaegerTelemetryAdapter.get_events_for_signature()."""
 
     @pytest.mark.asyncio
-    async def test_queries_each_service_with_fingerprint_tag(self):
+    async def test_queries_each_service_with_fingerprint_tag(self) -> None:
         queried_tags: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -719,7 +740,7 @@ class TestGetEventsForSignature:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_no_services_returns_empty(self):
+    async def test_no_services_returns_empty(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": []})
 
@@ -729,7 +750,7 @@ class TestGetEventsForSignature:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_limit_caps_results(self):
+    async def test_limit_caps_results(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/services":
                 return httpx.Response(200, json={"data": ["api"]})

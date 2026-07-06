@@ -8,7 +8,6 @@ import asyncio
 import logging
 import signal
 from datetime import UTC, datetime
-from typing import cast
 
 from rounds.core.ports import NotificationPort, PollPort
 
@@ -127,14 +126,13 @@ class DaemonScheduler:
         Raises:
             ValueError: If poll_port is not set (should be caught by start()).
         """
-        # Design pattern: Optional field with runtime validation + cast.
+        # Design pattern: Optional field with runtime validation.
         # The poll_port field is Optional to allow deferred initialization (set in start()),
         # but guaranteed non-None here by construction (start() must be called first).
-        # Runtime check validates the invariant; cast() informs type checker for downstream code.
         if self.poll_port is None:
             raise ValueError("poll_port must be set before _run_loop is called")
 
-        poll_port = cast(PollPort, self.poll_port)
+        poll_port = self.poll_port
 
         cycle_number = 0
         loop = asyncio.get_running_loop()

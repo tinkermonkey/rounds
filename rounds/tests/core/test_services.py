@@ -132,7 +132,7 @@ class FailingNotificationPort(FakeNotificationPort):
 class PartialTraceTelemetryPort(FakeTelemetryPort):
     """Extends FakeTelemetryPort to simulate intermittent trace fetch failures."""
 
-    def __init__(self, fail_trace_count: int = 2):
+    def __init__(self, fail_trace_count: int = 2) -> None:
         """Initialize with failure count."""
         super().__init__()
         self.fail_trace_count = fail_trace_count
@@ -197,11 +197,12 @@ class TestFingerprinter:
         """Normalize stack should strip line numbers."""
         frames = (
             StackFrame(
-                module="app.service", function="process", filename="service.py", lineno=42
+                module="app.service",
+                function="process",
+                filename="service.py",
+                lineno=42,
             ),
-            StackFrame(
-                module="app.db", function="query", filename="db.py", lineno=15
-            ),
+            StackFrame(module="app.db", function="query", filename="db.py", lineno=15),
         )
 
         normalized = fingerprinter.normalize_stack(frames)
@@ -212,7 +213,9 @@ class TestFingerprinter:
         assert normalized[0].module == "app.service"
         assert normalized[1].function == "query"
 
-    def test_templatize_message_replaces_ips(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_ips(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace IP addresses."""
         message = "Failed to connect to 10.0.0.5"
         result = fingerprinter.templatize_message(message)
@@ -228,7 +231,9 @@ class TestFingerprinter:
         assert ":5432" not in result
         assert ":*" in result
 
-    def test_templatize_message_replaces_ids(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_ids(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace numeric IDs."""
         message = "User ID 12345 not found"
         result = fingerprinter.templatize_message(message)
@@ -243,7 +248,9 @@ class TestFingerprinter:
         assert "2024-01-01" not in result
         assert "12:30:45" not in result
 
-    def test_templatize_message_replaces_uuids(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_uuids(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace UUIDs."""
         message = "Request 550e8400-e29b-41d4-a716-446655440000 failed"
         result = fingerprinter.templatize_message(message)
@@ -260,13 +267,17 @@ class TestTriageEngine:
 
     def test_constructor_validates_min_occurrence(self) -> None:
         """Test that TriageEngine rejects min_occurrence_for_investigation <= 0."""
-        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+        with pytest.raises(
+            ValueError, match="min_occurrence_for_investigation must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=0,
                 investigation_cooldown_hours=1,
             )
 
-        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+        with pytest.raises(
+            ValueError, match="min_occurrence_for_investigation must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=-1,
                 investigation_cooldown_hours=1,
@@ -274,13 +285,17 @@ class TestTriageEngine:
 
     def test_constructor_validates_cooldown(self) -> None:
         """Test that TriageEngine rejects investigation_cooldown_hours <= 0."""
-        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+        with pytest.raises(
+            ValueError, match="investigation_cooldown_hours must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=1,
                 investigation_cooldown_hours=0,
             )
 
-        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+        with pytest.raises(
+            ValueError, match="investigation_cooldown_hours must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=1,
                 investigation_cooldown_hours=-1,
@@ -532,9 +547,9 @@ class TestTriageEngine:
             occurrence_count=50,
             status=SignatureStatus.NEW,
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
     def test_calculate_priority_recency_component(
         self, triage_engine: TriageEngine
@@ -565,9 +580,9 @@ class TestTriageEngine:
             occurrence_count=10,
             status=SignatureStatus.NEW,
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
     def test_calculate_priority_critical_tag_bonus(
         self, triage_engine: TriageEngine
@@ -600,9 +615,9 @@ class TestTriageEngine:
             status=SignatureStatus.NEW,
             tags=frozenset(["critical"]),
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
 
 # ============================================================================
@@ -735,7 +750,7 @@ class TestPollService:
 
         # Create a diagnosis engine that fails on the first signature
         class PartiallyFailingDiagnosisPort(FakeDiagnosisPort):
-            async def diagnose(self, context):
+            async def diagnose(self, context: InvestigationContext) -> Diagnosis:
                 if len(investigator_calls) == 0:
                     investigator_calls.append("failed")
                     raise RuntimeError("Diagnosis failed for first signature")
@@ -902,8 +917,12 @@ class TestDatetimeAwareness:
 
         # Execute poll cycle - should only process first 5 errors due to batch size limit
         result = await poll_service.execute_poll_cycle()
-        assert result.errors_found == 5  # Only 5 errors processed due to batch size limit
-        assert (result.new_signatures + result.updated_signatures) == 5  # All processed are new
+        assert (
+            result.errors_found == 5
+        )  # Only 5 errors processed due to batch size limit
+        assert (
+            result.new_signatures + result.updated_signatures
+        ) == 5  # All processed are new
 
 
 @pytest.mark.asyncio
@@ -918,12 +937,12 @@ class TestPollCycleErrorHandling:
         """Poll cycle should continue processing after individual error processing fails."""
 
         class PartiallyBrokenFingerprinter(Fingerprinter):
-            def __init__(self, broken_on_count: int = 2):
+            def __init__(self, broken_on_count: int = 2) -> None:
                 super().__init__()
                 self.call_count = 0
                 self.broken_on_count = broken_on_count
 
-            def fingerprint(self, error):
+            def fingerprint(self, error: ErrorEvent) -> str:
                 self.call_count += 1
                 if self.call_count == self.broken_on_count:
                     raise RuntimeError("Fingerprinter broke")
@@ -1085,7 +1104,9 @@ class TestPartialTraceRetrieval:
         ]
 
         class PartialTelemetryForInvestigator(PartialTraceTelemetryPort):
-            async def get_events_for_signature(self, fingerprint, limit=5):
+            async def get_events_for_signature(
+                self, fingerprint: str, limit: int = 5
+            ) -> list[ErrorEvent]:
                 return events
 
         telemetry = PartialTelemetryForInvestigator(fail_trace_count=2)
@@ -1148,9 +1169,9 @@ class TestNotificationFailureHandling:
         signature.status = SignatureStatus.NEW
 
         class TrackingStore(FakeSignatureStorePort):
-            def __init__(self):
+            def __init__(self) -> None:
                 super().__init__()
-                self.update_calls = []
+                self.update_calls: list[tuple[str, SignatureStatus, Diagnosis | None]] = []
 
             async def get_by_id(self, signature_id: str) -> Signature | None:
                 """Mock implementation."""
@@ -1165,7 +1186,7 @@ class TestNotificationFailureHandling:
                 """Mock implementation."""
                 return await super().get_all(status)
 
-            async def update(self, sig):
+            async def update(self, sig: Signature) -> None:
                 self.update_calls.append((sig.fingerprint, sig.status, sig.diagnosis))
                 await super().update(sig)
 
@@ -1195,6 +1216,7 @@ class TestNotificationFailureHandling:
         self, signature: Signature, triage_engine: TriageEngine
     ) -> None:
         """Test that investigator raises when store update fails after diagnosis."""
+
         # Custom store that fails on the second update (diagnosis persistence)
         class FailingStoreOnDiagnosisPersistence(FakeSignatureStorePort):
             def __init__(self) -> None:
@@ -1205,7 +1227,9 @@ class TestNotificationFailureHandling:
                 self.update_count += 1
                 # Fail on second update (diagnosis persistence)
                 if self.update_count == 2:
-                    raise Exception("Database connection failed during diagnosis persistence")
+                    raise Exception(
+                        "Database connection failed during diagnosis persistence"
+                    )
                 await super().update(sig)
 
         telemetry = FakeTelemetryPort()

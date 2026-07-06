@@ -1,7 +1,7 @@
 """Tests for GrafanaStackTelemetryAdapter: list_services, search_logs, search_spans."""
 
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -40,13 +40,16 @@ class TestListServices:
     """
 
     @pytest.mark.asyncio
-    async def test_returns_sorted_service_names(self):
+    async def test_returns_sorted_service_names(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             assert "/loki/api/v1/label/service_name/values" in request.url.path
-            return httpx.Response(200, json={
-                "status": "success",
-                "data": ["zebra-api", "alpha-service", "beta-worker"],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": ["zebra-api", "alpha-service", "beta-worker"],
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
         services = await adapter.list_services()
@@ -54,7 +57,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_data_returns_empty_list(self):
+    async def test_empty_data_returns_empty_list(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"status": "success", "data": []})
 
@@ -64,7 +67,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_malformed_response_returns_empty_list(self):
+    async def test_malformed_response_returns_empty_list(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"status": "success", "data": "not-a-list"})
 
@@ -74,12 +77,15 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_skips_empty_service_names(self):
+    async def test_skips_empty_service_names(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={
-                "status": "success",
-                "data": ["real-service", "", None],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": ["real-service", "", None],
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
         services = await adapter.list_services()
@@ -87,7 +93,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
 
@@ -103,14 +109,20 @@ class TestSearchLogs:
     Uses Loki's query_range API with LogQL queries.
     """
 
-    _LOKI_STREAM_RESPONSE: ClassVar[dict] = {
+    _LOKI_STREAM_RESPONSE: ClassVar[dict[str, Any]] = {
         "data": {
             "result": [
                 {
                     "stream": {"service_name": "api"},
                     "values": [
-                        [str(int(_SINCE.timestamp() * 1e9)), "connection refused to db"],
-                        [str(int(_SINCE.timestamp() * 1e9) + 1_000_000_000), "timeout error"],
+                        [
+                            str(int(_SINCE.timestamp() * 1e9)),
+                            "connection refused to db",
+                        ],
+                        [
+                            str(int(_SINCE.timestamp() * 1e9) + 1_000_000_000),
+                            "timeout error",
+                        ],
                     ],
                 }
             ]
@@ -118,7 +130,7 @@ class TestSearchLogs:
     }
 
     @pytest.mark.asyncio
-    async def test_returns_log_entries(self):
+    async def test_returns_log_entries(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
                 return httpx.Response(200, json=self._LOKI_STREAM_RESPONSE)
@@ -132,8 +144,8 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_query_uses_stream_selector_only(self):
-        captured_params: list[dict] = []
+    async def test_empty_query_uses_stream_selector_only(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -148,8 +160,8 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_keyword_filter_uses_logql_substring_match(self):
-        captured_params: list[dict] = []
+    async def test_keyword_filter_uses_logql_substring_match(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -164,8 +176,8 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_uses_regex_stream_selector(self):
-        captured_params: list[dict] = []
+    async def test_service_filter_uses_regex_stream_selector(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -181,7 +193,7 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_services_filtered_out_returns_empty(self):
+    async def test_invalid_services_filtered_out_returns_empty(self) -> None:
         """If all services are invalid, should return empty without querying Loki."""
         call_count = 0
 
@@ -191,14 +203,16 @@ class TestSearchLogs:
             return httpx.Response(200, json={"data": {"result": []}})
 
         adapter = _make_adapter(httpx.MockTransport(loki_handler))
-        logs = await adapter.search_logs("error", since=_SINCE, services=["bad name!", "also bad!"])
+        logs = await adapter.search_logs(
+            "error", since=_SINCE, services=["bad name!", "also bad!"]
+        )
         assert logs == []
         # query_range should not have been called since no valid services
         assert call_count == 0
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(503, text="Service Unavailable")
 
@@ -208,8 +222,8 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_respects_limit_parameter(self):
-        captured_params: list[dict] = []
+    async def test_respects_limit_parameter(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -222,8 +236,8 @@ class TestSearchLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_direction_backward_sent(self):
-        captured_params: list[dict] = []
+    async def test_direction_backward_sent(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -242,7 +256,7 @@ class TestSearchSpans:
     Uses Tempo's /api/search API; returns trace-level summaries.
     """
 
-    _TEMPO_RESPONSE: ClassVar[dict] = {
+    _TEMPO_RESPONSE: ClassVar[dict[str, Any]] = {
         "traces": [
             {
                 "traceID": "trace1",
@@ -250,19 +264,13 @@ class TestSearchSpans:
                 "rootName": "GET /users",
                 "startTimeUnixNano": str(int(_SINCE.timestamp() * 1e9)),
                 "durationMs": 42.0,
-                "spanSets": [
-                    {
-                        "spans": [
-                            {"attributes": {"otel.status_code": "OK"}}
-                        ]
-                    }
-                ],
+                "spanSets": [{"spans": [{"attributes": {"otel.status_code": "OK"}}]}],
             }
         ]
     }
 
     @pytest.mark.asyncio
-    async def test_returns_span_summaries(self):
+    async def test_returns_span_summaries(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/api/search"
             return httpx.Response(200, json=self._TEMPO_RESPONSE)
@@ -281,7 +289,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_has_error_true_filters_non_error_traces(self):
+    async def test_has_error_true_filters_non_error_traces(self) -> None:
         tempo_response = {
             "traces": [
                 {
@@ -321,7 +329,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_has_error_false_filters_error_traces(self):
+    async def test_has_error_false_filters_error_traces(self) -> None:
         tempo_response = {
             "traces": [
                 {
@@ -360,8 +368,8 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_passed_as_param(self):
-        captured_params: list[dict] = []
+    async def test_service_filter_passed_as_param(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
@@ -376,8 +384,8 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_operation_filter_passed_as_param(self):
-        captured_params: list[dict] = []
+    async def test_operation_filter_passed_as_param(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
@@ -392,8 +400,8 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_has_error_true_adds_error_status_param(self):
-        captured_params: list[dict] = []
+    async def test_has_error_true_adds_error_status_param(self) -> None:
+        captured_params: list[dict[str, str]] = []
 
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
@@ -408,7 +416,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(503, text="Service Unavailable")
 
@@ -421,7 +429,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_traces_response_returns_empty_list(self):
+    async def test_empty_traces_response_returns_empty_list(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"traces": []})
 
@@ -434,7 +442,7 @@ class TestSearchSpans:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_span_set_error_detection_from_otel_status(self):
+    async def test_span_set_error_detection_from_otel_status(self) -> None:
         """Traces with otel.status_code=ERROR in any spanSet span are marked has_error=True."""
         tempo_response = {
             "traces": [
@@ -483,7 +491,8 @@ _TEMPO_TRACE_RESPONSE = {
                             "spanId": "root-span",
                             "name": "GET /users",
                             "startTimeUnixNano": int(_SINCE.timestamp() * 1e9),
-                            "endTimeUnixNano": int(_SINCE.timestamp() * 1e9) + 5_000_000,
+                            "endTimeUnixNano": int(_SINCE.timestamp() * 1e9)
+                            + 5_000_000,
                             "status": {"code": 0},
                             "attributes": [
                                 {"key": "http.method", "value": {"stringValue": "GET"}}
@@ -493,8 +502,10 @@ _TEMPO_TRACE_RESPONSE = {
                             "spanId": "child-span",
                             "parentSpanId": "root-span",
                             "name": "db-query",
-                            "startTimeUnixNano": int(_SINCE.timestamp() * 1e9) + 1_000_000,
-                            "endTimeUnixNano": int(_SINCE.timestamp() * 1e9) + 3_000_000,
+                            "startTimeUnixNano": int(_SINCE.timestamp() * 1e9)
+                            + 1_000_000,
+                            "endTimeUnixNano": int(_SINCE.timestamp() * 1e9)
+                            + 3_000_000,
                             "status": {"code": 2},  # non-zero = error
                             "attributes": [],
                         },
@@ -528,7 +539,10 @@ _LOKI_CORRELATED_RESPONSE = {
             {
                 "stream": {"trace_id": "abc123"},
                 "values": [
-                    [str(int(_SINCE.timestamp() * 1e9)), "database connection pool exhausted"],
+                    [
+                        str(int(_SINCE.timestamp() * 1e9)),
+                        "database connection pool exhausted",
+                    ],
                 ],
             }
         ]
@@ -540,7 +554,7 @@ class TestGetRecentErrors:
     """Tests for GrafanaStackTelemetryAdapter.get_recent_errors()."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_events_from_loki(self):
+    async def test_returns_error_events_from_loki(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             assert "query_range" in request.url.path
             return httpx.Response(200, json=_LOKI_ERROR_LOG_RESPONSE)
@@ -553,7 +567,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_result_returns_empty_list(self):
+    async def test_empty_result_returns_empty_list(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": {"result": []}})
 
@@ -563,8 +577,8 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_service_filter_added_to_logql_query(self):
-        captured: list[dict] = []
+    async def test_service_filter_added_to_logql_query(self) -> None:
+        captured: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             if "query_range" in request.url.path:
@@ -578,7 +592,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_services_only_returns_empty(self):
+    async def test_invalid_services_only_returns_empty(self) -> None:
         call_count = 0
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
@@ -594,7 +608,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_non_json_log_line_skipped(self):
+    async def test_non_json_log_line_skipped(self) -> None:
         response = {
             "data": {
                 "result": [
@@ -617,7 +631,7 @@ class TestGetRecentErrors:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(503, text="Service Unavailable")
 
@@ -631,7 +645,7 @@ class TestGetTrace:
     """Tests for GrafanaStackTelemetryAdapter.get_trace()."""
 
     @pytest.mark.asyncio
-    async def test_returns_trace_tree_from_tempo(self):
+    async def test_returns_trace_tree_from_tempo(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             assert "/api/traces/" in request.url.path
             return httpx.Response(200, json=_TEMPO_TRACE_RESPONSE)
@@ -646,7 +660,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_child_span_attached_to_root(self):
+    async def test_child_span_attached_to_root(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_TEMPO_TRACE_RESPONSE)
 
@@ -660,7 +674,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_trace_id_raises_value_error(self):
+    async def test_invalid_trace_id_raises_value_error(self) -> None:
         adapter = _make_adapter(
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
@@ -670,7 +684,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_batches_raises_value_error(self):
+    async def test_empty_batches_raises_value_error(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"batches": []})
 
@@ -683,7 +697,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
 
@@ -696,7 +710,7 @@ class TestGetTrace:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_error_spans_collected_for_nonzero_status(self):
+    async def test_error_spans_collected_for_nonzero_status(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_TEMPO_TRACE_RESPONSE)
 
@@ -714,7 +728,7 @@ class TestGetTraces:
     """Tests for GrafanaStackTelemetryAdapter.get_traces()."""
 
     @pytest.mark.asyncio
-    async def test_returns_traces_for_valid_ids(self):
+    async def test_returns_traces_for_valid_ids(self) -> None:
         def tempo_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_TEMPO_TRACE_RESPONSE)
 
@@ -729,7 +743,7 @@ class TestGetTraces:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_input_returns_empty(self):
+    async def test_empty_input_returns_empty(self) -> None:
         adapter = _make_adapter(
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
@@ -740,7 +754,7 @@ class TestGetTraces:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_ids_result_in_partial(self):
+    async def test_invalid_ids_result_in_partial(self) -> None:
         adapter = _make_adapter(
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
@@ -751,7 +765,7 @@ class TestGetTraces:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_failed_fetch_results_in_partial(self):
+    async def test_failed_fetch_results_in_partial(self) -> None:
         call_count = 0
 
         def tempo_handler(request: httpx.Request) -> httpx.Response:
@@ -765,7 +779,9 @@ class TestGetTraces:
             httpx.MockTransport(lambda r: httpx.Response(200, json={})),
             httpx.MockTransport(tempo_handler),
         )
-        traces, info = await adapter.get_traces(["abc123abc123abc123abc123abc12300", "def456def456def456def456def45600"])
+        traces, info = await adapter.get_traces(
+            ["abc123abc123abc123abc123abc12300", "def456def456def456def456def45600"]
+        )
         assert len(traces) == 1
         assert info.is_partial
         await adapter.close()
@@ -775,7 +791,7 @@ class TestGetCorrelatedLogs:
     """Tests for GrafanaStackTelemetryAdapter.get_correlated_logs()."""
 
     @pytest.mark.asyncio
-    async def test_returns_log_entries_from_loki(self):
+    async def test_returns_log_entries_from_loki(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_LOKI_CORRELATED_RESPONSE)
 
@@ -786,23 +802,29 @@ class TestGetCorrelatedLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_trace_id_raises_value_error(self):
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    async def test_invalid_trace_id_raises_value_error(self) -> None:
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         with pytest.raises(ValueError, match="Invalid trace ID"):
             await adapter.get_correlated_logs(["not-hex!"])
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_valid_hex_wrong_length_raises_value_error(self):
+    async def test_valid_hex_wrong_length_raises_value_error(self) -> None:
         """A hex string that is not 32 chars (128-bit) must be rejected."""
-        adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+        adapter = _make_adapter(
+            httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
         with pytest.raises(ValueError, match="Invalid trace ID"):
-            await adapter.get_correlated_logs(["abcdef"])  # 6 chars, valid hex but wrong length
+            await adapter.get_correlated_logs(
+                ["abcdef"]
+            )  # 6 chars, valid hex but wrong length
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_trace_id_included_in_loki_query(self):
-        captured: list[dict] = []
+    async def test_trace_id_included_in_loki_query(self) -> None:
+        captured: list[dict[str, str]] = []
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
             captured.append(dict(request.url.params))
@@ -817,10 +839,10 @@ class TestGetCorrelatedLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_non_default_window_minutes_changes_time_range(self):
+    async def test_non_default_window_minutes_changes_time_range(self) -> None:
         """A custom window_minutes value should widen the start/end range."""
-        captured_narrow: list[dict] = []
-        captured_wide: list[dict] = []
+        captured_narrow: list[dict[str, str]] = []
+        captured_wide: list[dict[str, str]] = []
 
         def loki_handler_narrow(request: httpx.Request) -> httpx.Response:
             captured_narrow.append(dict(request.url.params))
@@ -844,7 +866,7 @@ class TestGetCorrelatedLogs:
         assert start_wide < start_narrow  # wider window reaches further back
 
     @pytest.mark.asyncio
-    async def test_empty_result_returns_empty(self):
+    async def test_empty_result_returns_empty(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"data": {"result": []}})
 
@@ -854,7 +876,7 @@ class TestGetCorrelatedLogs:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         def loki_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(503, text="Service Unavailable")
 
@@ -868,7 +890,7 @@ class TestGetEventsForSignature:
     """Tests for GrafanaStackTelemetryAdapter.get_events_for_signature()."""
 
     @pytest.mark.asyncio
-    async def test_returns_events_matching_fingerprint(self):
+    async def test_returns_events_matching_fingerprint(self) -> None:
         from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
@@ -888,7 +910,7 @@ class TestGetEventsForSignature:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_non_matching_fingerprint_returns_empty(self):
+    async def test_non_matching_fingerprint_returns_empty(self) -> None:
         from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 
         def loki_handler(request: httpx.Request) -> httpx.Response:
@@ -908,7 +930,7 @@ class TestGetEventsForSignature:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_limit_is_respected(self):
+    async def test_limit_is_respected(self) -> None:
         from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
 
         many_logs = {

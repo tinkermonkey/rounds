@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import CaptureFixture
 
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
@@ -126,7 +127,9 @@ class TestConfigurationLoading:
             },
             clear=False,
         ):
-            with pytest.raises(ValidationError, match="anthropic_api_key or claude_code_oauth_token"):
+            with pytest.raises(
+                ValidationError, match="anthropic_api_key or claude_code_oauth_token"
+            ):
                 load_settings()
 
 
@@ -134,13 +137,17 @@ class TestBootstrapErrorHandling:
     """Test bootstrap function error handling."""
 
     @pytest.mark.asyncio
-    async def test_bootstrap_exits_on_configuration_value_error(self, capsys) -> None:
+    async def test_bootstrap_exits_on_configuration_value_error(
+        self, capsys: CaptureFixture[str]
+    ) -> None:
         """Test bootstrap catches ValueError from load_settings and exits cleanly."""
         from rounds.main import bootstrap
 
         # Mock load_settings to raise ValueError
         with patch("rounds.main.load_settings") as mock_load:
-            mock_load.side_effect = ValueError("Invalid telemetry backend: 'invalid_backend'")
+            mock_load.side_effect = ValueError(
+                "Invalid telemetry backend: 'invalid_backend'"
+            )
 
             # Should exit with code 1
             with pytest.raises(SystemExit) as exc_info:
@@ -397,9 +404,7 @@ class TestLoggingConfiguration:
         # Check that at least one handler exists
         assert len(root_logger.handlers) > 0
         # Verify the handler is a StreamHandler
-        assert any(
-            isinstance(h, logging.StreamHandler) for h in root_logger.handlers
-        )
+        assert any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers)
 
     def test_configure_logging_json_format(self) -> None:
         """Configure logging with JSON format."""
@@ -423,7 +428,7 @@ class TestLoggingConfiguration:
         handler = root_logger.handlers[0]
         if isinstance(handler, logging.StreamHandler):
             formatter = handler.formatter
-            if formatter and hasattr(formatter, '_fmt') and formatter._fmt:
+            if formatter and hasattr(formatter, "_fmt") and formatter._fmt:
                 assert "time" in formatter._fmt
 
 

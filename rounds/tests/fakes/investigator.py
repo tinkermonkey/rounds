@@ -14,7 +14,11 @@ from rounds.tests.fakes.telemetry import FakeTelemetryPort
 class FakeInvestigator(Investigator):
     """Fake investigator that returns pre-configured diagnoses without calling external services."""
 
-    def __init__(self, diagnosis_to_return: Diagnosis | None = None, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        diagnosis_to_return: Diagnosis | None = None,
+        raise_error: Exception | None = None,
+    ) -> None:
         """Initialize fake investigator.
 
         Args:
@@ -26,7 +30,9 @@ class FakeInvestigator(Investigator):
         fake_store = FakeSignatureStorePort()
         fake_diagnosis = FakeDiagnosisPort()
         fake_notification = FakeNotificationPort()
-        fake_triage = TriageEngine()  # Real triage implementation (domain logic, not I/O)
+        fake_triage = (
+            TriageEngine()
+        )  # Real triage implementation (domain logic, not I/O)
 
         # Initialize parent with fake ports
         super().__init__(
