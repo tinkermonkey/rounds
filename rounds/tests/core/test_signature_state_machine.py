@@ -370,13 +370,14 @@ def test_signature_accepts_explicit_resolution_and_alert_fields() -> None:
     assert sig.max_severity == Severity.FATAL
 
 
-def test_signature_rejects_non_positive_resolution_threshold_hours() -> None:
-    """A negative resolution_threshold_hours (e.g. from a corrupt row) must be
-    rejected, since timedelta(hours=<negative>) would make every diagnosed
-    signature appear immediately overdue for auto-close."""
-    with pytest.raises(
-        ValueError, match=r"resolution_threshold_hours must be positive, got -6"
-    ):
+@pytest.mark.parametrize("invalid_hours", [0, -1, -24])
+def test_signature_rejects_non_positive_resolution_threshold_hours(
+    invalid_hours: int,
+) -> None:
+    """A zero or negative resolution_threshold_hours (e.g. from a corrupt row)
+    must be rejected, since timedelta(hours=<non-positive>) would make every
+    diagnosed signature appear immediately overdue for auto-close."""
+    with pytest.raises(ValueError, match=r"resolution_threshold_hours must be positive"):
         Signature(
             id="sig-003",
             fingerprint="fp-003",
@@ -388,7 +389,7 @@ def test_signature_rejects_non_positive_resolution_threshold_hours() -> None:
             last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
             occurrence_count=1,
             status=SignatureStatus.NEW,
-            resolution_threshold_hours=-6,
+            resolution_threshold_hours=invalid_hours,
         )
 
 
