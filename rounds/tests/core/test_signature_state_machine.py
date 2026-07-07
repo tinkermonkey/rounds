@@ -370,6 +370,28 @@ def test_signature_accepts_explicit_resolution_and_alert_fields() -> None:
     assert sig.max_severity == Severity.FATAL
 
 
+def test_signature_rejects_non_positive_resolution_threshold_hours() -> None:
+    """A negative resolution_threshold_hours (e.g. from a corrupt row) must be
+    rejected, since timedelta(hours=<negative>) would make every diagnosed
+    signature appear immediately overdue for auto-close."""
+    with pytest.raises(
+        ValueError, match=r"resolution_threshold_hours must be positive, got -6"
+    ):
+        Signature(
+            id="sig-003",
+            fingerprint="fp-003",
+            error_type="NullPointerError",
+            service="billing-service",
+            message_template="Null reference in handler",
+            stack_hash="hash-stack-003",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+            resolution_threshold_hours=-6,
+        )
+
+
 def test_record_occurrence_raises_max_severity_when_new_event_is_more_severe(
     signature: Signature,
 ) -> None:

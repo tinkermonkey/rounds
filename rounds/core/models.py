@@ -203,6 +203,14 @@ class Signature:
                 f"last_seen ({self.last_seen}) cannot be before "
                 f"first_seen ({self.first_seen})"
             )
+        if (
+            self.resolution_threshold_hours is not None
+            and self.resolution_threshold_hours <= 0
+        ):
+            raise ValueError(
+                "resolution_threshold_hours must be positive, got "
+                f"{self.resolution_threshold_hours}"
+            )
 
     def mark_investigating(self) -> None:
         """Transition signature to investigating status."""
