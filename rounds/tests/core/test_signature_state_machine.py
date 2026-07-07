@@ -5,6 +5,7 @@ invalid transitions raise appropriate errors.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -55,7 +56,7 @@ def test_mark_investigating_from_new(signature: Signature) -> None:
     """mark_investigating should succeed when status is NEW."""
     assert signature.status == SignatureStatus.NEW
     signature.mark_investigating()
-    assert signature.status == SignatureStatus.INVESTIGATING
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.INVESTIGATING
 
 
 def test_mark_investigating_from_investigating(signature: Signature) -> None:
@@ -126,7 +127,7 @@ def test_mark_diagnosed_from_new(signature: Signature, diagnosis: Diagnosis) -> 
     """mark_diagnosed should succeed even from NEW status."""
     assert signature.status == SignatureStatus.NEW
     signature.mark_diagnosed(diagnosis)
-    assert signature.status == SignatureStatus.DIAGNOSED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.DIAGNOSED
     assert signature.diagnosis is diagnosis
 
 
@@ -153,7 +154,7 @@ def test_mark_resolved_from_new(signature: Signature) -> None:
     """mark_resolved should succeed from NEW."""
     assert signature.status == SignatureStatus.NEW
     signature.mark_resolved()
-    assert signature.status == SignatureStatus.RESOLVED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.RESOLVED
 
 
 def test_mark_resolved_idempotent_fails(signature: Signature) -> None:
@@ -179,7 +180,7 @@ def test_mark_muted_from_new(signature: Signature) -> None:
     """mark_muted should succeed from NEW."""
     assert signature.status == SignatureStatus.NEW
     signature.mark_muted()
-    assert signature.status == SignatureStatus.MUTED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.MUTED
 
 
 def test_mark_muted_from_diagnosed(signature: Signature) -> None:
@@ -260,14 +261,14 @@ def test_workflow_new_investigating_diagnosed_resolved(signature: Signature, dia
     assert signature.status == SignatureStatus.NEW
 
     signature.mark_investigating()
-    assert signature.status == SignatureStatus.INVESTIGATING
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.INVESTIGATING
 
     signature.mark_diagnosed(diagnosis)
-    assert signature.status == SignatureStatus.DIAGNOSED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.DIAGNOSED
     assert signature.diagnosis is diagnosis
 
     signature.mark_resolved()
-    assert signature.status == SignatureStatus.RESOLVED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.RESOLVED
 
 
 def test_workflow_new_investigating_muted(signature: Signature) -> None:
@@ -275,10 +276,10 @@ def test_workflow_new_investigating_muted(signature: Signature) -> None:
     assert signature.status == SignatureStatus.NEW
 
     signature.mark_investigating()
-    assert signature.status == SignatureStatus.INVESTIGATING
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.INVESTIGATING
 
     signature.mark_muted()
-    assert signature.status == SignatureStatus.MUTED
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.MUTED
 
 
 def test_workflow_new_investigating_revert_investigating(signature: Signature) -> None:
@@ -286,14 +287,14 @@ def test_workflow_new_investigating_revert_investigating(signature: Signature) -
     assert signature.status == SignatureStatus.NEW
 
     signature.mark_investigating()
-    assert signature.status == SignatureStatus.INVESTIGATING
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.INVESTIGATING
 
     signature.revert_to_new()
-    assert signature.status == SignatureStatus.NEW
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.NEW
 
     # Can investigate again after revert
     signature.mark_investigating()
-    assert signature.status == SignatureStatus.INVESTIGATING
+    assert cast(SignatureStatus, signature.status) == SignatureStatus.INVESTIGATING
 
 
 def test_record_occurrence_invariants(signature: Signature) -> None:

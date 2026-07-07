@@ -6,21 +6,12 @@ external diagnosis services.
 """
 
 import logging
-from typing import Protocol
 
 from .models import Diagnosis, InvestigationContext, Signature
-from .ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
+from .ports import BudgetTracker, DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
-
-
-class BudgetTracker(Protocol):
-    """Protocol for budget tracking (used by DaemonScheduler)."""
-
-    async def record_diagnosis_cost(self, cost_usd: float) -> None:
-        """Record a diagnosis cost towards the daily budget."""
-        ...
 
 
 class Investigator:
@@ -122,7 +113,7 @@ class Investigator:
 
         # 4. Record cost if budget tracker available
         if self.budget_tracker:
-            await self.budget_tracker.record_diagnosis_cost(diagnosis.cost_usd)
+            await self.budget_tracker.record_cost("diagnose", diagnosis.cost_usd)
 
         # 5. Persist diagnosis before notification
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
@@ -137,8 +128,15 @@ class Investigator:
             )
             raise
 
-        # 6. Notify if warranted (failure here should NOT revert the persisted diagnosis)
+        # 6. Confirm: decide whether the diagnosis is worth notifying about
+        # (failure here should NOT revert the persisted diagnosis)
         # Pass original status to should_notify for correct medium-confidence logic
+        if self.budget_tracker:
+            # Triage is pure decision logic today (no LLM call), so this is
+            # always 0.0 - recorded so the confirm step is represented in
+            # per-step cost accounting alongside poll/fingerprint/diagnose.
+            await self.budget_tracker.record_cost("confirm", 0.0)
+
         notification_error: Exception | None = None
         try:
             if self.triage.should_notify(signature, diagnosis, original_status=original_status):

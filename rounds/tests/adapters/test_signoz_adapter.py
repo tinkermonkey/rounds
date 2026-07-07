@@ -8,7 +8,9 @@ from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
 
 def _make_adapter(transport: httpx.MockTransport) -> SigNozTelemetryAdapter:
     """Create a SigNozTelemetryAdapter with a mock transport."""
-    adapter = SigNozTelemetryAdapter(api_url="http://signoz-test:3301", api_key="test-key")
+    adapter = SigNozTelemetryAdapter(
+        api_url="http://signoz-test:3301", api_key="test-key"
+    )
     adapter.client = httpx.AsyncClient(
         base_url="http://signoz-test:3301",
         headers=adapter._get_headers(),
@@ -21,7 +23,7 @@ class TestVerifyConnection:
     """Tests for SigNozTelemetryAdapter.verify_connection()."""
 
     @pytest.mark.asyncio
-    async def test_happy_path_200(self):
+    async def test_happy_path_200(self) -> None:
         """Should log INFO and not raise on a 200 health response."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -32,7 +34,7 @@ class TestVerifyConnection:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_non_auth_4xx_treated_as_reachable(self):
+    async def test_non_auth_4xx_treated_as_reachable(self) -> None:
         """404 (e.g. health path varies by version) should not raise — server responded."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -43,7 +45,7 @@ class TestVerifyConnection:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_401_raises_http_status_error(self):
+    async def test_401_raises_http_status_error(self) -> None:
         """Should raise HTTPStatusError and log ERROR on 401."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -55,7 +57,7 @@ class TestVerifyConnection:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_403_raises_http_status_error(self):
+    async def test_403_raises_http_status_error(self) -> None:
         """Should raise HTTPStatusError and log ERROR on 403."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -67,7 +69,7 @@ class TestVerifyConnection:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_connect_error_raises(self):
+    async def test_connect_error_raises(self) -> None:
         """Should re-raise ConnectError and log ERROR when SigNoz is unreachable."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -79,7 +81,7 @@ class TestVerifyConnection:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_timeout_raises(self):
+    async def test_timeout_raises(self) -> None:
         """Should re-raise TimeoutException and log ERROR on request timeout."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -95,18 +97,21 @@ class TestListServices:
     """Tests for SigNozTelemetryAdapter.list_services()."""
 
     @pytest.mark.asyncio
-    async def test_returns_sorted_service_names(self):
+    async def test_returns_sorted_service_names(self) -> None:
         """Should return sorted service names from /api/v1/services data array."""
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/api/v1/services"
-            return httpx.Response(200, json={
-                "data": [
-                    {"serviceName": "zebra-api", "p99": 0},
-                    {"serviceName": "alpha-worker", "p99": 0},
-                    {"serviceName": "beta-service", "p99": 0},
-                ]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"serviceName": "zebra-api", "p99": 0},
+                        {"serviceName": "alpha-worker", "p99": 0},
+                        {"serviceName": "beta-service", "p99": 0},
+                    ]
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         services = await adapter.list_services()
@@ -114,17 +119,20 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_deduplicates_service_names(self):
+    async def test_deduplicates_service_names(self) -> None:
         """Should deduplicate service names returned by SigNoz."""
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={
-                "data": [
-                    {"serviceName": "my-service"},
-                    {"serviceName": "my-service"},
-                    {"serviceName": "other-service"},
-                ]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"serviceName": "my-service"},
+                        {"serviceName": "my-service"},
+                        {"serviceName": "other-service"},
+                    ]
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         services = await adapter.list_services()
@@ -132,7 +140,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_empty_data_returns_empty_list(self):
+    async def test_empty_data_returns_empty_list(self) -> None:
         """Should return empty list when no services are instrumented."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -144,7 +152,7 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_propagates(self) -> None:
         """Should re-raise HTTPStatusError from /api/v1/services."""
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -156,17 +164,20 @@ class TestListServices:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_skips_items_without_service_name(self):
+    async def test_skips_items_without_service_name(self) -> None:
         """Should skip data items that have no serviceName field."""
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={
-                "data": [
-                    {"serviceName": "real-service"},
-                    {"p99": 0},  # no serviceName
-                    {"serviceName": ""},  # empty string
-                ]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"serviceName": "real-service"},
+                        {"p99": 0},  # no serviceName
+                        {"serviceName": ""},  # empty string
+                    ]
+                },
+            )
 
         adapter = _make_adapter(httpx.MockTransport(handler))
         services = await adapter.list_services()
@@ -178,7 +189,7 @@ class TestMainBootstrapIntegration:
     """Tests for the catch-and-continue behavior in main.py _verify_signoz_connection()."""
 
     @pytest.mark.asyncio
-    async def test_connectivity_failure_does_not_block_startup(self, caplog):
+    async def test_connectivity_failure_does_not_block_startup(self, caplog: pytest.LogCaptureFixture) -> None:
         """_verify_signoz_connection() should log a WARNING and proceed on transient connection errors."""
         import logging
 
@@ -199,7 +210,7 @@ class TestMainBootstrapIntegration:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_auth_failure_raises_at_startup(self, caplog):
+    async def test_auth_failure_raises_at_startup(self, caplog: pytest.LogCaptureFixture) -> None:
         """_verify_signoz_connection() should log an ERROR and re-raise on 401/403 responses."""
         import logging
 
@@ -214,14 +225,11 @@ class TestMainBootstrapIntegration:
             with pytest.raises(httpx.HTTPStatusError):
                 await _verify_signoz_connection(adapter)
 
-        assert any(
-            "check SIGNOZ_API_KEY" in r.message
-            for r in caplog.records
-        )
+        assert any("check SIGNOZ_API_KEY" in r.message for r in caplog.records)
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_non_auth_http_error_does_not_block_startup(self, caplog):
+    async def test_non_auth_http_error_does_not_block_startup(self, caplog: pytest.LogCaptureFixture) -> None:
         """_verify_signoz_connection() should treat non-auth HTTPStatusError as transient and proceed."""
         import logging
         from unittest.mock import AsyncMock, patch
@@ -231,8 +239,14 @@ class TestMainBootstrapIntegration:
         from rounds.main import _verify_signoz_connection
 
         adapter = _make_adapter(httpx.MockTransport(lambda r: httpx.Response(200)))
-        mock_response = httpx.Response(500, request=httpx.Request("GET", "http://signoz-test:3301/api/v1/health"))
-        exc = httpx.HTTPStatusError("Internal Server Error", request=mock_response.request, response=mock_response)
+        mock_response = httpx.Response(
+            500, request=httpx.Request("GET", "http://signoz-test:3301/api/v1/health")
+        )
+        exc = httpx.HTTPStatusError(
+            "Internal Server Error",
+            request=mock_response.request,
+            response=mock_response,
+        )
 
         with patch.object(adapter, "verify_connection", new=AsyncMock(side_effect=exc)):
             with caplog.at_level(logging.WARNING):

@@ -175,8 +175,8 @@ class JaegerTelemetryAdapter(TelemetryPort):
         try:
             response = await self.client.get("/api/services")
             response.raise_for_status()
-            data = response.json()
-            return data.get("data", [])
+            data: dict[str, Any] = response.json()
+            return list(data.get("data", []))
         except httpx.HTTPError as e:
             logger.error(f"HTTP error fetching services from Jaeger: {e}", exc_info=True)
             raise

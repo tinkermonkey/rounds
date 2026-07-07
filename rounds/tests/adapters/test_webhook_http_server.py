@@ -11,18 +11,18 @@ class TestWebhookHTTPServerInitialization:
     """Tests for WebhookHTTPServer initialization and configuration validation."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     def test_require_auth_without_api_key_raises_value_error(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should raise ValueError when require_auth=True but api_key is None."""
         # Import here to avoid circular dependency
         from rounds.adapters.webhook.receiver import WebhookReceiver
@@ -44,8 +44,8 @@ class TestWebhookHTTPServerInitialization:
         assert "no API key provided" in str(exc_info.value)
 
     def test_require_auth_with_empty_api_key_raises_value_error(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should raise ValueError when require_auth=True but api_key is empty string."""
         from rounds.adapters.webhook.receiver import WebhookReceiver
 
@@ -65,8 +65,8 @@ class TestWebhookHTTPServerInitialization:
         assert "no API key provided" in str(exc_info.value)
 
     def test_require_auth_with_api_key_succeeds(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should initialize successfully when require_auth=True and api_key is provided."""
         from rounds.adapters.webhook.receiver import WebhookReceiver
 
@@ -85,8 +85,8 @@ class TestWebhookHTTPServerInitialization:
         assert server.require_auth is True
 
     def test_no_auth_required_without_api_key_succeeds(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should initialize successfully when require_auth=False and no api_key."""
         from rounds.adapters.webhook.receiver import WebhookReceiver
 

@@ -35,6 +35,7 @@ from rounds.core.ports import (
     PollPort,
     SignatureStorePort,
     TelemetryPort,
+    UsageQueryPort,
 )
 
 # ============================================================================
@@ -163,6 +164,11 @@ class TestPortAbstraction:
         """DiagnosisPort cannot be instantiated directly."""
         with pytest.raises(TypeError):
             DiagnosisPort()  # type: ignore
+
+    def test_usage_query_port_is_abstract(self) -> None:
+        """UsageQueryPort cannot be instantiated directly."""
+        with pytest.raises(TypeError):
+            UsageQueryPort()  # type: ignore
 
     def test_notification_port_is_abstract(self) -> None:
         """NotificationPort cannot be instantiated directly."""
@@ -357,6 +363,17 @@ class MockDiagnosisPort(DiagnosisPort):
             cost_usd=0.0,
             investigated_at=datetime.now(UTC),
         )
+
+
+class MockUsageQueryPort(UsageQueryPort):
+    """Mock implementation of UsageQueryPort for testing."""
+
+    def __init__(self, cost: float = 0.0) -> None:
+        self._cost = cost
+
+    async def query_diagnosis_cost(self, trace_id: str) -> float:
+        """Mock implementation."""
+        return self._cost
 
 
 class MockNotificationPort(NotificationPort):
@@ -706,6 +723,30 @@ class TestDiagnosisPort:
         assert isinstance(result.key_findings, tuple)
         assert isinstance(result.cost_usd, float)
         assert result.cost_usd >= 0.0
+
+
+# ============================================================================
+# Test UsageQueryPort Contract
+# ============================================================================
+
+
+class TestUsageQueryPort:
+    """Test UsageQueryPort interface contract."""
+
+    @pytest.mark.asyncio
+    async def test_query_diagnosis_cost_returns_float(self) -> None:
+        """query_diagnosis_cost must return a float."""
+        port = MockUsageQueryPort(cost=1.23)
+        result = await port.query_diagnosis_cost("trace-abc")
+        assert isinstance(result, float)
+        assert result == 1.23
+
+    @pytest.mark.asyncio
+    async def test_query_diagnosis_cost_defaults_to_zero_when_unavailable(self) -> None:
+        """query_diagnosis_cost returns 0.0 when usage data is unavailable."""
+        port = MockUsageQueryPort()
+        result = await port.query_diagnosis_cost("trace-unknown")
+        assert result == 0.0
 
 
 # ============================================================================

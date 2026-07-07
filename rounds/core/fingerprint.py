@@ -15,11 +15,11 @@ class Fingerprinter:
     """Produces stable fingerprints from error events.
 
     No external dependencies — pure function over domain objects.
-    All methods are static as the class carries no state.
+    Helper methods are static; `fingerprint` is an instance method so
+    subclasses can override it with stateful behavior (e.g. in tests).
     """
 
-    @staticmethod
-    def fingerprint(event: ErrorEvent) -> str:
+    def fingerprint(self, event: ErrorEvent) -> str:
         """Create a stable hash that identifies this class of error.
 
         Same bug, different occurrence → same fingerprint.

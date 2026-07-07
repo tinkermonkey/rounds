@@ -9,8 +9,10 @@ without external dependencies:
 - FakeNotificationPort: Captured notifications for assertion
 - FakePollPort: Captured poll cycle results
 - FakeManagementPort: Captured management operations
+- FakeBudgetTracker: Captured budget cost recordings
 """
 
+from .budget import FakeBudgetTracker
 from .diagnosis import FakeDiagnosisPort
 from .management import FakeManagementPort
 from .notification import FakeNotificationPort
@@ -19,6 +21,7 @@ from .store import FakeSignatureStorePort
 from .telemetry import FakeTelemetryPort
 
 __all__ = [
+    "FakeBudgetTracker",
     "FakeDiagnosisPort",
     "FakeManagementPort",
     "FakeNotificationPort",

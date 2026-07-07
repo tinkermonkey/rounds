@@ -12,6 +12,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pytest import CaptureFixture
 
 from rounds.core.models import (
     Diagnosis,
@@ -210,21 +211,27 @@ class TestDiagnoseCommand:
 class TestArgumentParsing:
     """Test command-line argument parsing."""
 
-    def test_parse_arguments_with_scan_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_parse_arguments_with_scan_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test _parse_arguments with 'scan' command."""
         monkeypatch.setattr(sys, "argv", ["main.py", "scan"])
         args = _parse_arguments()
         assert args.command == "scan"
         assert args.signature_id is None
 
-    def test_parse_arguments_with_diagnose_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_parse_arguments_with_diagnose_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test _parse_arguments with 'diagnose' command and signature_id."""
         monkeypatch.setattr(sys, "argv", ["main.py", "diagnose", "sig-12345"])
         args = _parse_arguments()
         assert args.command == "diagnose"
         assert args.signature_id == "sig-12345"
 
-    def test_parse_arguments_with_no_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_parse_arguments_with_no_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test _parse_arguments with no command (interactive mode)."""
         monkeypatch.setattr(sys, "argv", ["main.py"])
         args = _parse_arguments()
@@ -293,7 +300,7 @@ class TestRunScanIntegration:
 
     @pytest.mark.asyncio
     async def test_run_scan_invokes_poll_service(
-        self, sample_signature: Signature, capsys
+        self, sample_signature: Signature, capsys: CaptureFixture[str]
     ) -> None:
         """Test that _run_scan invokes PollService with correct parameters."""
         from rounds.core.fingerprint import Fingerprinter
@@ -338,7 +345,7 @@ class TestRunScanIntegration:
 
     @pytest.mark.asyncio
     async def test_run_scan_output_structure(
-        self, sample_signature: Signature, capsys
+        self, sample_signature: Signature, capsys: CaptureFixture[str]
     ) -> None:
         """Test that _run_scan output structure matches JSON specification."""
         from rounds.core.fingerprint import Fingerprinter
@@ -382,7 +389,9 @@ class TestRunScanIntegration:
         assert isinstance(output["timestamp"], str)
 
     @pytest.mark.asyncio
-    async def test_run_scan_handles_connection_error(self, capsys) -> None:
+    async def test_run_scan_handles_connection_error(
+        self, capsys: CaptureFixture[str]
+    ) -> None:
         """Test that _run_scan handles ConnectionError with specific error_type."""
         from rounds.core.fingerprint import Fingerprinter
         from rounds.core.poll_service import PollService
@@ -427,7 +436,10 @@ class TestRunDiagnoseIntegration:
 
     @pytest.mark.asyncio
     async def test_run_diagnose_invokes_investigator(
-        self, sample_signature: Signature, sample_diagnosis: Diagnosis, capsys
+        self,
+        sample_signature: Signature,
+        sample_diagnosis: Diagnosis,
+        capsys: CaptureFixture[str],
     ) -> None:
         """Test that _run_diagnose invokes investigator with correct signature."""
         # Create fake adapters
@@ -455,7 +467,9 @@ class TestRunDiagnoseIntegration:
         assert output["cost_usd"] == sample_diagnosis.cost_usd
 
     @pytest.mark.asyncio
-    async def test_run_diagnose_handles_missing_signature(self, capsys) -> None:
+    async def test_run_diagnose_handles_missing_signature(
+        self, capsys: CaptureFixture[str]
+    ) -> None:
         """Test that _run_diagnose properly handles nonexistent signature."""
         # Create fake adapters with empty store
         store = FakeSignatureStorePort()
@@ -476,7 +490,7 @@ class TestRunDiagnoseIntegration:
 
     @pytest.mark.asyncio
     async def test_run_diagnose_handles_investigation_error(
-        self, sample_signature: Signature, capsys
+        self, sample_signature: Signature, capsys: CaptureFixture[str]
     ) -> None:
         """Test that _run_diagnose handles investigation errors."""
         # Create fake adapters with error investigator

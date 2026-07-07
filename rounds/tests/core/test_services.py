@@ -25,6 +25,7 @@ from rounds.core.models import (
 from rounds.core.poll_service import PollService
 from rounds.core.triage import TriageEngine
 from rounds.tests.fakes import (
+    FakeBudgetTracker,
     FakeDiagnosisPort,
     FakeNotificationPort,
     FakeSignatureStorePort,
@@ -132,7 +133,7 @@ class FailingNotificationPort(FakeNotificationPort):
 class PartialTraceTelemetryPort(FakeTelemetryPort):
     """Extends FakeTelemetryPort to simulate intermittent trace fetch failures."""
 
-    def __init__(self, fail_trace_count: int = 2):
+    def __init__(self, fail_trace_count: int = 2) -> None:
         """Initialize with failure count."""
         super().__init__()
         self.fail_trace_count = fail_trace_count
@@ -197,11 +198,12 @@ class TestFingerprinter:
         """Normalize stack should strip line numbers."""
         frames = (
             StackFrame(
-                module="app.service", function="process", filename="service.py", lineno=42
+                module="app.service",
+                function="process",
+                filename="service.py",
+                lineno=42,
             ),
-            StackFrame(
-                module="app.db", function="query", filename="db.py", lineno=15
-            ),
+            StackFrame(module="app.db", function="query", filename="db.py", lineno=15),
         )
 
         normalized = fingerprinter.normalize_stack(frames)
@@ -212,7 +214,9 @@ class TestFingerprinter:
         assert normalized[0].module == "app.service"
         assert normalized[1].function == "query"
 
-    def test_templatize_message_replaces_ips(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_ips(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace IP addresses."""
         message = "Failed to connect to 10.0.0.5"
         result = fingerprinter.templatize_message(message)
@@ -228,7 +232,9 @@ class TestFingerprinter:
         assert ":5432" not in result
         assert ":*" in result
 
-    def test_templatize_message_replaces_ids(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_ids(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace numeric IDs."""
         message = "User ID 12345 not found"
         result = fingerprinter.templatize_message(message)
@@ -243,7 +249,9 @@ class TestFingerprinter:
         assert "2024-01-01" not in result
         assert "12:30:45" not in result
 
-    def test_templatize_message_replaces_uuids(self, fingerprinter: Fingerprinter) -> None:
+    def test_templatize_message_replaces_uuids(
+        self, fingerprinter: Fingerprinter
+    ) -> None:
         """Templatize should replace UUIDs."""
         message = "Request 550e8400-e29b-41d4-a716-446655440000 failed"
         result = fingerprinter.templatize_message(message)
@@ -260,13 +268,17 @@ class TestTriageEngine:
 
     def test_constructor_validates_min_occurrence(self) -> None:
         """Test that TriageEngine rejects min_occurrence_for_investigation <= 0."""
-        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+        with pytest.raises(
+            ValueError, match="min_occurrence_for_investigation must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=0,
                 investigation_cooldown_hours=1,
             )
 
-        with pytest.raises(ValueError, match="min_occurrence_for_investigation must be positive"):
+        with pytest.raises(
+            ValueError, match="min_occurrence_for_investigation must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=-1,
                 investigation_cooldown_hours=1,
@@ -274,13 +286,17 @@ class TestTriageEngine:
 
     def test_constructor_validates_cooldown(self) -> None:
         """Test that TriageEngine rejects investigation_cooldown_hours <= 0."""
-        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+        with pytest.raises(
+            ValueError, match="investigation_cooldown_hours must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=1,
                 investigation_cooldown_hours=0,
             )
 
-        with pytest.raises(ValueError, match="investigation_cooldown_hours must be positive"):
+        with pytest.raises(
+            ValueError, match="investigation_cooldown_hours must be positive"
+        ):
             TriageEngine(
                 min_occurrence_for_investigation=1,
                 investigation_cooldown_hours=-1,
@@ -532,9 +548,9 @@ class TestTriageEngine:
             occurrence_count=50,
             status=SignatureStatus.NEW,
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
     def test_calculate_priority_recency_component(
         self, triage_engine: TriageEngine
@@ -565,9 +581,9 @@ class TestTriageEngine:
             occurrence_count=10,
             status=SignatureStatus.NEW,
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
     def test_calculate_priority_critical_tag_bonus(
         self, triage_engine: TriageEngine
@@ -600,9 +616,9 @@ class TestTriageEngine:
             status=SignatureStatus.NEW,
             tags=frozenset(["critical"]),
         )
-        assert triage_engine.calculate_priority(sig2) > triage_engine.calculate_priority(
-            sig1
-        )
+        assert triage_engine.calculate_priority(
+            sig2
+        ) > triage_engine.calculate_priority(sig1)
 
 
 # ============================================================================
@@ -735,7 +751,7 @@ class TestPollService:
 
         # Create a diagnosis engine that fails on the first signature
         class PartiallyFailingDiagnosisPort(FakeDiagnosisPort):
-            async def diagnose(self, context):
+            async def diagnose(self, context: InvestigationContext) -> Diagnosis:
                 if len(investigator_calls) == 0:
                     investigator_calls.append("failed")
                     raise RuntimeError("Diagnosis failed for first signature")
@@ -902,8 +918,12 @@ class TestDatetimeAwareness:
 
         # Execute poll cycle - should only process first 5 errors due to batch size limit
         result = await poll_service.execute_poll_cycle()
-        assert result.errors_found == 5  # Only 5 errors processed due to batch size limit
-        assert (result.new_signatures + result.updated_signatures) == 5  # All processed are new
+        assert (
+            result.errors_found == 5
+        )  # Only 5 errors processed due to batch size limit
+        assert (
+            result.new_signatures + result.updated_signatures
+        ) == 5  # All processed are new
 
 
 @pytest.mark.asyncio
@@ -918,12 +938,12 @@ class TestPollCycleErrorHandling:
         """Poll cycle should continue processing after individual error processing fails."""
 
         class PartiallyBrokenFingerprinter(Fingerprinter):
-            def __init__(self, broken_on_count: int = 2):
+            def __init__(self, broken_on_count: int = 2) -> None:
                 super().__init__()
                 self.call_count = 0
                 self.broken_on_count = broken_on_count
 
-            def fingerprint(self, error):
+            def fingerprint(self, error: ErrorEvent) -> str:
                 self.call_count += 1
                 if self.call_count == self.broken_on_count:
                     raise RuntimeError("Fingerprinter broke")
@@ -980,31 +1000,7 @@ class TestDiagnosisParsingValidation:
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if root_cause is missing."""
-        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-
-        adapter = ClaudeCodeDiagnosisAdapter()
-
-        # Create a mock context (not used in parsing)
-        sig = Signature(
-            id="sig",
-            fingerprint="fp",
-            error_type="Error",
-            service="service",
-            message_template="msg",
-            stack_hash="hash",
-            first_seen=datetime.now(UTC),
-            last_seen=datetime.now(UTC),
-            occurrence_count=1,
-            status=SignatureStatus.NEW,
-        )
-        context = InvestigationContext(
-            signature=sig,
-            recent_events=(),
-            trace_data=(),
-            related_logs=(),
-            codebase_path="/app",
-            historical_context=(),
-        )
+        from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
 
         # Result missing root_cause
         result = {
@@ -1014,36 +1010,13 @@ class TestDiagnosisParsingValidation:
         }
 
         with pytest.raises(ValueError, match="root_cause"):
-            adapter._parse_diagnosis_result(result, context)
+            parse_diagnosis_result(result, model="claude-opus")
 
     def test_diagnosis_parser_requires_valid_confidence(
         self, triage_engine: TriageEngine
     ) -> None:
         """Diagnosis parser should raise if confidence is invalid."""
-        from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
-
-        adapter = ClaudeCodeDiagnosisAdapter()
-
-        sig = Signature(
-            id="sig",
-            fingerprint="fp",
-            error_type="Error",
-            service="service",
-            message_template="msg",
-            stack_hash="hash",
-            first_seen=datetime.now(UTC),
-            last_seen=datetime.now(UTC),
-            occurrence_count=1,
-            status=SignatureStatus.NEW,
-        )
-        context = InvestigationContext(
-            signature=sig,
-            recent_events=(),
-            trace_data=(),
-            related_logs=(),
-            codebase_path="/app",
-            historical_context=(),
-        )
+        from rounds.adapters.diagnosis._parsing import parse_diagnosis_result
 
         # Result with invalid confidence
         result = {
@@ -1054,7 +1027,7 @@ class TestDiagnosisParsingValidation:
         }
 
         with pytest.raises(ValueError, match="Invalid confidence"):
-            adapter._parse_diagnosis_result(result, context)
+            parse_diagnosis_result(result, model="claude-opus")
 
 
 @pytest.mark.asyncio
@@ -1085,7 +1058,9 @@ class TestPartialTraceRetrieval:
         ]
 
         class PartialTelemetryForInvestigator(PartialTraceTelemetryPort):
-            async def get_events_for_signature(self, fingerprint, limit=5):
+            async def get_events_for_signature(
+                self, fingerprint: str, limit: int = 5
+            ) -> list[ErrorEvent]:
                 return events
 
         telemetry = PartialTelemetryForInvestigator(fail_trace_count=2)
@@ -1148,9 +1123,9 @@ class TestNotificationFailureHandling:
         signature.status = SignatureStatus.NEW
 
         class TrackingStore(FakeSignatureStorePort):
-            def __init__(self):
+            def __init__(self) -> None:
                 super().__init__()
-                self.update_calls = []
+                self.update_calls: list[tuple[str, SignatureStatus, Diagnosis | None]] = []
 
             async def get_by_id(self, signature_id: str) -> Signature | None:
                 """Mock implementation."""
@@ -1165,7 +1140,7 @@ class TestNotificationFailureHandling:
                 """Mock implementation."""
                 return await super().get_all(status)
 
-            async def update(self, sig):
+            async def update(self, sig: Signature) -> None:
                 self.update_calls.append((sig.fingerprint, sig.status, sig.diagnosis))
                 await super().update(sig)
 
@@ -1195,6 +1170,7 @@ class TestNotificationFailureHandling:
         self, signature: Signature, triage_engine: TriageEngine
     ) -> None:
         """Test that investigator raises when store update fails after diagnosis."""
+
         # Custom store that fails on the second update (diagnosis persistence)
         class FailingStoreOnDiagnosisPersistence(FakeSignatureStorePort):
             def __init__(self) -> None:
@@ -1205,7 +1181,9 @@ class TestNotificationFailureHandling:
                 self.update_count += 1
                 # Fail on second update (diagnosis persistence)
                 if self.update_count == 2:
-                    raise Exception("Database connection failed during diagnosis persistence")
+                    raise Exception(
+                        "Database connection failed during diagnosis persistence"
+                    )
                 await super().update(sig)
 
         telemetry = FakeTelemetryPort()
@@ -1220,6 +1198,119 @@ class TestNotificationFailureHandling:
         # Investigation should raise the store error
         with pytest.raises(Exception, match="Database connection failed"):
             await investigator.investigate(signature)
+
+
+@pytest.mark.asyncio
+class TestBudgetTracking:
+    """Tests that Investigator and PollService record costs against a BudgetTracker.
+
+    Guards against silent breakage of the budget safety feature: if the
+    record_cost call signature or step names change, these tests should fail.
+    """
+
+    async def test_investigate_records_diagnose_and_confirm_costs(
+        self,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """investigate() should record "diagnose" cost from the diagnosis and a "confirm" cost."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_default_cost(0.42)
+        notification = FakeNotificationPort()
+        budget_tracker = FakeBudgetTracker()
+
+        investigator = Investigator(
+            telemetry,
+            store,
+            diagnosis_engine,
+            notification,
+            triage_engine,
+            "/app",
+            budget_tracker=budget_tracker,
+        )
+
+        await investigator.investigate(signature)
+
+        assert budget_tracker.recorded_costs == [
+            ("diagnose", 0.42),
+            ("confirm", 0.0),
+        ]
+
+    async def test_investigate_without_budget_tracker_does_not_raise(
+        self,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """investigate() should work fine when no budget_tracker is configured."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        diagnosis = await investigator.investigate(signature)
+        assert diagnosis is not None
+
+    async def test_poll_cycle_records_poll_and_fingerprint_costs(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """execute_poll_cycle() should record "poll" and "fingerprint" costs."""
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        budget_tracker = FakeBudgetTracker()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            budget_tracker=budget_tracker,
+        )
+
+        await poll_service.execute_poll_cycle()
+
+        assert budget_tracker.recorded_costs == [
+            ("poll", 0.0),
+            ("fingerprint", 0.0),
+        ]
+
+    async def test_poll_cycle_without_budget_tracker_does_not_raise(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """execute_poll_cycle() should work fine when no budget_tracker is configured."""
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        result = await poll_service.execute_poll_cycle()
+        assert result.errors_found == 1
 
 
 @pytest.mark.asyncio

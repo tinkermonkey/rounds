@@ -7,9 +7,10 @@ triggers poll cycles at configurable intervals.
 import asyncio
 import logging
 import signal
+from collections import defaultdict
 from datetime import UTC, datetime
-from typing import cast
 
+from rounds.core.models import RoundStep
 from rounds.core.ports import NotificationPort, PollPort
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class DaemonScheduler:
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
+        self._cost_by_step: dict[RoundStep, float] = defaultdict(float)
         self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0
@@ -127,14 +129,13 @@ class DaemonScheduler:
         Raises:
             ValueError: If poll_port is not set (should be caught by start()).
         """
-        # Design pattern: Optional field with runtime validation + cast.
+        # Design pattern: Optional field with runtime validation.
         # The poll_port field is Optional to allow deferred initialization (set in start()),
         # but guaranteed non-None here by construction (start() must be called first).
-        # Runtime check validates the invariant; cast() informs type checker for downstream code.
         if self.poll_port is None:
             raise ValueError("poll_port must be set before _run_loop is called")
 
-        poll_port = cast(PollPort, self.poll_port)
+        poll_port = self.poll_port
 
         cycle_number = 0
         loop = asyncio.get_running_loop()
@@ -256,7 +257,7 @@ class DaemonScheduler:
     async def _is_budget_exceeded(self) -> bool:
         """Check if daily budget limit has been exceeded.
 
-        Thread-safe: Uses the same asyncio.Lock as record_diagnosis_cost to protect
+        Thread-safe: Uses the same asyncio.Lock as record_cost to protect
         budget state mutations and prevent TOCTOU races.
 
         Returns:
@@ -270,33 +271,44 @@ class DaemonScheduler:
             today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
+                self._cost_by_step.clear()
                 self._budget_date = today
                 return False
 
             return self._daily_cost_usd >= self.budget_limit
 
-    async def record_diagnosis_cost(self, cost_usd: float) -> None:
-        """Record a diagnosis cost towards the daily budget.
+    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
+        """Record a rounds step's cost towards the daily budget.
 
         Thread-safe: uses asyncio.Lock to protect budget state mutations.
 
         Args:
-            cost_usd: Cost of the diagnosis in USD.
+            step: Which rounds step (poll, fingerprint, diagnose, confirm)
+                incurred the cost, tracked separately in cost_by_step for
+                per-step spend visibility.
+            cost_usd: Cost incurred by that step, in USD.
         """
         async with self._budget_lock:
             # Reset daily cost if date has changed
             today = datetime.now(UTC).date()
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
+                self._cost_by_step.clear()
                 self._budget_date = today
 
             self._daily_cost_usd += cost_usd
+            self._cost_by_step[step] += cost_usd
 
             if self.budget_limit and self._daily_cost_usd >= self.budget_limit:
                 logger.warning(
                     f"Daily budget limit reached (${self._daily_cost_usd:.2f}/"
                     f"${self.budget_limit:.2f})"
                 )
+
+    @property
+    def cost_by_step(self) -> dict[RoundStep, float]:
+        """Read-only snapshot of today's accumulated cost, broken down by RoundStep."""
+        return dict(self._cost_by_step)
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import CaptureFixture
 
 from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
@@ -126,7 +127,9 @@ class TestConfigurationLoading:
             },
             clear=False,
         ):
-            with pytest.raises(ValidationError, match="anthropic_api_key or claude_code_oauth_token"):
+            with pytest.raises(
+                ValidationError, match="anthropic_api_key or claude_code_oauth_token"
+            ):
                 load_settings()
 
 
@@ -134,13 +137,17 @@ class TestBootstrapErrorHandling:
     """Test bootstrap function error handling."""
 
     @pytest.mark.asyncio
-    async def test_bootstrap_exits_on_configuration_value_error(self, capsys) -> None:
+    async def test_bootstrap_exits_on_configuration_value_error(
+        self, capsys: CaptureFixture[str]
+    ) -> None:
         """Test bootstrap catches ValueError from load_settings and exits cleanly."""
         from rounds.main import bootstrap
 
         # Mock load_settings to raise ValueError
         with patch("rounds.main.load_settings") as mock_load:
-            mock_load.side_effect = ValueError("Invalid telemetry backend: 'invalid_backend'")
+            mock_load.side_effect = ValueError(
+                "Invalid telemetry backend: 'invalid_backend'"
+            )
 
             # Should exit with code 1
             with pytest.raises(SystemExit) as exc_info:
@@ -196,6 +203,90 @@ class TestAdapterInstantiation:
         )
         assert adapter.model == settings.claude_model
         assert adapter.budget_usd == settings.claude_code_budget_usd
+
+    def test_agent_node_diagnosis_adapter_instantiation(self) -> None:
+        """Instantiate AgentNodeDiagnosisAdapter with configuration, as main.py does."""
+        from rounds.adapters.diagnosis._client import SshAgentNodeClient
+        from rounds.adapters.diagnosis.agent_node import (
+            AgentNodeDiagnosisAdapter,
+            ServiceMapping,
+        )
+        from rounds.adapters.diagnosis.openai import OpenAIDiagnosisAdapter
+
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+            },
+        ):
+            settings = load_settings()
+
+        service_map = {
+            service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
+            for service_name, (mcp_key, workspace) in settings.get_agent_node_service_map().items()
+        }
+        client = SshAgentNodeClient(host_map=settings.get_agent_node_host_map())
+        fallback = OpenAIDiagnosisAdapter(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            budget_usd=settings.openai_budget_usd,
+        )
+        adapter = AgentNodeDiagnosisAdapter(
+            service_map=service_map,
+            client=client,
+            fallback=fallback,
+            usage_query=None,
+            budget_usd=settings.agent_node_budget_usd,
+        )
+        assert adapter._service_map == {
+            "my-api": ServiceMapping(mcp_key="node1", workspace="workspace-a")
+        }
+        assert adapter.budget_usd == settings.agent_node_budget_usd
+
+    def test_agent_node_service_map_overlap_with_service_host_map_takes_precedence(
+        self,
+    ) -> None:
+        """BA Req 5: AGENT_NODE_SERVICE_MAP wins when a service is in both maps.
+
+        Mirrors the wiring in main.py's composition root: the effective
+        service map merges SERVICE_HOST_MAP into AGENT_NODE_SERVICE_MAP, with
+        the agent-node entry taking precedence for overlapping service names,
+        and the shared host also becomes a resolvable mcp_key for unmapped
+        services in the merged host map.
+        """
+        from rounds.adapters.diagnosis._client import SshAgentNodeClient
+        from rounds.adapters.diagnosis.agent_node import ServiceMapping
+
+        with patch.dict(
+            os.environ,
+            {
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "SERVICE_HOST_MAP": '{"my-api": "t5610", "worker": "petit-cochon"}',
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+            },
+        ):
+            settings = load_settings()
+
+        service_map = {
+            service_name: ServiceMapping(mcp_key=mcp_key, workspace=workspace)
+            for service_name, (mcp_key, workspace) in settings.get_effective_service_map().items()
+        }
+        client = SshAgentNodeClient(host_map=settings.get_effective_agent_node_host_map())
+
+        assert service_map == {
+            "my-api": ServiceMapping(mcp_key="node1", workspace="workspace-a"),
+            "worker": ServiceMapping(mcp_key="petit-cochon", workspace=settings.codebase_path),
+        }
+        assert client._host_map == {
+            "t5610": "t5610",
+            "petit-cochon": "petit-cochon",
+            "node1": "host-a",
+        }
 
     def test_notification_adapter_instantiation(self) -> None:
         """Instantiate stdout notification adapter with configuration."""
@@ -360,6 +451,61 @@ class TestDependencyWiring:
             assert investigator.notification is notification
 
 
+class TestBootstrapAgentNodeBackend:
+    """Test that bootstrap() wires the agent_node diagnosis backend end-to-end."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_wires_agent_node_diagnosis_backend(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DIAGNOSIS_BACKEND=agent_node constructs the full adapter chain in daemon mode."""
+        from rounds.main import bootstrap
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "test.db")
+            env = {
+                "TELEMETRY_BACKEND": "jaeger",
+                "JAEGER_API_URL": "http://localhost:16686",
+                "STORE_BACKEND": "sqlite",
+                "STORE_SQLITE_PATH": db_path,
+                "DIAGNOSIS_BACKEND": "agent_node",
+                "AGENT_NODE_SERVICE_MAP": "my-api:node1:workspace-a",
+                "AGENT_NODE_HOST_MAP": '{"node1": "host-a"}',
+                "OPENAI_API_KEY": "sk-test",
+                "NOTIFICATION_BACKEND": "stdout",
+                "RUN_MODE": "daemon",
+            }
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch(
+                    "rounds.adapters.scheduler.daemon.DaemonScheduler.start",
+                    new=AsyncMock(),
+                ),
+                caplog.at_level("INFO"),
+            ):
+                await bootstrap()
+
+        assert "Diagnosis adapter: Agent Node (1 mapped services)" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_agent_node_backend_reuses_signoz_client_for_usage_query(self) -> None:
+        """When telemetry_backend is signoz, the usage query adapter shares its httpx client."""
+        from rounds.adapters.telemetry.signoz import SigNozTelemetryAdapter
+        from rounds.adapters.telemetry.signoz_usage import SigNozUsageQueryAdapter
+
+        signoz = SigNozTelemetryAdapter(api_url="http://localhost:3301", api_key="")
+        usage_query = SigNozUsageQueryAdapter(
+            api_url="http://localhost:3301", api_key="", client=signoz.client
+        )
+        assert usage_query.client is signoz.client
+        assert usage_query._owns_client is False
+
+        # Closing the usage adapter must not tear down the shared telemetry client.
+        await usage_query.close()
+        assert signoz.client.is_closed is False
+        await signoz.close()
+
+
 class TestBootstrapFunction:
     """Test the bootstrap function (composition root)."""
 
@@ -397,9 +543,7 @@ class TestLoggingConfiguration:
         # Check that at least one handler exists
         assert len(root_logger.handlers) > 0
         # Verify the handler is a StreamHandler
-        assert any(
-            isinstance(h, logging.StreamHandler) for h in root_logger.handlers
-        )
+        assert any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers)
 
     def test_configure_logging_json_format(self) -> None:
         """Configure logging with JSON format."""
@@ -423,7 +567,7 @@ class TestLoggingConfiguration:
         handler = root_logger.handlers[0]
         if isinstance(handler, logging.StreamHandler):
             formatter = handler.formatter
-            if formatter and hasattr(formatter, '_fmt') and formatter._fmt:
+            if formatter and hasattr(formatter, "_fmt") and formatter._fmt:
                 assert "time" in formatter._fmt
 
 

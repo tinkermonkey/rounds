@@ -14,6 +14,10 @@ import subprocess
 from datetime import UTC, datetime
 from typing import Any
 
+from rounds.adapters.diagnosis._parsing import (
+    parse_diagnosis_result,
+    parse_trace_investigation_result,
+)
 from rounds.core.models import (
     Diagnosis,
     InvestigationContext,
@@ -73,7 +77,7 @@ class ClaudeCodeDiagnosisAdapter(DiagnosisPort):
             )
 
             # Parse result
-            diagnosis = self._parse_diagnosis_result(result, context)
+            diagnosis = parse_diagnosis_result(result, self.model)
 
             # Track actual cost (approximation based on tokens)
             diagnosis = Diagnosis(
@@ -353,8 +357,9 @@ Codebase is at: {context.codebase_path}
                 pass  # raw output, search as-is
 
             # If the inner text is itself valid JSON dict, return it directly.
-            # Field validation is the caller's responsibility (_parse_diagnosis_result
-            # or _parse_trace_investigation_result), so we accept any non-empty dict.
+            # Field validation is the caller's responsibility (parse_diagnosis_result
+            # or parse_trace_investigation_result in _parsing.py), so we accept any
+            # non-empty dict.
             try:
                 parsed: dict[str, Any] = json.loads(text_to_search)
                 if isinstance(parsed, dict) and parsed:
@@ -433,7 +438,9 @@ Codebase is at: {context.codebase_path}
 
         prompt = self._build_trace_investigation_prompt(trace, correlated_logs, codebase_path)
         result = await self._invoke_claude_code(prompt, codebase_path=codebase_path)
-        return self._parse_trace_investigation_result(result, trace.trace_id, estimated_cost)
+        return parse_trace_investigation_result(
+            result, trace.trace_id, self.model, estimated_cost
+        )
 
     def _estimate_trace_cost(
         self, trace: TraceTree, correlated_logs: tuple[LogEntry, ...]
@@ -522,96 +529,3 @@ Codebase is at: {codebase_path}
 """
         return prompt
 
-    def _parse_trace_investigation_result(
-        self, result: dict[str, Any], trace_id: str, cost_usd: float
-    ) -> TraceInvestigation:
-        """Parse Claude Code response into a TraceInvestigation object.
-
-        Raises:
-            ValueError: If required fields are missing or invalid.
-        """
-        summary = result.get("summary", "")
-        if not summary:
-            raise ValueError("Response missing 'summary' field")
-
-        code_flow_raw = result.get("code_flow")
-        if code_flow_raw is None:
-            raise ValueError("Response missing 'code_flow' field")
-        if not isinstance(code_flow_raw, list):
-            raise ValueError(f"'code_flow' must be a list, got {type(code_flow_raw).__name__}")
-
-        services_raw = result.get("services_involved")
-        if services_raw is None:
-            raise ValueError("Response missing 'services_involved' field")
-        if not isinstance(services_raw, list):
-            raise ValueError(
-                f"'services_involved' must be a list, got {type(services_raw).__name__}"
-            )
-
-        findings_raw = result.get("key_findings")
-        if findings_raw is None:
-            raise ValueError("Response missing 'key_findings' field")
-        if not isinstance(findings_raw, list):
-            raise ValueError(
-                f"'key_findings' must be a list, got {type(findings_raw).__name__}"
-            )
-
-        return TraceInvestigation(
-            trace_id=trace_id,
-            summary=summary,
-            code_flow=tuple(code_flow_raw),
-            services_involved=tuple(services_raw),
-            key_findings=tuple(findings_raw),
-            model=self.model,
-            cost_usd=cost_usd,
-            investigated_at=datetime.now(UTC),
-        )
-
-    def _parse_diagnosis_result(
-        self, result: dict[str, Any], context: InvestigationContext
-    ) -> Diagnosis:
-        """Parse Claude Code response into a Diagnosis object.
-
-        Raises:
-            ValueError: If required fields are missing or invalid.
-        """
-        root_cause = result.get("root_cause", "")
-        if not root_cause:
-            raise ValueError("Response missing 'root_cause' field")
-
-        evidence_raw = result.get("evidence")
-        if evidence_raw is None:
-            raise ValueError("Response missing 'evidence' field")
-        if not isinstance(evidence_raw, list):
-            raise ValueError(f"'evidence' must be a list, got {type(evidence_raw).__name__}")
-        evidence = tuple(evidence_raw)
-
-        suggested_fix = result.get("suggested_fix", "")
-        if not suggested_fix:
-            raise ValueError("Response missing 'suggested_fix' field")
-
-        confidence_str = result.get("confidence", "")
-        if not confidence_str:
-            raise ValueError("Response missing 'confidence' field")
-
-        # Parse confidence - raise on invalid value
-        confidence_lower = confidence_str.lower()
-        if confidence_lower not in ("high", "medium", "low"):
-            raise ValueError(
-                f"Invalid confidence level '{confidence_str}'. "
-                f"Must be one of ['high', 'medium', 'low']"
-            )
-
-        # summary is optional; fall back to root_cause for backward compatibility
-        summary = result.get("summary", "") or root_cause
-
-        return Diagnosis(
-            root_cause=root_cause,
-            evidence=evidence,
-            suggested_fix=suggested_fix,
-            confidence=confidence_lower,
-            diagnosed_at=datetime.now(UTC),
-            model=self.model,
-            cost_usd=0.0,  # Will be filled in by diagnose()
-            summary=summary,
-        )

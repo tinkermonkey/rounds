@@ -243,10 +243,12 @@ Respond with a JSON object in exactly this format:
                 )
 
                 # Extract response text
+                content = None
                 if response.choices and response.choices[0].message:
-                    return response.choices[0].message.content
-                else:
+                    content = response.choices[0].message.content
+                if not isinstance(content, str):
                     raise RuntimeError("OpenAI API returned empty response")
+                return content
 
             # Run in executor to avoid blocking
             output = await asyncio.to_thread(_call_openai)

@@ -6,6 +6,7 @@ tests can be skipped if PostgreSQL is not available using pytest.mark.skipif
 
 import os
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -18,7 +19,7 @@ from rounds.core.models import (
 
 
 @pytest.fixture
-def postgres_config():
+def postgres_config() -> dict[str, Any]:
     """PostgreSQL connection configuration."""
     return {
         "host": "localhost",
@@ -31,7 +32,7 @@ def postgres_config():
 
 
 @pytest.fixture
-def store(postgres_config) -> PostgreSQLSignatureStore:
+def store(postgres_config: dict[str, Any]) -> PostgreSQLSignatureStore:
     """Create a PostgreSQL store adapter."""
     return PostgreSQLSignatureStore(**postgres_config)
 
@@ -39,7 +40,7 @@ def store(postgres_config) -> PostgreSQLSignatureStore:
 class TestPostgreSQLStoreInitialization:
     """Tests for PostgreSQL store initialization."""
 
-    def test_store_initialization(self, postgres_config):
+    def test_store_initialization(self, postgres_config: dict[str, Any]) -> None:
         """Test PostgreSQL store initialization with configuration."""
         store = PostgreSQLSignatureStore(**postgres_config)
 
@@ -49,7 +50,7 @@ class TestPostgreSQLStoreInitialization:
         assert store.user == postgres_config["user"]
         assert store.password == postgres_config["password"]
 
-    def test_store_default_configuration(self):
+    def test_store_default_configuration(self) -> None:
         """Test PostgreSQL store with default configuration."""
         store = PostgreSQLSignatureStore()
 
@@ -60,9 +61,7 @@ class TestPostgreSQLStoreInitialization:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
-)
+@pytest.mark.skipif(not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set")
 async def test_create_and_retrieve_signature(
     store: PostgreSQLSignatureStore,
 ) -> None:
@@ -91,9 +90,7 @@ async def test_create_and_retrieve_signature(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
-)
+@pytest.mark.skipif(not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set")
 async def test_connection_pooling(store: PostgreSQLSignatureStore) -> None:
     """Test that connection pooling works correctly."""
     await store.initialize()
@@ -107,9 +104,7 @@ async def test_connection_pooling(store: PostgreSQLSignatureStore) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
-)
+@pytest.mark.skipif(not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set")
 async def test_schema_initialization(store: PostgreSQLSignatureStore) -> None:
     """Test that database schema is initialized on first use."""
     await store.initialize()
@@ -155,9 +150,7 @@ class TestPostgreSQLTransactions:
     @pytest.mark.skipif(
         not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
     )
-    async def test_update_with_diagnosis(
-        self, store: PostgreSQLSignatureStore
-    ) -> None:
+    async def test_update_with_diagnosis(self, store: PostgreSQLSignatureStore) -> None:
         """Test updating signature with diagnosis in a transaction."""
         await store.initialize()
 
@@ -198,7 +191,7 @@ class TestPostgreSQLTransactions:
 class TestPostgreSQLErrorHandling:
     """Tests for error handling in PostgreSQL store."""
 
-    def test_invalid_connection_config(self):
+    def test_invalid_connection_config(self) -> None:
         """Test that invalid configuration is caught."""
         store = PostgreSQLSignatureStore(
             host="invalid-host",
@@ -212,7 +205,7 @@ class TestPostgreSQLErrorHandling:
     @pytest.mark.skipif(
         not os.environ.get("POSTGRES_HOST"), reason="POSTGRES_HOST not set"
     )
-    async def test_connection_failure(self):
+    async def test_connection_failure(self) -> None:
         """Test handling of connection failures."""
         store = PostgreSQLSignatureStore(
             host="invalid-host",

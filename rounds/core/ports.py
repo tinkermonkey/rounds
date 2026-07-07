@@ -10,7 +10,9 @@ Port Interface Categories:
    - TelemetryPort: Retrieve errors, traces, logs
    - SignatureStorePort: Persist and query signatures
    - DiagnosisPort: LLM-powered root cause analysis
+   - UsageQueryPort: Query actual diagnosis cost from OTLP usage data
    - NotificationPort: Report findings to developers
+   - BudgetTracker: Track accumulated spend per round step
 
 2. **Driving Ports** (adapters/external systems call into core)
    - PollPort: Entry point for poll and investigation cycles
@@ -20,7 +22,7 @@ Port Interface Categories:
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from .models import (
     Diagnosis,
@@ -30,6 +32,7 @@ from .models import (
     LogEntry,
     PartialResultsInfo,
     PollResult,
+    RoundStep,
     Signature,
     SignatureDetails,
     SignatureStatus,
@@ -449,6 +452,34 @@ class DiagnosisPort(ABC):
         """
 
 
+class UsageQueryPort(ABC):
+    """Port for querying actual diagnosis cost from OTLP usage data.
+
+    Cost tracking via OTLP is architecturally separate from observability
+    telemetry (TelemetryPort), since it queries usage/cost data rather than
+    traces, logs, or errors.
+
+    Adapters implementing this port should query the telemetry backend's
+    usage/cost records correlated by trace ID and return the actual cost
+    incurred, as reported by the LLM provider (as opposed to a heuristic
+    pre-flight estimate).
+    """
+
+    @abstractmethod
+    async def query_diagnosis_cost(self, trace_id: str) -> float:
+        """Query the actual diagnosis cost (in USD) for a given trace.
+
+        Args:
+            trace_id: OpenTelemetry trace ID correlating the diagnosis
+                invocation to its usage/cost data.
+
+        Returns:
+            Actual cost in USD. Returns 0.0 when usage data is unavailable
+            (e.g. not yet reported, backend unreachable, or no matching
+            records found).
+        """
+
+
 class NotificationPort(ABC):
     """Port for reporting findings to developers.
 
@@ -522,6 +553,19 @@ class NotificationPort(ABC):
             Exception: If resource cleanup fails.
         """
         pass
+
+
+class BudgetTracker(Protocol):
+    """Protocol for tracking accumulated spend against a budget.
+
+    Costs are attributed per RoundStep so spend can be broken down across
+    the full poll -> fingerprint -> diagnose -> confirm cycle, not just the
+    diagnose step where LLM calls currently occur.
+    """
+
+    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
+        """Record a cost incurred by a rounds step towards the daily budget."""
+        ...
 
 
 # ============================================================================

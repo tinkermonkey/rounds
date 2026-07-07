@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     )
 
     # Diagnosis engine configuration
-    diagnosis_backend: Literal["claude_code", "openai"] = Field(
+    diagnosis_backend: Literal["claude_code", "openai", "agent_node"] = Field(
         default="claude_code",
         description="Diagnosis engine backend type",
     )
@@ -137,6 +137,28 @@ class Settings(BaseSettings):
     openai_budget_usd: float = Field(
         default=2.0,
         description="Budget per diagnosis for OpenAI in USD",
+    )
+    agent_node_service_map: str = Field(
+        default="",
+        description=(
+            "Comma-separated service-to-agent-node mappings for the agent_node "
+            "diagnosis backend. Each entry is a colon-separated triple: "
+            "signoz_service_name:mcp_key:workspace_name. "
+            "Example: my-api:node1:workspace-a,worker:node2:workspace-b"
+        ),
+    )
+    agent_node_host_map: str = Field(
+        default="",
+        description=(
+            "JSON map from agent-node mcp_key to SSH-reachable hostname. "
+            "Used by the agent_node diagnosis backend to resolve the SSH "
+            "target for a given mcp_key. "
+            'Example: AGENT_NODE_HOST_MAP={"node1":"host-a","node2":"host-b"}'
+        ),
+    )
+    agent_node_budget_usd: float = Field(
+        default=2.0,
+        description="Budget per diagnosis for the agent_node backend in USD",
     )
 
     # Notification configuration
@@ -289,6 +311,56 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("agent_node_service_map")
+    @classmethod
+    def validate_agent_node_service_map(cls, v: str) -> str:
+        """Validate AGENT_NODE_SERVICE_MAP entries are well-formed triples."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        for entry in stripped.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split(":")
+            if len(parts) != 3 or not all(p.strip() for p in parts):
+                raise ValueError(
+                    "AGENT_NODE_SERVICE_MAP entries must be "
+                    "'signoz_service_name:mcp_key:workspace_name' triples, "
+                    f"got malformed entry: {entry!r}"
+                )
+        return v
+
+    @field_validator("agent_node_host_map")
+    @classmethod
+    def validate_agent_node_host_map(cls, v: str) -> str:
+        """Validate AGENT_NODE_HOST_MAP is valid JSON with string keys and values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"AGENT_NODE_HOST_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
+        return v
+
+    @field_validator("agent_node_budget_usd")
+    @classmethod
+    def validate_agent_node_budget(cls, v: float) -> float:
+        """Ensure per-diagnosis budget is non-negative."""
+        if v < 0:
+            raise ValueError("agent_node_budget_usd must be non-negative")
+        return v
+
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval(cls, v: int) -> int:
@@ -350,9 +422,13 @@ class Settings(BaseSettings):
         """Ensure backend-specific API keys are set when required.
 
         Cross-field validation for backend-specific configuration:
+        - Claude Code backend requires anthropic_api_key or claude_code_oauth_token
         - OpenAI backend requires openai_api_key
+        - Agent node backend requires agent_node_service_map, agent_node_host_map,
+          and openai_api_key (used as fallback for unmapped services)
         - GitHub notification requires github_token and github_repo
         - PostgreSQL store requires store_postgresql_url
+        - Elasticsearch telemetry warns when no credentials are configured
         """
         # Validate diagnosis backend dependencies
         if self.diagnosis_backend == "claude_code":
@@ -365,6 +441,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "openai_api_key must be set when diagnosis_backend is 'openai'"
             )
+        if self.diagnosis_backend == "agent_node":
+            if not self.get_agent_node_service_map():
+                raise ValueError(
+                    "agent_node_service_map must be set when diagnosis_backend is 'agent_node'"
+                )
+            if not self.get_agent_node_host_map():
+                raise ValueError(
+                    "agent_node_host_map must be set when diagnosis_backend is 'agent_node'"
+                )
+            if not self.openai_api_key:
+                raise ValueError(
+                    "openai_api_key must be set when diagnosis_backend is 'agent_node' "
+                    "(OpenAIDiagnosisAdapter is required as fallback for services not "
+                    "present in agent_node_service_map)"
+                )
 
         # Validate notification backend dependencies
         if self.notification_backend == "github_issue":
@@ -430,6 +521,71 @@ class Settings(BaseSettings):
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
         return result
+
+    def get_agent_node_service_map(self) -> dict[str, tuple[str, str]]:
+        """Parse agent_node_service_map string into a dict mapping service -> (mcp_key, workspace).
+
+        Returns an empty dict when AGENT_NODE_SERVICE_MAP is not configured.
+        Expects comma-separated triples: ``signoz_service_name:mcp_key:workspace_name``
+        """
+        v = self.agent_node_service_map.strip()
+        if not v:
+            return {}
+        result: dict[str, tuple[str, str]] = {}
+        for entry in v.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            service_name, mcp_key, workspace = (p.strip() for p in entry.split(":"))
+            result[service_name] = (mcp_key, workspace)
+        return result
+
+    def get_agent_node_host_map(self) -> dict[str, str]:
+        """Parse agent_node_host_map string into a dict mapping mcp_key -> ssh hostname.
+
+        Returns an empty dict when AGENT_NODE_HOST_MAP is not configured.
+        Expects JSON format: ``{"node1": "host-a", "node2": "host-b"}``
+        """
+        v = self.agent_node_host_map.strip()
+        if not v:
+            return {}
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"AGENT_NODE_HOST_MAP must be a JSON object, got {type(result).__name__}")
+        non_string = {k: type(val).__name__ for k, val in result.items() if not isinstance(val, str)}
+        if non_string:
+            raise ValueError(
+                f"AGENT_NODE_HOST_MAP values must be strings, got non-string values: {non_string}"
+            )
+        return result
+
+    def get_effective_service_map(self) -> dict[str, tuple[str, str]]:
+        """Merge service_host_map into the agent-node service map (BA Req 5).
+
+        SERVICE_HOST_MAP entries route via the configured host acting as the
+        agent node's mcp_key, with codebase_path as the workspace. When a
+        service name appears in both SERVICE_HOST_MAP and
+        AGENT_NODE_SERVICE_MAP, the AGENT_NODE_SERVICE_MAP entry wins.
+        """
+        merged: dict[str, tuple[str, str]] = {
+            service_name: (host, self.codebase_path)
+            for service_name, host in self.get_service_host_map().items()
+        }
+        merged.update(self.get_agent_node_service_map())
+        return merged
+
+    def get_effective_agent_node_host_map(self) -> dict[str, str]:
+        """Merge service_host_map hosts into the agent node host lookup table.
+
+        SERVICE_HOST_MAP supplies the SSH-reachable host directly rather than
+        an mcp_key, so get_effective_service_map() uses each host as its own
+        mcp_key. This registers the identity mapping needed for
+        SshAgentNodeClient to resolve it, unless AGENT_NODE_HOST_MAP already
+        defines that key explicitly.
+        """
+        merged = {host: host for host in self.get_service_host_map().values()}
+        merged.update(self.get_agent_node_host_map())
+        return merged
 
 
 def load_settings(env_file: str | None = None) -> Settings:

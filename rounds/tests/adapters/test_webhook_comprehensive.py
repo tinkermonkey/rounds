@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from http.client import HTTPConnection
 
 import pytest
@@ -16,17 +17,19 @@ class TestWebhookAuthentication:
     """Tests for webhook authentication mechanisms."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     @pytest.fixture
-    async def auth_server(self, fake_management_port, fake_poll_port):
+    async def auth_server(
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> AsyncGenerator[WebhookHTTPServer, None]:
         """Create and start an authenticated webhook server."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -47,7 +50,9 @@ class TestWebhookAuthentication:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_auth_bypass_attempt_fails(self, auth_server):
+    async def test_auth_bypass_attempt_fails(
+        self, auth_server: WebhookHTTPServer
+    ) -> None:
         """Should reject requests without Authorization header."""
         conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
 
@@ -64,7 +69,9 @@ class TestWebhookAuthentication:
             conn.close()
 
     @pytest.mark.asyncio
-    async def test_invalid_auth_token_fails(self, auth_server):
+    async def test_invalid_auth_token_fails(
+        self, auth_server: WebhookHTTPServer
+    ) -> None:
         """Should reject requests with incorrect API key."""
         conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
 
@@ -79,7 +86,9 @@ class TestWebhookAuthentication:
             conn.close()
 
     @pytest.mark.asyncio
-    async def test_valid_auth_token_succeeds(self, auth_server):
+    async def test_valid_auth_token_succeeds(
+        self, auth_server: WebhookHTTPServer
+    ) -> None:
         """Should accept requests with correct API key."""
         conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
 
@@ -98,17 +107,19 @@ class TestWebhookDoSProtection:
     """Tests for DoS protection mechanisms."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     @pytest.fixture
-    async def dos_server(self, fake_management_port, fake_poll_port):
+    async def dos_server(
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> AsyncGenerator[WebhookHTTPServer, None]:
         """Create and start a webhook server for DoS testing."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -129,16 +140,22 @@ class TestWebhookDoSProtection:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_oversized_body_rejected(self, dos_server):
-        """Should reject requests with body larger than 1MB."""
+    async def test_oversized_body_rejected(self, dos_server: WebhookHTTPServer) -> None:
+        """Should reject requests whose Content-Length exceeds 1MB.
+
+        The server rejects based on the Content-Length header alone, before
+        reading the body (see http_server.py), so this test only sends the
+        request headers. Actually streaming a 1MB+ body over a real socket
+        would race with the server closing the connection early, causing a
+        flaky BrokenPipeError on the client side.
+        """
         conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
 
         try:
-            # Create a body larger than 1MB
-            large_body = "x" * (1024 * 1024 + 1)  # 1MB + 1 byte
-
-            headers = {"Content-Type": "application/json"}
-            conn.request("POST", "/investigate", body=large_body, headers=headers)
+            conn.putrequest("POST", "/investigate")
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(1024 * 1024 + 1))
+            conn.endheaders()
             response = conn.getresponse()
 
             # Should return 413 Request Entity Too Large or 400 Bad Request
@@ -147,7 +164,9 @@ class TestWebhookDoSProtection:
             conn.close()
 
     @pytest.mark.asyncio
-    async def test_normal_size_body_accepted(self, dos_server):
+    async def test_normal_size_body_accepted(
+        self, dos_server: WebhookHTTPServer
+    ) -> None:
         """Should accept requests with reasonable body size."""
         conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
 
@@ -169,17 +188,19 @@ class TestWebhookJSONParsing:
     """Tests for JSON parsing error handling."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     @pytest.fixture
-    async def json_server(self, fake_management_port, fake_poll_port):
+    async def json_server(
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> AsyncGenerator[WebhookHTTPServer, None]:
         """Create and start a webhook server for JSON testing."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -200,7 +221,9 @@ class TestWebhookJSONParsing:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_invalid_json_returns_400(self, json_server):
+    async def test_invalid_json_returns_400(
+        self, json_server: WebhookHTTPServer
+    ) -> None:
         """Should return 400 Bad Request for malformed JSON."""
         conn = HTTPConnection("127.0.0.1", 18082, timeout=5)
 
@@ -217,7 +240,7 @@ class TestWebhookJSONParsing:
             conn.close()
 
     @pytest.mark.asyncio
-    async def test_valid_json_accepted(self, json_server):
+    async def test_valid_json_accepted(self, json_server: WebhookHTTPServer) -> None:
         """Should accept valid JSON payloads."""
         conn = HTTPConnection("127.0.0.1", 18082, timeout=5)
 
@@ -239,19 +262,19 @@ class TestWebhookReceiverConcurrency:
     """Tests for race conditions and concurrent request handling."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     @pytest.mark.asyncio
     async def test_concurrent_poll_triggers(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should handle concurrent poll trigger requests without race conditions."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -269,8 +292,8 @@ class TestWebhookReceiverConcurrency:
 
     @pytest.mark.asyncio
     async def test_concurrent_reinvestigate_requests(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should handle concurrent reinvestigate requests without race conditions."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -294,19 +317,19 @@ class TestWebhookReceiverOperations:
     """Tests for WebhookReceiver business logic."""
 
     @pytest.fixture
-    def fake_management_port(self):
+    def fake_management_port(self) -> FakeManagementPort:
         """Create a fake management port for testing."""
         return FakeManagementPort()
 
     @pytest.fixture
-    def fake_poll_port(self):
+    def fake_poll_port(self) -> FakePollPort:
         """Create a fake poll port for testing."""
         return FakePollPort()
 
     @pytest.mark.asyncio
     async def test_poll_trigger_calls_poll_port(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should invoke poll_port when handling poll trigger."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
@@ -320,25 +343,23 @@ class TestWebhookReceiverOperations:
 
     @pytest.mark.asyncio
     async def test_reinvestigate_requires_signature_id(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should handle reinvestigate request with signature_id."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
         )
 
         # Call with signature_id (may fail if signature doesn't exist)
-        result = await receiver.handle_reinvestigate_request(
-            signature_id="test-sig-id"
-        )
+        result = await receiver.handle_reinvestigate_request(signature_id="test-sig-id")
 
         # Should return a result with status
         assert "status" in result
 
     @pytest.mark.asyncio
     async def test_mute_request_with_signature_id(
-        self, fake_management_port, fake_poll_port
-    ):
+        self, fake_management_port: FakeManagementPort, fake_poll_port: FakePollPort
+    ) -> None:
         """Should accept valid signature_id for mute request."""
         receiver = WebhookReceiver(
             poll_port=fake_poll_port, management_port=fake_management_port
