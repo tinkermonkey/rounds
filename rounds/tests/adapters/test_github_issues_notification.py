@@ -1,0 +1,205 @@
+"""Tests for GitHubIssueNotificationAdapter.report() dedup, labeling, and recurrence."""
+
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
+import pytest
+
+from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
+from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
+
+
+def _make_adapter(transport: httpx.MockTransport) -> GitHubIssueNotificationAdapter:
+    """Create a GitHubIssueNotificationAdapter with a mock transport."""
+    adapter = GitHubIssueNotificationAdapter(
+        repo_owner="acme",
+        repo_name="widgets",
+        github_token="test-token",
+    )
+    adapter._client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        headers={
+            "Authorization": "token test-token",
+            "Accept": "application/vnd.github.v3+json",
+        },
+        transport=transport,
+    )
+    return adapter
+
+
+def _make_signature(**overrides: Any) -> Signature:
+    """Create a sample signature for testing."""
+    defaults: dict[str, Any] = dict(
+        id="sig-001",
+        fingerprint="a" * 64,
+        error_type="DatabaseError",
+        service="api-service",
+        message_template="Failed to connect to {database}",
+        stack_hash="stack-abc",
+        first_seen=datetime(2026, 7, 1, tzinfo=UTC),
+        last_seen=datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
+        occurrence_count=7,
+        status=SignatureStatus.DIAGNOSED,
+        max_severity=Severity.ERROR,
+    )
+    defaults.update(overrides)
+    return Signature(**defaults)
+
+
+def _make_diagnosis(**overrides: Any) -> Diagnosis:
+    """Create a sample diagnosis for testing."""
+    defaults: dict[str, Any] = dict(
+        root_cause="Connection pool exhaustion",
+        evidence=("Pool size exceeded",),
+        suggested_fix="Increase pool size",
+        confidence="high",
+        diagnosed_at=datetime(2026, 7, 6, tzinfo=UTC),
+        model="claude-opus",
+        cost_usd=0.01,
+    )
+    defaults.update(overrides)
+    return Diagnosis(**defaults)
+
+
+class TestReportCreatePath:
+    """Tests for report() when no existing open issue matches the fingerprint."""
+
+    @pytest.mark.asyncio
+    async def test_creates_issue_with_full_label_scheme(self) -> None:
+        """No existing issue -> a new issue is created with the required labels."""
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+        create_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, json=[])
+            if request.method == "POST" and request.url.path.endswith("/issues"):
+                import json
+
+                payload = json.loads(request.content)
+                create_calls.append(payload)
+                return httpx.Response(
+                    201,
+                    json={"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"},
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert len(create_calls) == 1
+        labels = create_calls[0]["labels"]
+        assert "rounds" in labels
+        assert "auto-detected" in labels
+        assert "severity-error" in labels
+        assert "service-api-service" in labels
+        assert f"fingerprint:{signature.fingerprint[:16]}" in labels
+
+    @pytest.mark.asyncio
+    async def test_search_filters_by_fingerprint_label_and_open_state(self) -> None:
+        """The dedup search queries the issues endpoint with the fingerprint label."""
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+        search_requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                search_requests.append(request)
+                return httpx.Response(200, json=[])
+            if request.method == "POST" and request.url.path.endswith("/issues"):
+                return httpx.Response(201, json={"number": 1, "html_url": "http://x"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert len(search_requests) == 1
+        params = search_requests[0].url.params
+        assert params["labels"] == f"fingerprint:{signature.fingerprint[:16]}"
+        assert params["state"] == "open"
+
+    @pytest.mark.asyncio
+    async def test_issues_containing_pull_requests_are_ignored(self) -> None:
+        """A matching 'issue' that is actually a pull request should not dedup."""
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+        create_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(
+                    200,
+                    json=[{"number": 99, "pull_request": {"url": "http://x"}}],
+                )
+            if request.method == "POST" and request.url.path.endswith("/issues"):
+                create_calls.append(request)
+                return httpx.Response(201, json={"number": 100, "html_url": "http://x"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert len(create_calls) == 1
+
+
+class TestReportDedupPath:
+    """Tests for report() when an existing open issue matches the fingerprint."""
+
+    @pytest.mark.asyncio
+    async def test_posts_recurrence_comment_instead_of_creating_issue(self) -> None:
+        """Existing open issue -> a recurrence comment is posted, no new issue created."""
+        signature = _make_signature(occurrence_count=12)
+        diagnosis = _make_diagnosis()
+        create_calls = []
+        comment_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(
+                    200,
+                    json=[{"number": 7, "html_url": "https://github.com/acme/widgets/issues/7"}],
+                )
+            if request.url.path.endswith("/issues/7/comments") and request.method == "POST":
+                import json
+
+                comment_calls.append(json.loads(request.content))
+                return httpx.Response(201, json={"id": 1})
+            if request.method == "POST" and request.url.path.endswith("/issues"):
+                create_calls.append(request)
+                return httpx.Response(201, json={"number": 100, "html_url": "http://x"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert len(create_calls) == 0
+        assert len(comment_calls) == 1
+        body = comment_calls[0]["body"]
+        assert "12" in body
+        assert signature.last_seen.isoformat() in body
+        assert signature.service in body
+        assert signature.max_severity.value in body
+
+    @pytest.mark.asyncio
+    async def test_recurrence_comment_http_error_raises(self) -> None:
+        """A failure posting the recurrence comment should propagate."""
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, json=[{"number": 7, "html_url": "http://x"}])
+            if request.url.path.endswith("/issues/7/comments"):
+                return httpx.Response(500, json={"error": "boom"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter.report(signature, diagnosis)
+        await adapter.close()

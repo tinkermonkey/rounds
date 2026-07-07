@@ -78,20 +78,70 @@ class GitHubIssueNotificationAdapter(NotificationPort):
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
     ) -> None:
-        """Report a diagnosed signature by creating a GitHub issue."""
+        """Report a diagnosed signature by creating or updating a GitHub issue.
+
+        Deduplicates on the signature's fingerprint: if an open issue already
+        carries the fingerprint label, a recurrence comment is posted to it
+        instead of creating a second issue for the same failure pattern.
+        """
+        fingerprint_label = self._fingerprint_label(signature.fingerprint)
+        existing_issue = await self._find_existing_issue(fingerprint_label)
+
+        if existing_issue is not None:
+            await self._post_recurrence_comment(existing_issue["number"], signature)
+            return
+
+        await self._create_issue(signature, diagnosis, fingerprint_label)
+
+    async def _find_existing_issue(
+        self, fingerprint_label: str
+    ) -> dict[str, Any] | None:
+        """Search for an open issue already labeled with this fingerprint.
+
+        Returns:
+            The first matching open issue, or None if no match exists.
+        """
+        try:
+            client = await self._get_client()
+
+            response = await client.get(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues",
+                params={"labels": fingerprint_label, "state": "open"},
+            )
+            response.raise_for_status()
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to search for existing GitHub issue: {e.response.status_code}",
+                extra={"response": e.response.text},
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Failed to search for existing GitHub issue: {e}", exc_info=True)
+            raise
+
+        # The issues list endpoint also returns pull requests; exclude them.
+        issues = [item for item in response.json() if "pull_request" not in item]
+        return issues[0] if issues else None
+
+    async def _create_issue(
+        self, signature: Signature, diagnosis: Diagnosis, fingerprint_label: str
+    ) -> None:
+        """Create a new GitHub issue for a signature with no existing open issue."""
         issue_title = self._format_issue_title(signature)
         issue_body = self._format_issue_body(signature, diagnosis)
+        labels = self._build_labels(signature, fingerprint_label)
 
         try:
             client = await self._get_client()
 
-            # Create the issue
             response = await client.post(
                 f"/repos/{self.repo_owner}/{self.repo_name}/issues",
                 json={
                     "title": issue_title,
                     "body": issue_body,
-                    "labels": self.labels,
+                    "labels": labels,
                     "assignees": self.assignees,
                 },
             )
@@ -125,6 +175,98 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                 exc_info=True,
             )
             raise
+
+    async def _post_recurrence_comment(
+        self, issue_number: int, signature: Signature
+    ) -> None:
+        """Post a recurrence comment to an existing open issue for this fingerprint."""
+        comment_body = self._format_recurrence_comment(signature)
+
+        try:
+            client = await self._get_client()
+
+            response = await client.post(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments",
+                json={"body": comment_body},
+            )
+
+            response.raise_for_status()
+
+            logger.info(
+                f"Posted recurrence comment on GitHub issue #{issue_number}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                },
+            )
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to post recurrence comment: {e.response.status_code}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                    "response": e.response.text,
+                },
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(
+                f"Failed to post recurrence comment: {e}",
+                extra={"signature_id": signature.id, "issue_number": issue_number},
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
+    def _fingerprint_label(fingerprint: str) -> str:
+        """Derive a GitHub label encoding the signature's fingerprint.
+
+        Truncated to stay within GitHub's 50-character label limit; 16 hex
+        characters (64 bits) of the sha256 fingerprint is ample to avoid
+        collisions between distinct failure patterns.
+        """
+        return f"fingerprint:{fingerprint[:16]}"
+
+    def _build_labels(self, signature: Signature, fingerprint_label: str) -> list[str]:
+        """Build the full label set for a newly created issue.
+
+        Combines the fixed triage scheme (rounds, auto-detected, severity,
+        service, fingerprint) with any configured extra labels, de-duplicated
+        while preserving order.
+        """
+        labels = [
+            "rounds",
+            "auto-detected",
+            f"severity-{signature.max_severity.value.lower()}",
+            f"service-{signature.service}",
+            fingerprint_label,
+            *self.labels,
+        ]
+        return list(dict.fromkeys(labels))
+
+    @staticmethod
+    def _format_recurrence_comment(signature: Signature) -> str:
+        """Format a recurrence comment for an existing open issue.
+
+        Args:
+            signature: The signature that recurred.
+
+        Returns:
+            Formatted markdown comment body.
+        """
+        lines = [
+            "## Recurrence Detected",
+            "",
+            f"- **Occurrence Count**: {signature.occurrence_count}",
+            f"- **Latest Occurrence**: {signature.last_seen.isoformat()}",
+            f"- **Service**: {signature.service}",
+            f"- **Severity**: {signature.max_severity.value}",
+            "",
+            "_Generated by Rounds diagnostic system_",
+        ]
+        return "\n".join(lines)
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Periodic summary report via GitHub issue.
