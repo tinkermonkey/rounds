@@ -5,6 +5,7 @@ implement the core diagnostic logic correctly.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -786,12 +787,12 @@ class TestPollService:
 
         assert sig.max_severity == Severity.FATAL
 
-    async def test_execute_resolution_cycle_is_a_no_op_stub(
+    async def test_execute_resolution_cycle_with_no_diagnosed_signatures_resolves_nothing(
         self,
         fingerprinter: Fingerprinter,
         triage_engine: TriageEngine,
     ) -> None:
-        """execute_resolution_cycle() defaults to a stub that resolves nothing."""
+        """execute_resolution_cycle() is a no-op when there are no DIAGNOSED signatures."""
         telemetry = FakeTelemetryPort()
         store = FakeSignatureStorePort()
         diagnosis_engine = FakeDiagnosisPort()
@@ -913,6 +914,285 @@ class TestPollService:
         assert len(investigator_calls) == 2
         assert investigator_calls[0] == "failed"
         assert investigator_calls[1] == "succeeded"
+
+
+class TestResolutionCycle:
+    """Tests for PollService.execute_resolution_cycle() auto-close behavior."""
+
+    @staticmethod
+    def _diagnosed_signature(**overrides: Any) -> Signature:
+        """Build a DIAGNOSED signature quiet since a fixed reference time."""
+        defaults: dict[str, Any] = dict(
+            id="sig-resolve-001",
+            fingerprint="fp-resolve-001",
+            error_type="ConnectionTimeoutError",
+            service="payment-service",
+            message_template="Failed to connect: timeout",
+            stack_hash="hash-resolve-001",
+            first_seen=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+        )
+        defaults.update(overrides)
+        return Signature(**defaults)
+
+    async def test_default_threshold_resolves_signature_quiet_for_24_hours(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A DIAGNOSED signature with no resolution_threshold_hours override
+        resolves once quiet for the default 24-hour window."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+            resolution_threshold_hours_default=24,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert sig.status == SignatureStatus.RESOLVED
+        assert notification.close_resolved_issue_call_count == 1
+        assert notification.closed_resolved_issues[0].id == sig.id
+
+    async def test_default_threshold_leaves_recently_seen_signature_alone(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A DIAGNOSED signature still within the default window is left untouched."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+            resolution_threshold_hours_default=24,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=1)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+        assert sig.status == SignatureStatus.DIAGNOSED
+        assert notification.close_resolved_issue_call_count == 0
+
+    async def test_custom_threshold_overrides_default(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A signature's own resolution_threshold_hours takes precedence over
+        the service-wide default, per Diagnosis.suggested_resolution_hours."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+            resolution_threshold_hours_default=24,
+        )
+
+        # Quiet for 8 hours: would NOT resolve under the 24h default, but
+        # DOES resolve under this signature's custom 6h threshold.
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=8),
+            resolution_threshold_hours=6,
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert sig.status == SignatureStatus.RESOLVED
+
+    async def test_custom_threshold_not_yet_elapsed_leaves_signature_alone(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A custom threshold that hasn't elapsed yet keeps the signature DIAGNOSED,
+        even though the (shorter) service default would have resolved it."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+            resolution_threshold_hours_default=6,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=8),
+            resolution_threshold_hours=48,
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+        assert sig.status == SignatureStatus.DIAGNOSED
+
+    async def test_resolution_cycle_without_notification_port_still_resolves(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """No notification port configured -> signature still resolves, just no issue-close call."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert sig.status == SignatureStatus.RESOLVED
+
+    async def test_notification_close_failure_does_not_revert_resolution(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A failure closing the issue is logged but the signature stays RESOLVED."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        notification.set_should_fail(True, "GitHub unavailable")
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert sig.status == SignatureStatus.RESOLVED
+
+    async def test_signature_recurrence_after_auto_resolution_returns_to_new(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """FR16: once a resolved signature's error recurs, the next poll cycle
+        occurrence brings it back to NEW rather than leaving it RESOLVED
+        (which would otherwise silently swallow the recurrence)."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+        )
+
+        # Build the signature from an actual fingerprinted error, as the poll
+        # cycle would, so a later occurrence of the same error dedups onto it.
+        fp = fingerprinter.fingerprint(error_event)
+        aged_timestamp = datetime.now(UTC) - timedelta(hours=25)
+        sig = Signature(
+            id="sig-recur-001",
+            fingerprint=fp,
+            error_type=error_event.error_type,
+            service=error_event.service,
+            message_template=fingerprinter.templatize_message(error_event.error_message),
+            stack_hash=fingerprinter.hash_stack(
+                fingerprinter.normalize_stack(error_event.stack_frames)
+            ),
+            first_seen=aged_timestamp,
+            last_seen=aged_timestamp,
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+        )
+        await store.save(sig)
+
+        await poll_service.execute_resolution_cycle()
+        assert sig.status == SignatureStatus.RESOLVED
+
+        # The error recurs: the same fingerprinted error comes through a new poll cycle.
+        telemetry.add_error(error_event)
+        poll_result = await poll_service.execute_poll_cycle()
+
+        assert poll_result.updated_signatures == 1
+        assert sig.status == SignatureStatus.NEW
 
 
 # ============================================================================

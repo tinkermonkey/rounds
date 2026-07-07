@@ -251,11 +251,17 @@ class Signature:
         with a previous poll cycle. first_seen tracks the earliest observed
         timestamp; last_seen tracks the latest.
 
+        A recurrence against a RESOLVED signature (its issue was already
+        auto-closed) transitions it back to NEW so it re-enters the triage and
+        investigation pipeline rather than staying dormant under a closed issue.
+
         Args:
             timestamp: When the new occurrence was observed.
             severity: Severity of the new occurrence. If more severe than the
                 signature's current max_severity, max_severity is raised to match.
         """
+        if self.status == SignatureStatus.RESOLVED:
+            self.status = SignatureStatus.NEW
         self.occurrence_count += 1
         if timestamp < self.first_seen:
             self.first_seen = timestamp

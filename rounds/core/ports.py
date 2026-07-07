@@ -555,6 +555,24 @@ class NotificationPort(ABC):
         """
         pass
 
+    async def close_resolved_issue(self, signature: Signature) -> None:
+        """Close whatever open issue/thread was created for this signature.
+
+        Called by the resolution-detection cycle after a signature transitions
+        to RESOLVED (no new occurrences within its resolution threshold).
+        Optional lifecycle method: adapters with no notion of an "open" item
+        to close (stdout, markdown) inherit this no-op default. Adapters that
+        track open state (e.g. GitHub issues) should override it to close that
+        item with a comment explaining the error has stopped occurring.
+
+        Args:
+            signature: The signature that was just auto-resolved.
+
+        Raises:
+            Exception: If the notification channel is unavailable.
+        """
+        pass
+
 
 class BudgetTracker(Protocol):
     """Protocol for tracking accumulated spend against a budget.

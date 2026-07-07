@@ -18,7 +18,7 @@ from .models import (
     Signature,
     SignatureStatus,
 )
-from .ports import BudgetTracker, PollPort, SignatureStorePort, TelemetryPort
+from .ports import BudgetTracker, NotificationPort, PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,8 @@ class PollService(PollPort):
         services: list[str] | None = None,
         batch_size: int | None = None,
         budget_tracker: BudgetTracker | None = None,
+        notification: NotificationPort | None = None,
+        resolution_threshold_hours_default: int = 24,
     ):
         self.telemetry = telemetry
         self.store = store
@@ -55,6 +57,8 @@ class PollService(PollPort):
         self.services = services
         self.batch_size = batch_size
         self.budget_tracker = budget_tracker
+        self.notification = notification
+        self.resolution_threshold_hours_default = resolution_threshold_hours_default
 
     async def execute_poll_cycle(self) -> PollResult:
         """Check for new errors, fingerprint, dedup, and queue investigations.
@@ -211,8 +215,58 @@ class PollService(PollPort):
     async def execute_resolution_cycle(self) -> ResolutionResult:
         """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
 
-        Default no-op implementation: always reports zero resolutions. Auto-close
-        logic that compares each diagnosed signature's last_seen against its
-        resolution_threshold_hours is not yet implemented here.
+        For each DIAGNOSED signature, compares its last_seen timestamp against
+        its resolution threshold (signature.resolution_threshold_hours if set,
+        otherwise resolution_threshold_hours_default). Signatures quiet for at
+        least that long are marked RESOLVED and, if a notification port is
+        configured, have their corresponding issue closed.
+
+        A failure resolving or closing one signature is logged and does not
+        prevent the rest of the cycle from proceeding.
+
+        Raises:
+            Exception: If fetching diagnosed signatures from the store fails.
         """
-        return ResolutionResult(signatures_resolved=0, timestamp=datetime.now(UTC))
+        now = datetime.now(UTC)
+
+        try:
+            diagnosed = await self.store.get_all(status=SignatureStatus.DIAGNOSED)
+        except Exception as e:
+            logger.error(f"Failed to fetch diagnosed signatures: {e}", exc_info=True)
+            raise
+
+        signatures_resolved = 0
+
+        for signature in diagnosed:
+            threshold_hours = (
+                signature.resolution_threshold_hours
+                if signature.resolution_threshold_hours is not None
+                else self.resolution_threshold_hours_default
+            )
+            if now - signature.last_seen < timedelta(hours=threshold_hours):
+                continue
+
+            try:
+                signature.mark_resolved()
+                await self.store.update(signature)
+                signatures_resolved += 1
+            except (MemoryError, SystemExit, KeyboardInterrupt):
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Failed to auto-resolve signature {signature.fingerprint}: {e}",
+                    exc_info=True,
+                )
+                continue
+
+            if self.notification is not None:
+                try:
+                    await self.notification.close_resolved_issue(signature)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to close issue for resolved signature "
+                        f"{signature.fingerprint}: {e}",
+                        exc_info=True,
+                    )
+
+        return ResolutionResult(signatures_resolved=signatures_resolved, timestamp=now)

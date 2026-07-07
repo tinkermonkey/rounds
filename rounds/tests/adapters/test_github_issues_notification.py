@@ -203,3 +203,74 @@ class TestReportDedupPath:
         with pytest.raises(httpx.HTTPStatusError):
             await adapter.report(signature, diagnosis)
         await adapter.close()
+
+
+class TestCloseResolvedIssue:
+    """Tests for close_resolved_issue() auto-close behavior."""
+
+    @pytest.mark.asyncio
+    async def test_closes_open_issue_with_resolution_comment(self) -> None:
+        """An open issue matching the fingerprint is commented on and closed."""
+        signature = _make_signature(status=SignatureStatus.RESOLVED)
+        comment_calls = []
+        patch_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(
+                    200,
+                    json=[{"number": 7, "html_url": "https://github.com/acme/widgets/issues/7"}],
+                )
+            if request.method == "POST" and request.url.path.endswith("/issues/7/comments"):
+                import json
+
+                comment_calls.append(json.loads(request.content))
+                return httpx.Response(201, json={"id": 1})
+            if request.method == "PATCH" and request.url.path.endswith("/issues/7"):
+                import json
+
+                patch_calls.append(json.loads(request.content))
+                return httpx.Response(200, json={"number": 7, "state": "closed"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.close_resolved_issue(signature)
+        await adapter.close()
+
+        assert len(comment_calls) == 1
+        assert "Auto-Resolved" in comment_calls[0]["body"]
+        assert len(patch_calls) == 1
+        assert patch_calls[0] == {"state": "closed"}
+
+    @pytest.mark.asyncio
+    async def test_no_open_issue_is_a_no_op(self) -> None:
+        """No matching open issue -> nothing is closed or commented on."""
+        signature = _make_signature(status=SignatureStatus.RESOLVED)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, json=[])
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.close_resolved_issue(signature)
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_close_failure_propagates(self) -> None:
+        """A failure closing the issue after the comment should propagate."""
+        signature = _make_signature(status=SignatureStatus.RESOLVED)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, json=[{"number": 7, "html_url": "http://x"}])
+            if request.method == "POST" and request.url.path.endswith("/issues/7/comments"):
+                return httpx.Response(201, json={"id": 1})
+            if request.method == "PATCH" and request.url.path.endswith("/issues/7"):
+                return httpx.Response(500, json={"error": "boom"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter.close_resolved_issue(signature)
+        await adapter.close()

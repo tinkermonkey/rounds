@@ -205,6 +205,15 @@ class Settings(BaseSettings):
         default=15,
         description="Lookback window in minutes for error queries",
     )
+    resolution_threshold_hours_default: int = Field(
+        default=24,
+        description=(
+            "Default number of hours a diagnosed signature must have no new "
+            "occurrences before it is auto-resolved and its issue closed. "
+            "Overridden per-signature by Signature.resolution_threshold_hours "
+            "(populated from Diagnosis.suggested_resolution_hours)."
+        ),
+    )
 
     # Budget controls
     daily_budget_limit: float = Field(
@@ -499,6 +508,14 @@ class Settings(BaseSettings):
         """Ensure lookback window is positive."""
         if v <= 0:
             raise ValueError("error_lookback_minutes must be positive")
+        return v
+
+    @field_validator("resolution_threshold_hours_default")
+    @classmethod
+    def validate_resolution_threshold_hours_default(cls, v: int) -> int:
+        """Ensure the default resolution threshold is positive."""
+        if v <= 0:
+            raise ValueError("resolution_threshold_hours_default must be positive")
         return v
 
     @field_validator("webhook_port")

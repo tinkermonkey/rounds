@@ -183,6 +183,61 @@ async def test_run_loop_exits_on_stop_called(
 
 
 @pytest.mark.asyncio
+async def test_run_loop_executes_resolution_cycle_each_iteration(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that _run_loop invokes execute_resolution_cycle() on the same
+    cadence as the poll/investigation cycles."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert poll_port.execute_resolution_cycle_call_count > 0
+    assert (
+        poll_port.execute_resolution_cycle_call_count == poll_port.poll_cycle_count
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_loop_survives_resolution_cycle_failure(
+    poll_port: FakePollPort,
+) -> None:
+    """A failing resolution cycle is logged but must not crash the daemon loop."""
+    poll_port.should_fail_resolution = True
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    # The poll loop should keep running (and keep polling) despite the failure.
+    assert poll_port.poll_cycle_count > 0
+    assert not scheduler.running
+
+
+@pytest.mark.asyncio
 async def test_run_loop_investigation_failure_tracking(
     poll_port: FakePollPort,
 ) -> None:

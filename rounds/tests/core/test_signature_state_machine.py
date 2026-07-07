@@ -379,6 +379,28 @@ def test_record_occurrence_raises_max_severity_when_new_event_is_more_severe(
     assert signature.max_severity == Severity.FATAL
 
 
+def test_record_occurrence_reverts_resolved_signature_to_new(signature: Signature) -> None:
+    """FR16: a recurrence against a RESOLVED signature (issue already auto-closed)
+    must bring it back to NEW so it re-enters triage/investigation, rather than
+    staying resolved under a closed issue."""
+    signature.status = SignatureStatus.RESOLVED
+    recurrence_timestamp = signature.last_seen + timedelta(days=2)
+
+    signature.record_occurrence(recurrence_timestamp)
+
+    assert signature.status == SignatureStatus.NEW
+    assert signature.last_seen == recurrence_timestamp
+
+
+def test_record_occurrence_does_not_alter_non_resolved_status(signature: Signature) -> None:
+    """record_occurrence should not touch status for signatures that aren't RESOLVED."""
+    signature.status = SignatureStatus.DIAGNOSED
+
+    signature.record_occurrence(signature.last_seen + timedelta(hours=1))
+
+    assert signature.status == SignatureStatus.DIAGNOSED
+
+
 def test_record_occurrence_does_not_lower_max_severity(signature: Signature) -> None:
     """record_occurrence should not downgrade max_severity for a less severe event."""
     signature.record_occurrence(signature.last_seen, Severity.FATAL)

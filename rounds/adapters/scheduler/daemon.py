@@ -170,6 +170,22 @@ class DaemonScheduler:
                         f"{result.investigations_queued} investigations queued"
                     )
 
+                    # Execute resolution cycle: auto-close signatures gone quiet.
+                    # Runs every cycle regardless of budget, since it incurs no
+                    # LLM cost (just a store scan and, optionally, issue closes).
+                    try:
+                        resolution_result = await poll_port.execute_resolution_cycle()
+                        if resolution_result.signatures_resolved > 0:
+                            logger.info(
+                                f"Resolution cycle #{cycle_number} completed: "
+                                f"{resolution_result.signatures_resolved} signatures auto-resolved"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error in resolution cycle #{cycle_number}: {e}",
+                            exc_info=True,
+                        )
+
                     # Execute investigation cycle for pending diagnoses
                     if result.investigations_queued > 0:
                         now = loop.time()
