@@ -28,8 +28,10 @@ from pydantic import ValidationError
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
+from rounds.adapters.notification.composite import CompositeNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
+from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
@@ -43,6 +45,7 @@ from rounds.config import load_settings
 from rounds.core.fingerprint import Fingerprinter
 from rounds.core.investigator import Investigator
 from rounds.core.management_service import ManagementService
+from rounds.core.models import Severity
 from rounds.core.poll_service import PollService
 from rounds.core.ports import DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
 from rounds.core.triage import TriageEngine
@@ -895,6 +898,27 @@ async def bootstrap(
     else:
         logger.error(f"Unknown notification backend: {settings.notification_backend}")
         sys.exit(1)
+
+    # Phone-home alerting runs alongside the selected notification backend
+    # (not instead of it) — wrap both in a composite so a single diagnosis
+    # dispatches to every configured channel concurrently.
+    if settings.phone_home_endpoint_url:
+        severity_gate = frozenset(
+            Severity(name) for name in settings.get_phone_home_severity_gate()
+        )
+        phone_home = PhoneHomeNotificationAdapter(
+            endpoint_url=settings.phone_home_endpoint_url,
+            auth_token=settings.phone_home_auth_token.get_secret_value(),
+            store=store,
+            severity_gate=severity_gate,
+            cooldown_hours=settings.phone_home_cooldown_hours,
+        )
+        notification = CompositeNotificationAdapter([notification, phone_home])
+        logger.info(
+            f"Phone-home alerting enabled: {settings.phone_home_endpoint_url} "
+            f"(severities={sorted(s.value for s in severity_gate)}, "
+            f"cooldown={settings.phone_home_cooldown_hours}h)"
+        )
 
     # Step 4: Initialize core services
     logger.info("Initializing core services...")

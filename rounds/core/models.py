@@ -271,6 +271,14 @@ class Signature:
         if severity is not None and severity.rank > self.max_severity.rank:
             self.max_severity = severity
 
+    def record_alert(self, timestamp: datetime) -> None:
+        """Record that a phone-home alert was just sent for this signature.
+
+        Used by the phone-home notification adapter to persist the cooldown
+        timestamp so subsequent alerts are suppressed until it elapses.
+        """
+        self.last_alerted_at = timestamp
+
     def revert_to_new(self) -> None:
         """Revert signature from INVESTIGATING back to NEW status.
 
