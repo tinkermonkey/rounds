@@ -10,6 +10,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from rounds.adapters.diagnosis._parsing import parse_suggested_resolution_hours
 from rounds.core.models import (
     Diagnosis,
     InvestigationContext,
@@ -98,6 +99,7 @@ class OpenAIDiagnosisAdapter(DiagnosisPort):
                 model=self.model,
                 cost_usd=estimated_cost,
                 summary=diagnosis.summary,
+                suggested_resolution_hours=diagnosis.suggested_resolution_hours,
             )
 
             return diagnosis
@@ -198,6 +200,9 @@ Based on the error events, traces, logs, and codebase context above, provide:
 3. **Evidence**: List 3-5 key pieces of evidence supporting your conclusion.
 4. **Suggested Fix**: A concrete, actionable fix that would prevent this error.
 5. **Confidence**: Rate your confidence as HIGH, MEDIUM, or LOW.
+6. **Suggested Resolution Hours**: Estimate an auto-close window in hours: 6-12 for
+   transient/infra errors likely to self-resolve or require only monitoring, 24-48
+   for persistent code defects that require a code fix.
 
 Respond with a JSON object in exactly this format:
 {
@@ -205,7 +210,8 @@ Respond with a JSON object in exactly this format:
   "root_cause": "The root cause explanation",
   "evidence": ["evidence point 1", "evidence point 2", "evidence point 3"],
   "suggested_fix": "The suggested fix",
-  "confidence": "HIGH|MEDIUM|LOW"
+  "confidence": "HIGH|MEDIUM|LOW",
+  "suggested_resolution_hours": 6-48
 }
 """
 
@@ -368,6 +374,10 @@ Respond with a JSON object in exactly this format:
 
         summary = result.get("summary", "") or root_cause
 
+        suggested_resolution_hours = parse_suggested_resolution_hours(
+            result.get("suggested_resolution_hours")
+        )
+
         return Diagnosis(
             root_cause=root_cause,
             evidence=evidence,
@@ -377,4 +387,5 @@ Respond with a JSON object in exactly this format:
             model=self.model,
             cost_usd=0.0,  # Will be overwritten by caller
             summary=summary,
+            suggested_resolution_hours=suggested_resolution_hours,
         )

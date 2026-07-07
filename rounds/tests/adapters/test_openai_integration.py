@@ -112,7 +112,8 @@ async def test_diagnose_flow_success(mock_openai_client: MagicMock) -> None:
             "All errors from database service"
         ],
         "suggested_fix": "Increase connection pool size from 10 to 50",
-        "confidence": "HIGH"
+        "confidence": "HIGH",
+        "suggested_resolution_hours": 24
     }"""
     mock_openai_client.chat.completions.create.return_value = mock_response
 
@@ -175,6 +176,7 @@ async def test_diagnose_flow_success(mock_openai_client: MagicMock) -> None:
     assert diagnosis.confidence == "high"
     assert diagnosis.model == "gpt-4"
     assert diagnosis.cost_usd > 0
+    assert diagnosis.suggested_resolution_hours == 24
 
 
 @pytest.mark.asyncio

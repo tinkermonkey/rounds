@@ -170,6 +170,7 @@ class TestDiagnoseMappedService:
             ],
             "suggested_fix": "Increase pool max_size in db/pool.py:23 or add backpressure",
             "confidence": "HIGH",
+            "suggested_resolution_hours": 24,
         }
 
         context = _investigation_context()
@@ -179,6 +180,7 @@ class TestDiagnoseMappedService:
         assert diagnosis.confidence == "high"
         assert diagnosis.cost_usd == 0.0
         assert diagnosis.model == "agent-node:node1"
+        assert diagnosis.suggested_resolution_hours == 24
         assert len(client.calls) == 1
         assert len(fallback.diagnose_calls) == 0
 

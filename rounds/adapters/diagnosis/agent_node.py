@@ -466,7 +466,10 @@ After reading the relevant source files, respond with a JSON object in exactly t
     "evidence point 3"
   ],
   "suggested_fix": "Concrete actionable fix with file paths and code changes if applicable",
-  "confidence": "HIGH|MEDIUM|LOW"
+  "confidence": "HIGH|MEDIUM|LOW",
+  "suggested_resolution_hours": <integer — an estimated auto-close window based on \
+the nature of the failure: 6-12 for transient/infra errors likely to self-resolve or \
+require only monitoring, 24-48 for persistent code defects that require a code fix>
 }}
 
 Workspace is at: {workspace}
