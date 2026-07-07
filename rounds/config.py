@@ -535,7 +535,8 @@ class Settings(BaseSettings):
         - OpenAI backend requires openai_api_key
         - Agent node backend requires agent_node_service_map, agent_node_host_map,
           and openai_api_key (used as fallback for unmapped services)
-        - GitHub notification requires github_token and github_repo
+        - GitHub notification requires github_token, github_repo_owner, and
+          service_repo_map
         - PostgreSQL store requires store_postgresql_url
         - Elasticsearch telemetry warns when no credentials are configured
         """
@@ -572,9 +573,14 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "github_token must be set when notification_backend is 'github_issue'"
                 )
-            if not self.github_repo:
+            if not self.github_repo_owner:
                 raise ValueError(
-                    "github_repo must be set when notification_backend is 'github_issue'"
+                    "github_repo_owner must be set when notification_backend is 'github_issue'"
+                )
+            if not self.get_service_repo_map():
+                raise ValueError(
+                    "service_repo_map must be set when notification_backend is 'github_issue' "
+                    "(maps telemetry service names to 'owner/repo' for issue routing)"
                 )
 
         # Validate store backend dependencies

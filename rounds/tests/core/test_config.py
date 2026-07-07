@@ -266,6 +266,45 @@ class TestValidateBackendDependencies:
         assert s.get_agent_node_service_map() == {"my-api": ("node1", "workspace-a")}
         assert s.get_agent_node_host_map() == {"node1": "host-a"}
 
+    def test_github_issue_backend_requires_github_token(self) -> None:
+        with pytest.raises(Exception, match="github_token must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="",
+                github_repo_owner="myorg",
+                service_repo_map='{"my-api": "myorg/my-api"}',
+            )
+
+    def test_github_issue_backend_requires_github_repo_owner(self) -> None:
+        with pytest.raises(Exception, match="github_repo_owner must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="ghp_test",
+                github_repo_owner="",
+                service_repo_map='{"my-api": "myorg/my-api"}',
+            )
+
+    def test_github_issue_backend_requires_service_repo_map(self) -> None:
+        with pytest.raises(Exception, match="service_repo_map must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="ghp_test",
+                github_repo_owner="myorg",
+                service_repo_map="",
+            )
+
+    def test_github_issue_backend_with_documented_config_succeeds(self) -> None:
+        """Mirrors the env vars .env.rounds.template documents for github_issue:
+        GITHUB_TOKEN, GITHUB_REPO_OWNER, and SERVICE_REPO_MAP, with no GITHUB_REPO.
+        """
+        s = _settings(
+            notification_backend="github_issue",
+            github_token="ghp_test",
+            github_repo_owner="myorg",
+            service_repo_map='{"my-api": "myorg/my-api"}',
+        )
+        assert s.notification_backend == "github_issue"
+
 
 class TestGetServiceRepoMap:
     """Tests for Settings.get_service_repo_map()."""
