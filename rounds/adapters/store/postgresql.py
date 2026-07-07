@@ -149,14 +149,14 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                         service TEXT NOT NULL,
                         message_template TEXT NOT NULL,
                         stack_hash TEXT NOT NULL,
-                        first_seen TIMESTAMP NOT NULL,
-                        last_seen TIMESTAMP NOT NULL,
+                        first_seen TIMESTAMPTZ NOT NULL,
+                        last_seen TIMESTAMPTZ NOT NULL,
                         occurrence_count INTEGER NOT NULL DEFAULT 1,
                         status TEXT NOT NULL DEFAULT 'new',
                         diagnosis_json JSONB,
                         tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
                         resolution_threshold_hours INTEGER,
-                        last_alerted_at TIMESTAMP,
+                        last_alerted_at TIMESTAMPTZ,
                         max_severity TEXT NOT NULL DEFAULT 'ERROR'
                     )
                     """
@@ -170,12 +170,34 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 )
                 await conn.execute(
                     "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
-                    "last_alerted_at TIMESTAMP"
+                    "last_alerted_at TIMESTAMPTZ"
                 )
                 await conn.execute(
                     "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
                     "max_severity TEXT NOT NULL DEFAULT 'ERROR'"
                 )
+
+                # Migrate columns created before UTC-awareness was required, so
+                # asyncpg returns timezone-aware datetimes that can be safely
+                # compared against datetime.now(UTC). Only run against columns
+                # still typed as TIMESTAMP, since re-casting an already
+                # timezone-aware column would shift values by the session's
+                # local UTC offset.
+                naive_timestamp_columns = await conn.fetch(
+                    """
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'signatures'
+                    AND column_name = ANY($1::text[])
+                    AND data_type = 'timestamp without time zone'
+                    """,
+                    ["first_seen", "last_seen", "last_alerted_at"],
+                )
+                for row in naive_timestamp_columns:
+                    column_name = row["column_name"]
+                    await conn.execute(
+                        f"ALTER TABLE signatures ALTER COLUMN {column_name} "
+                        f"TYPE TIMESTAMPTZ USING {column_name} AT TIME ZONE 'UTC'"
+                    )
 
                 # Create indexes
                 await conn.execute(
