@@ -1185,14 +1185,18 @@ class TestResolutionCycle:
         await store.save(sig)
 
         await poll_service.execute_resolution_cycle()
-        assert sig.status == SignatureStatus.RESOLVED
+        resolved = await store.get_by_id(sig.id)
+        assert resolved is not None
+        assert resolved.status == SignatureStatus.RESOLVED
 
         # The error recurs: the same fingerprinted error comes through a new poll cycle.
         telemetry.add_error(error_event)
         poll_result = await poll_service.execute_poll_cycle()
 
         assert poll_result.updated_signatures == 1
-        assert sig.status == SignatureStatus.NEW
+        recurred = await store.get_by_id(sig.id)
+        assert recurred is not None
+        assert recurred.status == SignatureStatus.NEW
 
 
 # ============================================================================
