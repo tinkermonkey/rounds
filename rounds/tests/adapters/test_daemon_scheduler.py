@@ -211,6 +211,40 @@ async def test_run_loop_executes_resolution_cycle_each_iteration(
 
 
 @pytest.mark.asyncio
+async def test_run_loop_executes_resolution_cycle_when_budget_exceeded(
+    poll_port: FakePollPort,
+) -> None:
+    """Resolution detection incurs no LLM cost, so it must keep running on
+    the normal cadence even once the daily budget is exhausted — only
+    diagnosis (investigation) is gated by budget."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=5.00,
+    )
+    # Exhaust the budget before the loop starts.
+    await scheduler.record_cost("diagnose", 10.00)
+    assert await scheduler._is_budget_exceeded() is True
+
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert poll_port.poll_cycle_count > 0
+    assert poll_port.execute_resolution_cycle_call_count > 0
+    assert (
+        poll_port.execute_resolution_cycle_call_count == poll_port.poll_cycle_count
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_loop_survives_resolution_cycle_failure(
     poll_port: FakePollPort,
 ) -> None:

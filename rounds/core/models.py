@@ -151,6 +151,7 @@ class Signature:
         - INVESTIGATING → NEW (revert_to_new, for error recovery)
         - NEW → DIAGNOSED (mark_diagnosed, direct transition)
         - ANY → RESOLVED (mark_resolved)
+        - RESOLVED → NEW (record_occurrence, on error recurrence)
         - ANY → MUTED (mark_muted)
         - ANY → NEW (reset_to_new, for management operations)
 

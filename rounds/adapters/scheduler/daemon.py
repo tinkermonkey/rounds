@@ -146,8 +146,11 @@ class DaemonScheduler:
             try:
                 logger.debug(f"Starting poll cycle #{cycle_number}")
 
-                # Check if budget is exceeded
-                if await self._is_budget_exceeded():
+                # Check if budget is exceeded (captured once so poll/investigation
+                # gating stays consistent within this cycle)
+                budget_exceeded = await self._is_budget_exceeded()
+
+                if budget_exceeded:
                     logger.warning(
                         f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
                         f"${self.budget_limit:.2f}), skipping investigation cycles"
@@ -170,91 +173,92 @@ class DaemonScheduler:
                         f"{result.investigations_queued} investigations queued"
                     )
 
-                    # Execute resolution cycle: auto-close signatures gone quiet.
-                    # Runs every cycle regardless of budget, since it incurs no
-                    # LLM cost (just a store scan and, optionally, issue closes).
-                    try:
-                        resolution_result = await poll_port.execute_resolution_cycle()
-                        if resolution_result.signatures_resolved > 0:
-                            logger.info(
-                                f"Resolution cycle #{cycle_number} completed: "
-                                f"{resolution_result.signatures_resolved} signatures auto-resolved"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Error in resolution cycle #{cycle_number}: {e}",
-                            exc_info=True,
+                # Execute resolution cycle: auto-close signatures gone quiet.
+                # Runs every cycle regardless of budget, since it incurs no
+                # LLM cost (just a store scan and, optionally, issue closes).
+                try:
+                    resolution_result = await poll_port.execute_resolution_cycle()
+                    if resolution_result.signatures_resolved > 0:
+                        logger.info(
+                            f"Resolution cycle #{cycle_number} completed: "
+                            f"{resolution_result.signatures_resolved} signatures auto-resolved"
                         )
+                except Exception as e:
+                    logger.error(
+                        f"Error in resolution cycle #{cycle_number}: {e}",
+                        exc_info=True,
+                    )
 
-                    # Execute investigation cycle for pending diagnoses
-                    if result.investigations_queued > 0:
-                        now = loop.time()
-                        if (
-                            self._investigation_failure_count >= 5
-                            and self._investigation_suspended_until is not None
-                            and now < self._investigation_suspended_until
-                        ):
-                            logger.warning(
-                                f"Skipping investigation cycle #{cycle_number}: "
-                                f"{self._investigation_failure_count} consecutive failures, "
-                                f"investigations suspended. "
-                                f"Review logs for root cause; daemon poll loop continues."
+                # Execute investigation cycle for pending diagnoses.
+                # Skipped when budget is exhausted, since diagnosis incurs LLM cost.
+                if not budget_exceeded and result.investigations_queued > 0:
+                    now = loop.time()
+                    if (
+                        self._investigation_failure_count >= 5
+                        and self._investigation_suspended_until is not None
+                        and now < self._investigation_suspended_until
+                    ):
+                        logger.warning(
+                            f"Skipping investigation cycle #{cycle_number}: "
+                            f"{self._investigation_failure_count} consecutive failures, "
+                            f"investigations suspended. "
+                            f"Review logs for root cause; daemon poll loop continues."
+                        )
+                    else:
+                        if self._investigation_failure_count >= 5:
+                            logger.info(
+                                f"Retrying investigation cycle #{cycle_number} after suspension "
+                                f"(previous consecutive failures: {self._investigation_failure_count})"
                             )
                         else:
+                            logger.debug(f"Starting investigation cycle #{cycle_number}")
+                        try:
+                            inv_result = await poll_port.execute_investigation_cycle()
+                            self._investigation_failure_count = 0
+                            self._investigation_suspended_until = None
+                            logger.info(
+                                f"Investigation cycle #{cycle_number} completed: "
+                                f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
+                                f"{inv_result.investigations_failed} failed "
+                                f"(out of {inv_result.investigations_attempted} attempted)"
+                            )
+                        except Exception as e:
+                            self._investigation_failure_count += 1
+                            backoff_seconds = max(self.poll_interval_seconds * 5, 300)
+                            self._investigation_suspended_until = loop.time() + backoff_seconds
+                            logger.error(
+                                f"Error in investigation cycle #{cycle_number}: {e} "
+                                f"(consecutive failures: {self._investigation_failure_count})",
+                                exc_info=True,
+                            )
                             if self._investigation_failure_count >= 5:
-                                logger.info(
-                                    f"Retrying investigation cycle #{cycle_number} after suspension "
-                                    f"(previous consecutive failures: {self._investigation_failure_count})"
+                                logger.critical(
+                                    f"Investigation cycle has failed {self._investigation_failure_count} "
+                                    f"consecutive times. Suspending investigations for "
+                                    f"{backoff_seconds}s. "
+                                    f"Review logs for root cause; daemon poll loop continues."
                                 )
-                            else:
-                                logger.debug(f"Starting investigation cycle #{cycle_number}")
-                            try:
-                                inv_result = await poll_port.execute_investigation_cycle()
-                                self._investigation_failure_count = 0
-                                self._investigation_suspended_until = None
-                                logger.info(
-                                    f"Investigation cycle #{cycle_number} completed: "
-                                    f"{len(inv_result.diagnoses_produced)} diagnoses produced, "
-                                    f"{inv_result.investigations_failed} failed "
-                                    f"(out of {inv_result.investigations_attempted} attempted)"
-                                )
-                            except Exception as e:
-                                self._investigation_failure_count += 1
-                                backoff_seconds = max(self.poll_interval_seconds * 5, 300)
-                                self._investigation_suspended_until = loop.time() + backoff_seconds
-                                logger.error(
-                                    f"Error in investigation cycle #{cycle_number}: {e} "
-                                    f"(consecutive failures: {self._investigation_failure_count})",
-                                    exc_info=True,
-                                )
-                                if self._investigation_failure_count >= 5:
-                                    logger.critical(
-                                        f"Investigation cycle has failed {self._investigation_failure_count} "
-                                        f"consecutive times. Suspending investigations for "
-                                        f"{backoff_seconds}s. "
-                                        f"Review logs for root cause; daemon poll loop continues."
-                                    )
-                                    if (
-                                        self._investigation_failure_count == 5
-                                        and self.notification_port is not None
-                                    ):
-                                        try:
-                                            await self.notification_port.report_alert({
-                                                "alert": "investigation_pipeline_suspended",
-                                                "consecutive_failures": self._investigation_failure_count,
-                                                "suspended_for_seconds": backoff_seconds,
-                                                "message": (
-                                                    f"Rounds investigation pipeline has failed "
-                                                    f"{self._investigation_failure_count} consecutive times. "
-                                                    f"Diagnoses are suspended for {backoff_seconds}s. "
-                                                    f"Review logs for root cause."
-                                                ),
-                                            })
-                                        except Exception as notify_err:
-                                            logger.error(
-                                                f"Failed to send investigation failure alert: {notify_err}",
-                                                exc_info=True,
-                                            )
+                                if (
+                                    self._investigation_failure_count == 5
+                                    and self.notification_port is not None
+                                ):
+                                    try:
+                                        await self.notification_port.report_alert({
+                                            "alert": "investigation_pipeline_suspended",
+                                            "consecutive_failures": self._investigation_failure_count,
+                                            "suspended_for_seconds": backoff_seconds,
+                                            "message": (
+                                                f"Rounds investigation pipeline has failed "
+                                                f"{self._investigation_failure_count} consecutive times. "
+                                                f"Diagnoses are suspended for {backoff_seconds}s. "
+                                                f"Review logs for root cause."
+                                            ),
+                                        })
+                                    except Exception as notify_err:
+                                        logger.error(
+                                            f"Failed to send investigation failure alert: {notify_err}",
+                                            exc_info=True,
+                                        )
 
             except asyncio.CancelledError:
                 raise
