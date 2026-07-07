@@ -14,10 +14,10 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from rounds.core.models import Severity
+
 # Valid OpenTelemetry severity level names, used to validate PHONE_HOME_SEVERITY_GATE.
-# Kept as a plain string set (rather than importing rounds.core.models.Severity) to
-# keep config.py free of a dependency on the core domain layer.
-_VALID_SEVERITY_NAMES = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
+_VALID_SEVERITY_NAMES = {s.value for s in Severity}
 
 
 class Settings(BaseSettings):

@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg  # type: ignore[import-untyped]
 
-from rounds.core.models import Diagnosis, Signature, SignatureStatus, StoreStats
+from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort
 
 logger = logging.getLogger(__name__)
@@ -154,9 +154,27 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                         occurrence_count INTEGER NOT NULL DEFAULT 1,
                         status TEXT NOT NULL DEFAULT 'new',
                         diagnosis_json JSONB,
-                        tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+                        tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+                        resolution_threshold_hours INTEGER,
+                        last_alerted_at TIMESTAMP,
+                        max_severity TEXT NOT NULL DEFAULT 'ERROR'
                     )
                     """
+                )
+
+                # Idempotent migration for pre-existing tables from before these
+                # columns were introduced.
+                await conn.execute(
+                    "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
+                    "resolution_threshold_hours INTEGER"
+                )
+                await conn.execute(
+                    "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
+                    "last_alerted_at TIMESTAMP"
+                )
+                await conn.execute(
+                    "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
+                    "max_severity TEXT NOT NULL DEFAULT 'ERROR'"
                 )
 
                 # Create indexes
@@ -234,8 +252,9 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 INSERT INTO signatures
                 (id, fingerprint, error_type, service, message_template,
                  stack_hash, first_seen, last_seen, occurrence_count, status,
-                 diagnosis_json, tags)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 diagnosis_json, tags, resolution_threshold_hours,
+                 last_alerted_at, max_severity)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                 ON CONFLICT (id) DO UPDATE SET
                     fingerprint = $2,
                     error_type = $3,
@@ -247,7 +266,10 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                     occurrence_count = $9,
                     status = $10,
                     diagnosis_json = $11,
-                    tags = $12
+                    tags = $12,
+                    resolution_threshold_hours = $13,
+                    last_alerted_at = $14,
+                    max_severity = $15
                 """,
                 signature.id,
                 signature.fingerprint,
@@ -261,6 +283,9 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 signature.status.value,
                 diagnosis_json,
                 tags_list,
+                signature.resolution_threshold_hours,
+                signature.last_alerted_at,
+                signature.max_severity.value,
             )
 
     async def update(self, signature: Signature) -> None:
@@ -427,6 +452,9 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             status = row["status"]
             diagnosis_json = row["diagnosis_json"]
             tags = row["tags"]
+            resolution_threshold_hours = row["resolution_threshold_hours"]
+            last_alerted_at = row["last_alerted_at"]
+            max_severity = row["max_severity"]
 
             # Validate required fields
             if not sig_id or not fingerprint:
@@ -469,6 +497,9 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 status=SignatureStatus(status),
                 diagnosis=diagnosis,
                 tags=tags_set,
+                resolution_threshold_hours=resolution_threshold_hours,
+                last_alerted_at=last_alerted_at,
+                max_severity=Severity(max_severity),
             )
 
         except ValueError as e:

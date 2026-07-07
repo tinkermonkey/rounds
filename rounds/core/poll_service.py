@@ -211,8 +211,8 @@ class PollService(PollPort):
     async def execute_resolution_cycle(self) -> ResolutionResult:
         """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
 
-        Stub for this phase: always reports zero resolutions. A later phase
-        implements the actual auto-close logic that compares each diagnosed
-        signature's last_seen against its resolution_threshold_hours.
+        Default no-op implementation: always reports zero resolutions. Auto-close
+        logic that compares each diagnosed signature's last_seen against its
+        resolution_threshold_hours is not yet implemented here.
         """
         return ResolutionResult(signatures_resolved=0, timestamp=datetime.now(UTC))

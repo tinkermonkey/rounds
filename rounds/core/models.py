@@ -206,6 +206,10 @@ class Signature:
     def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
         """Transition signature to diagnosed status with diagnosis.
 
+        Also adopts diagnosis.suggested_resolution_hours as the signature's
+        resolution_threshold_hours when the diagnosis provides one, keeping
+        both mutations atomic.
+
         Raises:
             ValueError: If signature is already RESOLVED or MUTED, as these are
                 terminal states that should not transition to DIAGNOSED.
@@ -221,6 +225,8 @@ class Signature:
                 "Unmute the signature first if diagnosis is needed."
             )
         self.diagnosis = diagnosis
+        if diagnosis.suggested_resolution_hours is not None:
+            self.resolution_threshold_hours = diagnosis.suggested_resolution_hours
         self.status = SignatureStatus.DIAGNOSED
 
     def mark_resolved(self) -> None:
@@ -449,9 +455,9 @@ class InvestigationResult:
 class ResolutionResult:
     """Summary of a resolution-detection cycle execution.
 
-    Phase 1 wires PollPort.execute_resolution_cycle() as a no-op that always
-    returns zero counts; Phase 4 implements the actual auto-close logic that
-    compares Signature.last_seen against its resolution_threshold_hours.
+    Default implementation of PollPort.execute_resolution_cycle() returns
+    zero counts; implementations that support auto-close override it to
+    compare Signature.last_seen against its resolution_threshold_hours.
     """
 
     signatures_resolved: int

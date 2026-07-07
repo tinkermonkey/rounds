@@ -635,9 +635,9 @@ class PollPort(ABC):
     async def execute_resolution_cycle(self) -> ResolutionResult:
         """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
 
-        Optional lifecycle method backing the resolution-detection cycle (Phase 4
-        of defect tracking). Default implementation is a no-op that reports zero
-        resolutions; implementations that support auto-close should override this.
+        Optional lifecycle method backing the resolution-detection cycle.
+        Default implementation is a no-op that reports zero resolutions;
+        implementations that support auto-close should override this.
 
         Returns:
             ResolutionResult summarizing how many signatures were auto-resolved.

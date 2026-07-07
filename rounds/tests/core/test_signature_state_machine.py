@@ -334,7 +334,7 @@ def test_record_occurrence_does_not_move_last_seen_backwards(signature: Signatur
 
 
 # ============================================================================
-# Phase 1: resolution_threshold_hours, last_alerted_at, max_severity
+# resolution_threshold_hours, last_alerted_at, max_severity
 # ============================================================================
 
 

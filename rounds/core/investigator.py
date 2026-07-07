@@ -119,8 +119,6 @@ class Investigator:
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
         # so that medium-confidence NEW signatures can still notify
         signature.mark_diagnosed(diagnosis)
-        if diagnosis.suggested_resolution_hours is not None:
-            signature.resolution_threshold_hours = diagnosis.suggested_resolution_hours
         try:
             await self.store.update(signature)
         except Exception as e:

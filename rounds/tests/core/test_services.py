@@ -791,7 +791,7 @@ class TestPollService:
         fingerprinter: Fingerprinter,
         triage_engine: TriageEngine,
     ) -> None:
-        """Phase 1 wires execute_resolution_cycle() as a stub that resolves nothing."""
+        """execute_resolution_cycle() defaults to a stub that resolves nothing."""
         telemetry = FakeTelemetryPort()
         store = FakeSignatureStorePort()
         diagnosis_engine = FakeDiagnosisPort()
