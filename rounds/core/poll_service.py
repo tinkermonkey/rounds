@@ -246,6 +246,7 @@ class PollService(PollPort):
             if now - signature.last_seen < timedelta(hours=threshold_hours):
                 continue
 
+            original_status = signature.status
             try:
                 signature.mark_resolved()
                 await self.store.update(signature)
@@ -253,6 +254,18 @@ class PollService(PollPort):
             except (MemoryError, SystemExit, KeyboardInterrupt):
                 raise
             except Exception as e:
+                # The store write may have failed after mark_resolved() already
+                # flipped the in-memory status, so restore it to keep the
+                # in-process object consistent with what's actually persisted.
+                signature.restore_state(original_status, signature.diagnosis)
+                try:
+                    await self.store.update(signature)
+                except Exception as store_error:
+                    logger.error(
+                        f"Failed to restore signature state after auto-resolve "
+                        f"failure for {signature.fingerprint}: {store_error}",
+                        exc_info=True,
+                    )
                 logger.error(
                     f"Failed to auto-resolve signature {signature.fingerprint}: {e}",
                     exc_info=True,

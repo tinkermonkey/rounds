@@ -135,6 +135,14 @@ class Diagnosis:
             raise ValueError(
                 f"cost_usd must be non-negative, got {self.cost_usd}"
             )
+        if (
+            self.suggested_resolution_hours is not None
+            and self.suggested_resolution_hours <= 0
+        ):
+            raise ValueError(
+                "suggested_resolution_hours must be positive, got "
+                f"{self.suggested_resolution_hours}"
+            )
 
 
 @dataclass

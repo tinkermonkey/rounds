@@ -452,3 +452,23 @@ def test_diagnosis_suggested_resolution_hours_round_trips() -> None:
         suggested_resolution_hours=6,
     )
     assert d.suggested_resolution_hours == 6
+
+
+@pytest.mark.parametrize("invalid_hours", [0, -1, -24])
+def test_diagnosis_rejects_non_positive_suggested_resolution_hours(
+    invalid_hours: int,
+) -> None:
+    """A zero or negative suggested_resolution_hours would produce an
+    instantly-elapsed resolution threshold, so it must be rejected at
+    construction time rather than flowing through to auto-resolution."""
+    with pytest.raises(ValueError, match="suggested_resolution_hours must be positive"):
+        Diagnosis(
+            root_cause="Transient network timeout",
+            evidence=("Connection reset observed once",),
+            suggested_fix="Add retry with backoff",
+            confidence="low",
+            diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
+            model="claude-code",
+            cost_usd=0.02,
+            suggested_resolution_hours=invalid_hours,
+        )

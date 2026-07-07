@@ -1198,6 +1198,79 @@ class TestResolutionCycle:
         assert recurred is not None
         assert recurred.status == SignatureStatus.NEW
 
+    async def test_store_update_failure_reverts_in_memory_status(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """If store.update() fails after mark_resolved(), the in-memory
+        signature must revert to DIAGNOSED rather than staying RESOLVED
+        while the store still has it as DIAGNOSED - otherwise the signature
+        would become invisible to get_all(status=DIAGNOSED) for the rest of
+        the process lifetime."""
+
+        class StoreFailingOnResolve(FakeSignatureStorePort):
+            """Fails the update() call that persists the resolution."""
+
+            async def update(self, signature: Signature) -> None:
+                raise RuntimeError("Store unavailable during resolve")
+
+        telemetry = FakeTelemetryPort()
+        store = StoreFailingOnResolve()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+        assert sig.status == SignatureStatus.DIAGNOSED
+
+    async def test_store_update_failure_during_rollback_still_logged(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """If the rollback's own store.update() also fails, the cycle must
+        not raise - the failure is logged and the cycle moves on."""
+
+        class StoreFailingOnResolve(FakeSignatureStorePort):
+            """Fails every update() call, including the rollback attempt."""
+
+            async def update(self, signature: Signature) -> None:
+                raise RuntimeError("Store unavailable")
+
+        telemetry = FakeTelemetryPort()
+        store = StoreFailingOnResolve()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+        assert sig.status == SignatureStatus.DIAGNOSED
+
 
 # ============================================================================
 # Critical Bug Fixes Tests
