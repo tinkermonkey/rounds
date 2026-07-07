@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
+from rounds.adapters.notification import phone_home
 from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
 from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
 from rounds.tests.fakes.store import FakeSignatureStorePort
@@ -279,6 +280,58 @@ class TestSelfContainedMessage:
         assert diagnosis.root_cause in message
         assert diagnosis.suggested_fix in message
         assert signature.max_severity.value in message
+
+
+class TestCooldownPersistenceRetry:
+    """The alert is already sent when last_alerted_at is persisted, so a transient
+    store failure must be retried rather than silently losing the cooldown."""
+
+    @pytest.mark.asyncio
+    async def test_transient_store_failure_recovers_on_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A store update that fails once still ends up persisted after retry."""
+        monkeypatch.setattr(phone_home, "_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0)
+        signature = _make_signature(last_alerted_at=None)
+        diagnosis = _make_diagnosis()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"status": "ok"})
+
+        store = FakeSignatureStorePort()
+        store.update_fail_count = 1
+        adapter = _make_adapter(httpx.MockTransport(handler), store)
+        await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert signature.last_alerted_at is not None
+        assert store.updated_signatures == [signature]
+
+    @pytest.mark.asyncio
+    async def test_persistent_store_failure_raises_after_alert_sent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If every retry fails, the error propagates so the gap is observable,
+        even though the alert itself was already sent exactly once."""
+        monkeypatch.setattr(phone_home, "_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0)
+        signature = _make_signature(last_alerted_at=None)
+        diagnosis = _make_diagnosis()
+        posts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            posts.append(request)
+            return httpx.Response(200, json={"status": "ok"})
+
+        store = FakeSignatureStorePort()
+        store.update_fail_count = 100
+        adapter = _make_adapter(httpx.MockTransport(handler), store)
+        with pytest.raises(RuntimeError):
+            await adapter.report(signature, diagnosis)
+        await adapter.close()
+
+        assert len(posts) == 1
+        assert signature.last_alerted_at is not None
+        assert store.updated_signatures == []
 
 
 class TestHttpFailurePropagates:

@@ -6,6 +6,7 @@ Gated by severity, per-signature cooldown, and mute status to avoid alert
 fatigue on a channel intended for a single, non-threading SMS conversation.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,6 +17,12 @@ from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
 from rounds.core.ports import NotificationPort, SignatureStorePort
 
 logger = logging.getLogger(__name__)
+
+# The alert has already been sent by the time last_alerted_at is persisted,
+# so a store failure here risks duplicate alerts within the cooldown window
+# on the next poll cycle. Retry a few times before giving up.
+_COOLDOWN_PERSIST_MAX_ATTEMPTS = 3
+_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS = 1.0
 
 
 class PhoneHomeNotificationAdapter(NotificationPort):
@@ -123,12 +130,42 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             raise
 
         signature.record_alert(datetime.now(UTC))
-        await self.store.update(signature)
+        await self._persist_cooldown(signature)
 
         logger.info(
             "Sent phone-home alert",
             extra={"signature_id": signature.id, "severity": signature.max_severity.value},
         )
+
+    async def _persist_cooldown(self, signature: Signature) -> None:
+        """Persist the just-sent alert's cooldown timestamp, retrying on failure.
+
+        The phone-home POST has already succeeded by the time this runs, so a
+        lost update here means the next poll cycle sees last_alerted_at as
+        unset and re-sends a duplicate alert within the cooldown window.
+        Retries give transient store errors a chance to clear before that
+        happens; a final failure is logged loudly and re-raised so the gap
+        is visible in monitoring even though the alert itself went out.
+        """
+        for attempt in range(1, _COOLDOWN_PERSIST_MAX_ATTEMPTS + 1):
+            try:
+                await self.store.update(signature)
+                return
+            except Exception as e:
+                if attempt == _COOLDOWN_PERSIST_MAX_ATTEMPTS:
+                    logger.error(
+                        "Failed to persist phone-home cooldown after alert was sent; "
+                        "duplicate alerts may occur within the cooldown window",
+                        extra={"signature_id": signature.id, "attempts": attempt},
+                        exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    f"Failed to persist phone-home cooldown (attempt {attempt}/"
+                    f"{_COOLDOWN_PERSIST_MAX_ATTEMPTS}): {e}",
+                    extra={"signature_id": signature.id},
+                )
+                await asyncio.sleep(_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS)
 
     def _qualifies_for_alert(self, signature: Signature) -> bool:
         """Apply the mute, severity-gate, and cooldown checks (FR21-23)."""
