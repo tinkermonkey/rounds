@@ -32,6 +32,7 @@ from rounds.adapters.notification.composite import CompositeNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
+from rounds.adapters.notification.repo_routing import RepoOwnershipNotificationAdapter
 from rounds.adapters.notification.stdout import StdoutNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
@@ -889,12 +890,30 @@ async def bootstrap(
         notification = MarkdownNotificationAdapter(report_dir=settings.notification_output_dir)
         logger.info("Notification adapter: Markdown")
     elif settings.notification_backend == "github_issue":
-        notification = GitHubIssueNotificationAdapter(
-            repo_owner=settings.github_repo_owner,
-            repo_name=settings.github_repo_name,
-            github_token=settings.github_token
+        service_repo_map = settings.get_service_repo_map()
+        github_token = settings.github_token
+        github_account = settings.github_repo_owner
+
+        def _build_github_adapter(
+            owner: str, repo: str, _token: str = github_token
+        ) -> GitHubIssueNotificationAdapter:
+            return GitHubIssueNotificationAdapter(
+                repo_owner=owner,
+                repo_name=repo,
+                github_token=_token,
+            )
+
+        notification = RepoOwnershipNotificationAdapter(
+            service_repo_map=service_repo_map,
+            github_account=github_account,
+            fallback=MarkdownNotificationAdapter(report_dir=settings.notification_output_dir),
+            github_adapter_factory=_build_github_adapter,
         )
-        logger.info("Notification adapter: GitHub Issue")
+        logger.info(
+            f"Notification adapter: GitHub Issue with repo-ownership routing "
+            f"({len(service_repo_map)} mapped services, account={github_account!r}; "
+            "unowned/unmapped services fall back to markdown)"
+        )
     else:
         logger.error(f"Unknown notification backend: {settings.notification_backend}")
         sys.exit(1)
