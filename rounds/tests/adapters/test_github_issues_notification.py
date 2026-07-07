@@ -1,5 +1,6 @@
 """Tests for GitHubIssueNotificationAdapter.report() dedup, labeling, and recurrence."""
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,8 +77,6 @@ class TestReportCreatePath:
             if request.method == "GET" and request.url.path.endswith("/issues"):
                 return httpx.Response(200, json=[])
             if request.method == "POST" and request.url.path.endswith("/issues"):
-                import json
-
                 payload = json.loads(request.content)
                 create_calls.append(payload)
                 return httpx.Response(
@@ -165,8 +164,6 @@ class TestReportDedupPath:
                     json=[{"number": 7, "html_url": "https://github.com/acme/widgets/issues/7"}],
                 )
             if request.url.path.endswith("/issues/7/comments") and request.method == "POST":
-                import json
-
                 comment_calls.append(json.loads(request.content))
                 return httpx.Response(201, json={"id": 1})
             if request.method == "POST" and request.url.path.endswith("/issues"):
@@ -204,16 +201,31 @@ class TestReportDedupPath:
             await adapter.report(signature, diagnosis)
         await adapter.close()
 
+    @pytest.mark.asyncio
+    async def test_malformed_json_response_raises_with_context(self) -> None:
+        """Malformed JSON from the issue search endpoint raises a decode error."""
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, content=b"not valid json")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        with pytest.raises(json.JSONDecodeError):
+            await adapter.report(signature, diagnosis)
+        await adapter.close()
+
 
 class TestCloseResolvedIssue:
     """Tests for close_resolved_issue() auto-close behavior."""
 
     @pytest.mark.asyncio
     async def test_closes_open_issue_with_resolution_comment(self) -> None:
-        """An open issue matching the fingerprint is commented on and closed."""
+        """An open issue matching the fingerprint is closed and commented on."""
         signature = _make_signature(status=SignatureStatus.RESOLVED)
-        comment_calls = []
-        patch_calls = []
+        call_order = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "GET" and request.url.path.endswith("/issues"):
@@ -222,14 +234,10 @@ class TestCloseResolvedIssue:
                     json=[{"number": 7, "html_url": "https://github.com/acme/widgets/issues/7"}],
                 )
             if request.method == "POST" and request.url.path.endswith("/issues/7/comments"):
-                import json
-
-                comment_calls.append(json.loads(request.content))
+                call_order.append(("comment", json.loads(request.content)))
                 return httpx.Response(201, json={"id": 1})
             if request.method == "PATCH" and request.url.path.endswith("/issues/7"):
-                import json
-
-                patch_calls.append(json.loads(request.content))
+                call_order.append(("close", json.loads(request.content)))
                 return httpx.Response(200, json={"number": 7, "state": "closed"})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -237,10 +245,9 @@ class TestCloseResolvedIssue:
         await adapter.close_resolved_issue(signature)
         await adapter.close()
 
-        assert len(comment_calls) == 1
-        assert "Auto-Resolved" in comment_calls[0]["body"]
-        assert len(patch_calls) == 1
-        assert patch_calls[0] == {"state": "closed"}
+        assert [kind for kind, _ in call_order] == ["close", "comment"]
+        assert call_order[0][1] == {"state": "closed"}
+        assert "Auto-Resolved" in call_order[1][1]["body"]
 
     @pytest.mark.asyncio
     async def test_no_open_issue_is_a_no_op(self) -> None:
@@ -257,14 +264,22 @@ class TestCloseResolvedIssue:
         await adapter.close()
 
     @pytest.mark.asyncio
-    async def test_close_failure_propagates(self) -> None:
-        """A failure closing the issue after the comment should propagate."""
+    async def test_close_failure_propagates_without_posting_comment(self) -> None:
+        """If closing the issue fails, no resolution comment is posted.
+
+        Regression test: closing must happen before the comment so a failed
+        close never leaves the issue open with a comment falsely claiming it
+        was closed.
+        """
         signature = _make_signature(status=SignatureStatus.RESOLVED)
+        comment_posted = False
 
         def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal comment_posted
             if request.method == "GET" and request.url.path.endswith("/issues"):
                 return httpx.Response(200, json=[{"number": 7, "html_url": "http://x"}])
             if request.method == "POST" and request.url.path.endswith("/issues/7/comments"):
+                comment_posted = True
                 return httpx.Response(201, json={"id": 1})
             if request.method == "PATCH" and request.url.path.endswith("/issues/7"):
                 return httpx.Response(500, json={"error": "boom"})
@@ -274,3 +289,5 @@ class TestCloseResolvedIssue:
         with pytest.raises(httpx.HTTPStatusError):
             await adapter.close_resolved_issue(signature)
         await adapter.close()
+
+        assert comment_posted is False

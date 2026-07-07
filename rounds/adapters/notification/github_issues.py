@@ -4,6 +4,7 @@ Implements NotificationPort by creating or updating GitHub issues for diagnosed 
 Enables integration with development workflows and issue tracking.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -110,20 +111,31 @@ class GitHubIssueNotificationAdapter(NotificationPort):
             )
             response.raise_for_status()
 
+            # The issues list endpoint also returns pull requests; exclude them.
+            issues = [item for item in response.json() if "pull_request" not in item]
+            return issues[0] if issues else None
+
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"Failed to search for existing GitHub issue: {e.response.status_code}",
-                extra={"response": e.response.text},
+                extra={"fingerprint_label": fingerprint_label, "response": e.response.text},
                 exc_info=True,
             )
             raise
         except httpx.RequestError as e:
-            logger.error(f"Failed to search for existing GitHub issue: {e}", exc_info=True)
+            logger.error(
+                f"Failed to search for existing GitHub issue: {e}",
+                extra={"fingerprint_label": fingerprint_label},
+                exc_info=True,
+            )
             raise
-
-        # The issues list endpoint also returns pull requests; exclude them.
-        issues = [item for item in response.json() if "pull_request" not in item]
-        return issues[0] if issues else None
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to parse GitHub issue search response as JSON: {e}",
+                extra={"fingerprint_label": fingerprint_label},
+                exc_info=True,
+            )
+            raise
 
     async def _create_issue(
         self, signature: Signature, diagnosis: Diagnosis, fingerprint_label: str
@@ -223,9 +235,18 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         """Close the open issue for an auto-resolved signature.
 
         Looks up the open issue by fingerprint label (same lookup used for
-        report()'s dedup) and, if found, posts a resolution comment and closes
-        it. If no open issue exists (already closed, or never created), this
-        is a no-op — there is nothing to close.
+        report()'s dedup) and, if found, closes it and posts a resolution
+        comment. If no open issue exists (already closed, or never created),
+        this is a no-op — there is nothing to close.
+
+        The issue is closed before the comment is posted: the resolution
+        cycle treats this call as fire-and-forget (see poll_service.py), so a
+        signature is never retried after being marked resolved. If the
+        comment were posted first and the close call then failed, the issue
+        would be left open with a comment claiming it was closed — a
+        contradiction with no retry to correct it. Closing first means the
+        only possible partial failure is a closed issue missing its
+        explanatory comment, which is not contradictory.
         """
         fingerprint_label = self._fingerprint_label(signature.fingerprint)
         existing_issue = await self._find_existing_issue(fingerprint_label)
@@ -233,8 +254,8 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         if existing_issue is None:
             return
 
-        await self._post_resolution_comment(existing_issue["number"], signature)
         await self._close_issue(existing_issue["number"], signature)
+        await self._post_resolution_comment(existing_issue["number"], signature)
 
     async def _post_resolution_comment(
         self, issue_number: int, signature: Signature
