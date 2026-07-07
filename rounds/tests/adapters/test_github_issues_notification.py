@@ -291,3 +291,31 @@ class TestCloseResolvedIssue:
         await adapter.close()
 
         assert comment_posted is False
+
+    @pytest.mark.asyncio
+    async def test_comment_failure_after_successful_close_does_not_raise(self) -> None:
+        """A failed resolution comment does not undo or mask a successful close.
+
+        The issue is already closed by the time the comment is attempted, so
+        a comment failure must not propagate — otherwise callers would treat
+        a successfully closed issue as a failure (see poll_service.py).
+        """
+        signature = _make_signature(status=SignatureStatus.RESOLVED)
+        issue_closed = False
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal issue_closed
+            if request.method == "GET" and request.url.path.endswith("/issues"):
+                return httpx.Response(200, json=[{"number": 7, "html_url": "http://x"}])
+            if request.method == "PATCH" and request.url.path.endswith("/issues/7"):
+                issue_closed = True
+                return httpx.Response(200, json={"number": 7, "state": "closed"})
+            if request.method == "POST" and request.url.path.endswith("/issues/7/comments"):
+                return httpx.Response(500, json={"error": "boom"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        await adapter.close_resolved_issue(signature)
+        await adapter.close()
+
+        assert issue_closed is True

@@ -144,8 +144,9 @@ class PhoneHomeNotificationAdapter(NotificationPort):
         lost update here means the next poll cycle sees last_alerted_at as
         unset and re-sends a duplicate alert within the cooldown window.
         Retries give transient store errors a chance to clear before that
-        happens; a final failure is logged loudly and re-raised so the gap
-        is visible in monitoring even though the alert itself went out.
+        happens; a final failure is logged loudly but not re-raised, since a
+        duplicate alert is the acceptable worst case and this is not a
+        failure of the alert itself — the alert was already delivered.
         """
         for attempt in range(1, _COOLDOWN_PERSIST_MAX_ATTEMPTS + 1):
             try:
@@ -159,7 +160,7 @@ class PhoneHomeNotificationAdapter(NotificationPort):
                         extra={"signature_id": signature.id, "attempts": attempt},
                         exc_info=True,
                     )
-                    raise
+                    return
                 logger.warning(
                     f"Failed to persist phone-home cooldown (attempt {attempt}/"
                     f"{_COOLDOWN_PERSIST_MAX_ATTEMPTS}): {e}",

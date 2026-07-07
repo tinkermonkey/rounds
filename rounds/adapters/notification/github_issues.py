@@ -255,7 +255,20 @@ class GitHubIssueNotificationAdapter(NotificationPort):
             return
 
         await self._close_issue(existing_issue["number"], signature)
-        await self._post_resolution_comment(existing_issue["number"], signature)
+
+        try:
+            await self._post_resolution_comment(existing_issue["number"], signature)
+        except Exception:
+            # _post_resolution_comment already logged the underlying error;
+            # the close above succeeded, so a missing comment is not a failure.
+            logger.warning(
+                f"Issue #{existing_issue['number']} was closed but its resolution "
+                "comment failed to post",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": existing_issue["number"],
+                },
+            )
 
     async def _post_resolution_comment(
         self, issue_number: int, signature: Signature

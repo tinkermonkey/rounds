@@ -308,11 +308,12 @@ class TestCooldownPersistenceRetry:
         assert store.updated_signatures == [signature]
 
     @pytest.mark.asyncio
-    async def test_persistent_store_failure_raises_after_alert_sent(
+    async def test_persistent_store_failure_does_not_raise_after_alert_sent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If every retry fails, the error propagates so the gap is observable,
-        even though the alert itself was already sent exactly once."""
+        """If every retry fails, report() still returns normally: the alert
+        was already sent exactly once, and a lost cooldown write only risks
+        a duplicate alert next cycle, which is the documented worst case."""
         monkeypatch.setattr(phone_home, "_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0)
         signature = _make_signature(last_alerted_at=None)
         diagnosis = _make_diagnosis()
@@ -325,8 +326,7 @@ class TestCooldownPersistenceRetry:
         store = FakeSignatureStorePort()
         store.update_fail_count = 100
         adapter = _make_adapter(httpx.MockTransport(handler), store)
-        with pytest.raises(RuntimeError):
-            await adapter.report(signature, diagnosis)
+        await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert len(posts) == 1
