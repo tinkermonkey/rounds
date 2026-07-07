@@ -14,6 +14,7 @@ from .investigator import Investigator
 from .models import (
     InvestigationResult,
     PollResult,
+    ResolutionResult,
     Signature,
     SignatureStatus,
 )
@@ -113,12 +114,13 @@ class PollService(PollPort):
                         status=SignatureStatus.NEW,
                         diagnosis=None,
                         tags=frozenset(),
+                        max_severity=error.severity,
                     )
                     await self.store.save(signature)
                     new_signatures += 1
                 else:
                     # Update existing signature
-                    signature.record_occurrence(error.timestamp)
+                    signature.record_occurrence(error.timestamp, error.severity)
                     await self.store.update(signature)
                     updated_signatures += 1
 
@@ -205,3 +207,12 @@ class PollService(PollPort):
             investigations_attempted=investigations_attempted,
             investigations_failed=investigations_failed,
         )
+
+    async def execute_resolution_cycle(self) -> ResolutionResult:
+        """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
+
+        Stub for this phase: always reports zero resolutions. A later phase
+        implements the actual auto-close logic that compares each diagnosed
+        signature's last_seen against its resolution_threshold_hours.
+        """
+        return ResolutionResult(signatures_resolved=0, timestamp=datetime.now(UTC))

@@ -5,9 +5,11 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from rounds.adapters.store.sqlite import SQLiteSignatureStore
+from rounds.core.models import Severity, Signature, SignatureStatus
 
 
 @pytest.fixture
@@ -177,3 +179,143 @@ async def test_row_parsing_with_negative_occurrence_count(
     # Attempt to load the row - should raise ValueError
     with pytest.raises(ValueError, match=r"Row parsing failed|occurrence_count"):
         await store.get_by_id("test-id")
+
+
+@pytest.mark.asyncio
+async def test_resolution_and_severity_fields_round_trip(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """resolution_threshold_hours, last_alerted_at, and max_severity persist and reload."""
+    store, _db_path = temp_db
+
+    alerted_at = datetime(2024, 1, 1, 14, 0, 0, tzinfo=UTC)
+    sig = Signature(
+        id="test-id",
+        fingerprint="test-fp",
+        error_type="NullPointerError",
+        service="billing-service",
+        message_template="Null reference in handler",
+        stack_hash="test-hash",
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+        occurrence_count=1,
+        status=SignatureStatus.NEW,
+        resolution_threshold_hours=12,
+        last_alerted_at=alerted_at,
+        max_severity=Severity.FATAL,
+    )
+    await store.save(sig)
+
+    loaded = await store.get_by_id("test-id")
+
+    assert loaded is not None
+    assert loaded.resolution_threshold_hours == 12
+    assert loaded.last_alerted_at == alerted_at
+    assert loaded.max_severity == Severity.FATAL
+
+
+@pytest.mark.asyncio
+async def test_new_nullable_fields_default_when_absent(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """A signature saved without the new fields reloads with sensible defaults."""
+    store, _db_path = temp_db
+
+    sig = Signature(
+        id="test-id",
+        fingerprint="test-fp",
+        error_type="TestError",
+        service="test-service",
+        message_template="test message",
+        stack_hash="test-hash",
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+        occurrence_count=1,
+        status=SignatureStatus.NEW,
+    )
+    await store.save(sig)
+
+    loaded = await store.get_by_id("test-id")
+
+    assert loaded is not None
+    assert loaded.resolution_threshold_hours is None
+    assert loaded.last_alerted_at is None
+    assert loaded.max_severity == Severity.ERROR
+
+
+@pytest.mark.asyncio
+async def test_schema_migration_adds_new_columns_to_pre_existing_database() -> None:
+    """A database created before this phase (12-column schema) must migrate cleanly.
+
+    Simulates an existing deployment's signatures.db by creating the table with
+    only the pre-Phase-1 columns, then verifies that opening it with the current
+    SQLiteSignatureStore adds the new columns and can read old rows.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "legacy.db"
+
+        # Build the database using the pre-Phase-1 schema (no resolution_threshold_hours,
+        # last_alerted_at, or max_severity columns).
+        conn = await aiosqlite.connect(str(db_path))
+        try:
+            await conn.execute(
+                """
+                CREATE TABLE signatures (
+                    id TEXT PRIMARY KEY,
+                    fingerprint TEXT UNIQUE NOT NULL,
+                    error_type TEXT NOT NULL,
+                    service TEXT NOT NULL,
+                    message_template TEXT NOT NULL,
+                    stack_hash TEXT NOT NULL,
+                    first_seen TIMESTAMP NOT NULL,
+                    last_seen TIMESTAMP NOT NULL,
+                    occurrence_count INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'new',
+                    diagnosis_json TEXT,
+                    tags TEXT NOT NULL DEFAULT '[]'
+                )
+                """
+            )
+            now_iso = datetime.now(UTC).isoformat()
+            await conn.execute(
+                """
+                INSERT INTO signatures
+                (id, fingerprint, error_type, service, message_template, stack_hash,
+                 first_seen, last_seen, occurrence_count, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-id",
+                    "legacy-fp",
+                    "LegacyError",
+                    "legacy-service",
+                    "legacy message",
+                    "legacy-hash",
+                    now_iso,
+                    now_iso,
+                    1,
+                    "new",
+                ),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+
+        # Opening with the current store must migrate the schema without error.
+        store = SQLiteSignatureStore(str(db_path))
+        try:
+            loaded = await store.get_by_id("legacy-id")
+
+            assert loaded is not None
+            assert loaded.resolution_threshold_hours is None
+            assert loaded.last_alerted_at is None
+            assert loaded.max_severity == Severity.ERROR
+
+            # New writes to the migrated database should also round-trip.
+            loaded.resolution_threshold_hours = 8
+            await store.update(loaded)
+            reloaded = await store.get_by_id("legacy-id")
+            assert reloaded is not None
+            assert reloaded.resolution_threshold_hours == 8
+        finally:
+            await store.close_pool()

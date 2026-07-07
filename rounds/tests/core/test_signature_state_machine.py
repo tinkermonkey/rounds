@@ -11,6 +11,7 @@ import pytest
 
 from rounds.core.models import (
     Diagnosis,
+    Severity,
     Signature,
     SignatureStatus,
 )
@@ -330,3 +331,102 @@ def test_record_occurrence_does_not_move_last_seen_backwards(signature: Signatur
     signature.record_occurrence(mid_timestamp)
 
     assert signature.last_seen == original_last_seen
+
+
+# ============================================================================
+# Phase 1: resolution_threshold_hours, last_alerted_at, max_severity
+# ============================================================================
+
+
+def test_signature_defaults_for_new_fields(signature: Signature) -> None:
+    """New signatures default resolution_threshold_hours/last_alerted_at to
+    None and max_severity to ERROR, so no backfill is required for existing
+    signatures deserialized without these fields."""
+    assert signature.resolution_threshold_hours is None
+    assert signature.last_alerted_at is None
+    assert signature.max_severity == Severity.ERROR
+
+
+def test_signature_accepts_explicit_resolution_and_alert_fields() -> None:
+    """resolution_threshold_hours and last_alerted_at round-trip through construction."""
+    alerted_at = datetime(2024, 1, 1, 14, 0, 0, tzinfo=UTC)
+    sig = Signature(
+        id="sig-002",
+        fingerprint="fp-002",
+        error_type="NullPointerError",
+        service="billing-service",
+        message_template="Null reference in handler",
+        stack_hash="hash-stack-002",
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+        occurrence_count=1,
+        status=SignatureStatus.NEW,
+        resolution_threshold_hours=12,
+        last_alerted_at=alerted_at,
+        max_severity=Severity.FATAL,
+    )
+    assert sig.resolution_threshold_hours == 12
+    assert sig.last_alerted_at == alerted_at
+    assert sig.max_severity == Severity.FATAL
+
+
+def test_record_occurrence_raises_max_severity_when_new_event_is_more_severe(
+    signature: Signature,
+) -> None:
+    """record_occurrence should raise max_severity when a more severe event arrives."""
+    signature.record_occurrence(signature.last_seen, Severity.FATAL)
+
+    assert signature.max_severity == Severity.FATAL
+
+
+def test_record_occurrence_does_not_lower_max_severity(signature: Signature) -> None:
+    """record_occurrence should not downgrade max_severity for a less severe event."""
+    signature.record_occurrence(signature.last_seen, Severity.FATAL)
+    signature.record_occurrence(signature.last_seen, Severity.WARN)
+
+    assert signature.max_severity == Severity.FATAL
+
+
+def test_record_occurrence_without_severity_leaves_max_severity_unchanged(
+    signature: Signature,
+) -> None:
+    """record_occurrence called without a severity (backward compatible) is a no-op for max_severity."""
+    original = signature.max_severity
+
+    signature.record_occurrence(signature.last_seen)
+
+    assert signature.max_severity == original
+
+
+def test_severity_rank_orders_from_trace_to_fatal() -> None:
+    """Severity.rank should increase from TRACE (least severe) to FATAL (most severe)."""
+    ordered = [
+        Severity.TRACE,
+        Severity.DEBUG,
+        Severity.INFO,
+        Severity.WARN,
+        Severity.ERROR,
+        Severity.FATAL,
+    ]
+    ranks = [s.rank for s in ordered]
+    assert ranks == sorted(ranks)
+
+
+def test_diagnosis_suggested_resolution_hours_defaults_to_none(diagnosis: Diagnosis) -> None:
+    """Diagnosis.suggested_resolution_hours defaults to None when not specified."""
+    assert diagnosis.suggested_resolution_hours is None
+
+
+def test_diagnosis_suggested_resolution_hours_round_trips() -> None:
+    """Diagnosis.suggested_resolution_hours round-trips through construction."""
+    d = Diagnosis(
+        root_cause="Transient network timeout",
+        evidence=("Connection reset observed once",),
+        suggested_fix="Add retry with backoff",
+        confidence="low",
+        diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
+        model="claude-code",
+        cost_usd=0.02,
+        suggested_resolution_hours=6,
+    )
+    assert d.suggested_resolution_hours == 6

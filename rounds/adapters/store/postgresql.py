@@ -490,6 +490,7 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             "model": diagnosis.model,
             "cost_usd": diagnosis.cost_usd,
             "summary": diagnosis.summary,
+            "suggested_resolution_hours": diagnosis.suggested_resolution_hours,
         }
 
     @staticmethod
@@ -504,4 +505,5 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             model=diagnosis_dict["model"],
             cost_usd=diagnosis_dict["cost_usd"],
             summary=diagnosis_dict.get("summary", ""),
+            suggested_resolution_hours=diagnosis_dict.get("suggested_resolution_hours"),
         )

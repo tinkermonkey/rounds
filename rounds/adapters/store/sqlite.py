@@ -12,7 +12,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from rounds.core.models import Diagnosis, Signature, SignatureStatus, StoreStats
+from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus, StoreStats
 from rounds.core.ports import SignatureStorePort
 
 logger = logging.getLogger(__name__)
@@ -109,10 +109,30 @@ class SQLiteSignatureStore(SignatureStorePort):
                         occurrence_count INTEGER NOT NULL DEFAULT 1,
                         status TEXT NOT NULL DEFAULT 'new',
                         diagnosis_json TEXT,
-                        tags TEXT NOT NULL DEFAULT '[]'
+                        tags TEXT NOT NULL DEFAULT '[]',
+                        resolution_threshold_hours INTEGER,
+                        last_alerted_at TIMESTAMP,
+                        max_severity TEXT NOT NULL DEFAULT 'ERROR'
                     )
                     """
                 )
+                # Migrate databases created before these columns existed. Guarded
+                # by table_info so this is a no-op on fresh databases (which
+                # already have the columns from CREATE TABLE above).
+                cursor = await conn.execute("PRAGMA table_info(signatures)")
+                existing_columns = {row[1] for row in await cursor.fetchall()}
+                if "resolution_threshold_hours" not in existing_columns:
+                    await conn.execute(
+                        "ALTER TABLE signatures ADD COLUMN resolution_threshold_hours INTEGER"
+                    )
+                if "last_alerted_at" not in existing_columns:
+                    await conn.execute(
+                        "ALTER TABLE signatures ADD COLUMN last_alerted_at TIMESTAMP"
+                    )
+                if "max_severity" not in existing_columns:
+                    await conn.execute(
+                        "ALTER TABLE signatures ADD COLUMN max_severity TEXT NOT NULL DEFAULT 'ERROR'"
+                    )
                 # Index for common queries
                 await conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_status ON signatures(status)"
@@ -171,6 +191,11 @@ class SQLiteSignatureStore(SignatureStorePort):
                 diagnosis_json = self._serialize_diagnosis(signature.diagnosis)
 
             tags_json = json.dumps(sorted(signature.tags))
+            last_alerted_at = (
+                signature.last_alerted_at.isoformat()
+                if signature.last_alerted_at is not None
+                else None
+            )
 
             # Try insert, fall back to update if exists
             await conn.execute(
@@ -178,8 +203,9 @@ class SQLiteSignatureStore(SignatureStorePort):
                 INSERT OR REPLACE INTO signatures
                 (id, fingerprint, error_type, service, message_template,
                  stack_hash, first_seen, last_seen, occurrence_count, status,
-                 diagnosis_json, tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 diagnosis_json, tags, resolution_threshold_hours,
+                 last_alerted_at, max_severity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signature.id,
@@ -194,6 +220,9 @@ class SQLiteSignatureStore(SignatureStorePort):
                     signature.status.value,
                     diagnosis_json,
                     tags_json,
+                    signature.resolution_threshold_hours,
+                    last_alerted_at,
+                    signature.max_severity.value,
                 ),
             )
             await conn.commit()
@@ -344,8 +373,8 @@ class SQLiteSignatureStore(SignatureStorePort):
             ValueError: If row is malformed or contains invalid data.
         """
         try:
-            if not row or len(row) != 12:
-                raise ValueError(f"Invalid row length: expected 12, got {len(row) if row else 0}")
+            if not row or len(row) != 15:
+                raise ValueError(f"Invalid row length: expected 15, got {len(row) if row else 0}")
 
             (
                 sig_id,
@@ -360,6 +389,9 @@ class SQLiteSignatureStore(SignatureStorePort):
                 status,
                 diagnosis_json,
                 tags_json,
+                resolution_threshold_hours,
+                last_alerted_at,
+                max_severity,
             ) = row
 
             # Validate required fields
@@ -370,6 +402,11 @@ class SQLiteSignatureStore(SignatureStorePort):
             try:
                 first_seen_dt = datetime.fromisoformat(first_seen)
                 last_seen_dt = datetime.fromisoformat(last_seen)
+                last_alerted_at_dt = (
+                    datetime.fromisoformat(last_alerted_at)
+                    if last_alerted_at is not None
+                    else None
+                )
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid date format: {e}") from e
 
@@ -423,6 +460,9 @@ class SQLiteSignatureStore(SignatureStorePort):
                 status=SignatureStatus(status),
                 diagnosis=diagnosis,
                 tags=tags,
+                max_severity=Severity(max_severity),
+                resolution_threshold_hours=resolution_threshold_hours,
+                last_alerted_at=last_alerted_at_dt,
             )
 
         except ValueError as e:
@@ -445,6 +485,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 "model": diagnosis.model,
                 "cost_usd": diagnosis.cost_usd,
                 "summary": diagnosis.summary,
+                "suggested_resolution_hours": diagnosis.suggested_resolution_hours,
             }
         )
 
@@ -461,4 +502,5 @@ class SQLiteSignatureStore(SignatureStorePort):
             model=data["model"],
             cost_usd=data["cost_usd"],
             summary=data.get("summary", ""),
+            suggested_resolution_hours=data.get("suggested_resolution_hours"),
         )

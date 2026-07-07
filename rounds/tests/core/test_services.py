@@ -706,6 +706,108 @@ class TestPollService:
         assert result.updated_signatures == 1
         assert sig.occurrence_count == initial_count + 1
 
+    async def test_poll_cycle_sets_max_severity_on_new_signature(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """A newly created signature's max_severity should match the triggering error's severity."""
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(error_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        await poll_service.execute_poll_cycle()
+
+        [sig] = store.signatures.values()
+        assert sig.max_severity == error_event.severity
+
+    async def test_poll_cycle_raises_max_severity_on_existing_signature(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        error_event: ErrorEvent,
+    ) -> None:
+        """Re-occurrence of a more severe error should raise the signature's max_severity."""
+        fatal_event = ErrorEvent(
+            trace_id=error_event.trace_id,
+            span_id=error_event.span_id,
+            service=error_event.service,
+            error_type=error_event.error_type,
+            error_message=error_event.error_message,
+            stack_frames=error_event.stack_frames,
+            timestamp=error_event.timestamp,
+            attributes=dict(error_event.attributes),
+            severity=Severity.FATAL,
+        )
+        telemetry = FakeTelemetryPort()
+        telemetry.add_error(fatal_event)
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        fp = fingerprinter.fingerprint(error_event)
+        sig = Signature(
+            id="sig-001",
+            fingerprint=fp,
+            error_type=error_event.error_type,
+            service=error_event.service,
+            message_template=fingerprinter.templatize_message(
+                error_event.error_message
+            ),
+            stack_hash=fingerprinter.hash_stack(
+                fingerprinter.normalize_stack(error_event.stack_frames)
+            ),
+            first_seen=error_event.timestamp,
+            last_seen=error_event.timestamp,
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+            max_severity=Severity.ERROR,
+        )
+        await store.save(sig)
+
+        await poll_service.execute_poll_cycle()
+
+        assert sig.max_severity == Severity.FATAL
+
+    async def test_execute_resolution_cycle_is_a_no_op_stub(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Phase 1 wires execute_resolution_cycle() as a stub that resolves nothing."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        poll_service = PollService(
+            telemetry, store, fingerprinter, triage_engine, investigator
+        )
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+
     async def test_investigation_cycle_calls_investigator(
         self,
         fingerprinter: Fingerprinter,
@@ -1080,6 +1182,68 @@ class TestPartialTraceRetrieval:
 
 
 @pytest.mark.asyncio
+class TestSuggestedResolutionHoursPropagation:
+    """Tests that Diagnosis.suggested_resolution_hours propagates to Signature."""
+
+    async def test_investigate_applies_suggested_resolution_hours(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """Investigator should copy a non-None suggestion onto the signature."""
+        signature.occurrence_count = 10
+        signature.status = SignatureStatus.NEW
+
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_default_diagnosis(
+            Diagnosis(
+                root_cause="Transient network blip",
+                evidence=("Single occurrence, resolved on retry",),
+                suggested_fix="No action required",
+                confidence="high",
+                diagnosed_at=datetime.now(UTC),
+                model="claude-code",
+                cost_usd=0.01,
+                suggested_resolution_hours=6,
+            )
+        )
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        await investigator.investigate(signature)
+
+        assert signature.resolution_threshold_hours == 6
+
+    async def test_investigate_leaves_resolution_threshold_unset_when_suggestion_is_none(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+        signature: Signature,
+    ) -> None:
+        """Investigator should not touch resolution_threshold_hours when the diagnosis is uncertain."""
+        signature.occurrence_count = 10
+        signature.status = SignatureStatus.NEW
+
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()  # canned response leaves suggested_resolution_hours=None
+        notification = FakeNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        await investigator.investigate(signature)
+
+        assert signature.resolution_threshold_hours is None
+
+
 class TestNotificationFailureHandling:
     """Tests for notification failure not reverting successful diagnosis."""
 

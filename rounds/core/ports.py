@@ -21,7 +21,7 @@ Port Interface Categories:
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from .models import (
@@ -32,6 +32,7 @@ from .models import (
     LogEntry,
     PartialResultsInfo,
     PollResult,
+    ResolutionResult,
     RoundStep,
     Signature,
     SignatureDetails,
@@ -630,6 +631,22 @@ class PollPort(ABC):
         Raises:
             Exception: Only for fatal errors.
         """
+
+    async def execute_resolution_cycle(self) -> ResolutionResult:
+        """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
+
+        Optional lifecycle method backing the resolution-detection cycle (Phase 4
+        of defect tracking). Default implementation is a no-op that reports zero
+        resolutions; implementations that support auto-close should override this.
+
+        Returns:
+            ResolutionResult summarizing how many signatures were auto-resolved.
+
+        Raises:
+            Exception: Only for fatal errors. Transient errors should be logged
+                and the cycle should continue with partial results.
+        """
+        return ResolutionResult(signatures_resolved=0, timestamp=datetime.now(UTC))
 
 
 class ManagementPort(ABC):
