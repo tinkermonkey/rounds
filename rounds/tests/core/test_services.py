@@ -4,6 +4,7 @@ Tests verify that Fingerprinter, TriageEngine, Investigator, and PollService
 implement the core diagnostic logic correctly.
 """
 
+import copy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1139,6 +1140,119 @@ class TestResolutionCycle:
         assert result.signatures_resolved == 1
         assert sig.status == SignatureStatus.RESOLVED
 
+    async def test_notification_close_failure_tags_signature_for_retry(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A close failure is surfaced in the result and tagged for retry
+        instead of silently leaving the issue dangling."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        notification.set_should_fail(True, "GitHub unavailable")
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert result.issue_close_failures == 1
+        assert sig.status == SignatureStatus.RESOLVED
+        assert "issue-close-pending" in sig.tags
+
+    async def test_pending_issue_close_is_retried_and_cleared_on_success(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """A signature tagged from a prior close failure is retried on the
+        next resolution cycle and un-tagged once the retry succeeds."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25),
+            status=SignatureStatus.RESOLVED,
+            tags=frozenset({"issue-close-pending"}),
+        )
+        await store.save(sig)
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 0
+        assert result.issue_close_failures == 0
+        assert notification.close_resolved_issue_call_count == 1
+        assert "issue-close-pending" not in sig.tags
+
+    async def test_store_update_failure_after_successful_write_keeps_resolution(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """If store.update() raises after its write already committed (e.g. a
+        timeout), the signature must not be rolled back to DIAGNOSED - doing
+        so would clobber a successful write and cause a double-resolve."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            notification=notification,
+        )
+
+        sig = self._diagnosed_signature(
+            last_seen=datetime.now(UTC) - timedelta(hours=25)
+        )
+        await store.save(sig)
+        store.update_fail_count = 1
+        store.update_fail_after_write = True
+
+        result = await poll_service.execute_resolution_cycle()
+
+        assert result.signatures_resolved == 1
+        assert sig.status == SignatureStatus.RESOLVED
+        persisted = await store.get_by_id(sig.id)
+        assert persisted is not None
+        assert persisted.status == SignatureStatus.RESOLVED
+        assert notification.close_resolved_issue_call_count == 1
+
     async def test_signature_recurrence_after_auto_resolution_returns_to_new(
         self,
         fingerprinter: Fingerprinter,
@@ -1203,17 +1317,34 @@ class TestResolutionCycle:
         fingerprinter: Fingerprinter,
         triage_engine: TriageEngine,
     ) -> None:
-        """If store.update() fails after mark_resolved(), the in-memory
-        signature must revert to DIAGNOSED rather than staying RESOLVED
-        while the store still has it as DIAGNOSED - otherwise the signature
-        would become invisible to get_all(status=DIAGNOSED) for the rest of
-        the process lifetime."""
+        """If store.update() genuinely never commits, the in-memory signature
+        must revert to DIAGNOSED rather than staying RESOLVED while the store
+        still has it as DIAGNOSED - otherwise the signature would become
+        invisible to get_all(status=DIAGNOSED) for the rest of the process
+        lifetime.
+
+        get_by_id() is backed by a snapshot taken at save() time, independent
+        of the live object handed to update() - matching how a real store's
+        persisted row is decoupled from the caller's in-memory mutations
+        until a write actually commits.
+        """
 
         class StoreFailingOnResolve(FakeSignatureStorePort):
             """Fails the update() call that persists the resolution."""
 
+            def __init__(self) -> None:
+                super().__init__()
+                self._committed: dict[str, Signature] = {}
+
+            async def save(self, signature: Signature) -> None:
+                await super().save(signature)
+                self._committed[signature.id] = copy.copy(signature)
+
             async def update(self, signature: Signature) -> None:
                 raise RuntimeError("Store unavailable during resolve")
+
+            async def get_by_id(self, signature_id: str) -> Signature | None:
+                return self._committed.get(signature_id)
 
         telemetry = FakeTelemetryPort()
         store = StoreFailingOnResolve()
@@ -1236,22 +1367,27 @@ class TestResolutionCycle:
         assert result.signatures_resolved == 0
         assert sig.status == SignatureStatus.DIAGNOSED
 
-    async def test_store_update_failure_during_rollback_still_logged(
+    async def test_verification_failure_after_resolve_failure_reverts_safely(
         self,
         fingerprinter: Fingerprinter,
         triage_engine: TriageEngine,
     ) -> None:
-        """If the rollback's own store.update() also fails, the cycle must
-        not raise - the failure is logged and the cycle moves on."""
+        """If the post-failure verification read (get_by_id) also fails, the
+        cycle must not raise - it logs and falls back to reverting the
+        in-memory signature to DIAGNOSED, the safe default when the store's
+        true state can't be confirmed."""
 
-        class StoreFailingOnResolve(FakeSignatureStorePort):
-            """Fails every update() call, including the rollback attempt."""
+        class StoreFailingOnResolveAndVerify(FakeSignatureStorePort):
+            """Fails both the resolving update() and the verification read."""
 
             async def update(self, signature: Signature) -> None:
                 raise RuntimeError("Store unavailable")
 
+            async def get_by_id(self, signature_id: str) -> Signature | None:
+                raise RuntimeError("Store unavailable for verification")
+
         telemetry = FakeTelemetryPort()
-        store = StoreFailingOnResolve()
+        store = StoreFailingOnResolveAndVerify()
         diagnosis_engine = FakeDiagnosisPort()
         notification = FakeNotificationPort()
         investigator = Investigator(

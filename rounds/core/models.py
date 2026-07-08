@@ -493,6 +493,10 @@ class ResolutionResult:
 
     signatures_resolved: int
     timestamp: datetime
+    # Count of signatures whose GitHub issue (or other notification channel
+    # item) failed to close this cycle. These are tagged for retry on a
+    # future resolution cycle rather than left permanently dangling.
+    issue_close_failures: int = 0
 
 
 @dataclass(frozen=True)
