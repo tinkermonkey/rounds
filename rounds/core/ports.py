@@ -499,12 +499,22 @@ class NotificationPort(ABC):
     @abstractmethod
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
-    ) -> None:
+    ) -> datetime | None:
         """Report a diagnosed signature through whatever channel the adapter implements.
 
         Args:
             signature: The signature that was diagnosed.
             diagnosis: The diagnosis results to report.
+
+        Returns:
+            The timestamp to record as the signature's alert cooldown
+            checkpoint, if this channel performs cooldown-gated alerting and
+            just sent one. `None` if the channel has no cooldown concept, or
+            if the alert was suppressed by the channel's own gating logic
+            (e.g. severity gate, mute status, cooldown window). Adapters must
+            not mutate `signature` or persist to a store themselves — the
+            calling domain service is responsible for recording the
+            cooldown via `Signature.record_alert()` and persisting it.
 
         Raises:
             Exception: If notification channel is unavailable.

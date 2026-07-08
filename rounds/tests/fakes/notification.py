@@ -1,5 +1,6 @@
 """Fake NotificationPort implementation for testing."""
 
+from datetime import datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, Signature
@@ -24,11 +25,15 @@ class FakeNotificationPort(NotificationPort):
         self.close_resolved_issue_call_count = 0
         self.should_fail: bool = False
         self.fail_message: str = "Notification failed"
+        # Configurable return value for report(), simulating a channel that
+        # performs cooldown-gated alerting (e.g. phone-home).
+        self.report_alerted_at: datetime | None = None
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
         """Report a diagnosis for a signature.
 
-        Captures the report for test assertions.
+        Captures the report for test assertions. Returns report_alerted_at,
+        configurable to simulate a cooldown-gated channel's alert timestamp.
         """
         self.report_call_count += 1
 
@@ -36,6 +41,7 @@ class FakeNotificationPort(NotificationPort):
             raise RuntimeError(self.fail_message)
 
         self.reported_diagnoses.append((signature, diagnosis))
+        return self.report_alerted_at
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Report a summary of statistics.

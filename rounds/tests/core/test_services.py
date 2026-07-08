@@ -1857,6 +1857,137 @@ class TestNotificationFailureHandling:
             await investigator.investigate(signature)
 
 
+class TestAlertCooldownPersistence:
+    """The domain service layer (not the notification adapter) owns recording
+    and persisting Signature.last_alerted_at (see NotificationPort.report())."""
+
+    @pytest.mark.asyncio
+    async def test_investigate_persists_alert_cooldown_when_channel_reports_one(
+        self, signature: Signature, triage_engine: TriageEngine
+    ) -> None:
+        """When report() returns a timestamp, the signature is updated and persisted."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
+        notification.report_alerted_at = alerted_at
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        await investigator.investigate(signature)
+
+        assert signature.last_alerted_at == alerted_at
+        assert store.updated_signatures[-1].last_alerted_at == alerted_at
+
+    @pytest.mark.asyncio
+    async def test_investigate_does_not_persist_cooldown_when_channel_reports_none(
+        self, signature: Signature, triage_engine: TriageEngine
+    ) -> None:
+        """Channels with no cooldown concept (e.g. GitHub) leave last_alerted_at untouched."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()  # report_alerted_at defaults to None
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        await investigator.investigate(signature)
+
+        assert signature.last_alerted_at is None
+
+    @pytest.mark.asyncio
+    async def test_cooldown_persist_retries_on_transient_store_failure(
+        self, signature: Signature, triage_engine: TriageEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient store failure while persisting the cooldown is retried, not fatal."""
+        from rounds.core import investigator as investigator_module
+
+        monkeypatch.setattr(
+            investigator_module, "_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
+        )
+
+        class FlakyOnCooldownPersistStore(FakeSignatureStorePort):
+            """Fails only on the third update() call (the cooldown persist attempt)."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.update_count = 0
+
+            async def update(self, sig: Signature) -> None:
+                self.update_count += 1
+                if self.update_count == 3:
+                    raise RuntimeError("Simulated transient store failure")
+                await super().update(sig)
+
+        telemetry = FakeTelemetryPort()
+        store = FlakyOnCooldownPersistStore()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
+        notification.report_alerted_at = alerted_at
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        await investigator.investigate(signature)
+
+        assert signature.last_alerted_at == alerted_at
+        # investigating, diagnosed, failed cooldown attempt, retried cooldown attempt
+        assert store.update_count == 4
+
+    @pytest.mark.asyncio
+    async def test_cooldown_persist_failure_does_not_raise_after_alert_sent(
+        self, signature: Signature, triage_engine: TriageEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If every retry fails, investigate() still returns normally: the alert
+        was already sent, and a lost cooldown write only risks a duplicate alert
+        next cycle, which is the documented worst case."""
+        from rounds.core import investigator as investigator_module
+
+        monkeypatch.setattr(
+            investigator_module, "_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
+        )
+
+        class AlwaysFailingCooldownPersistStore(FakeSignatureStorePort):
+            """Fails on every update() call from the cooldown persist attempt onward."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.update_count = 0
+
+            async def update(self, sig: Signature) -> None:
+                self.update_count += 1
+                if self.update_count >= 3:
+                    raise RuntimeError("Simulated persistent store failure")
+                await super().update(sig)
+
+        telemetry = FakeTelemetryPort()
+        store = AlwaysFailingCooldownPersistStore()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
+        notification.report_alerted_at = alerted_at
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        # Should not raise, despite the cooldown persist never succeeding.
+        await investigator.investigate(signature)
+
+        assert signature.last_alerted_at == alerted_at
+        # investigating, diagnosed, then 3 failed cooldown attempts (exhausted)
+        assert store.update_count == 5
+        # Only the pre-notification updates (investigating, diagnosed) ever committed.
+        assert len(store.updated_signatures) == 2
+
+
 @pytest.mark.asyncio
 class TestBudgetTracking:
     """Tests that Investigator and PollService record costs against a BudgetTracker.

@@ -6,6 +6,7 @@ Enables integration with development workflows and issue tracking.
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -78,21 +79,24 @@ class GitHubIssueNotificationAdapter(NotificationPort):
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
-    ) -> None:
+    ) -> datetime | None:
         """Report a diagnosed signature by creating or updating a GitHub issue.
 
         Deduplicates on the signature's fingerprint: if an open issue already
         carries the fingerprint label, a recurrence comment is posted to it
         instead of creating a second issue for the same failure pattern.
+
+        GitHub issues have no cooldown concept, so this always returns None.
         """
         fingerprint_label = self._fingerprint_label(signature.fingerprint)
         existing_issue = await self._find_existing_issue(fingerprint_label)
 
         if existing_issue is not None:
             await self._post_recurrence_comment(existing_issue["number"], signature)
-            return
+            return None
 
         await self._create_issue(signature, diagnosis, fingerprint_label)
+        return None
 
     async def _find_existing_issue(
         self, fingerprint_label: str
@@ -258,7 +262,7 @@ class GitHubIssueNotificationAdapter(NotificationPort):
 
         try:
             await self._post_resolution_comment(existing_issue["number"], signature)
-        except Exception:
+        except (httpx.HTTPStatusError, httpx.RequestError):
             # _post_resolution_comment already logged the underlying error;
             # the close above succeeded, so a missing comment is not a failure.
             logger.warning(

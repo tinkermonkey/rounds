@@ -91,7 +91,6 @@ async def test_defect_lifecycle_end_to_end(tmp_path: Path) -> None:
     phone_home_adapter = PhoneHomeNotificationAdapter(
         endpoint_url="https://phone-home.example.com/alerts",
         auth_token="test-token",
-        store=store,
     )
     phone_home_adapter._client = httpx.AsyncClient(
         transport=httpx.MockTransport(phone_home_handler)

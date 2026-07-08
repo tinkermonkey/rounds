@@ -10,6 +10,7 @@ one channel is configured.
 import asyncio
 import logging
 from collections.abc import Awaitable, Sequence
+from datetime import datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, Signature
@@ -37,10 +38,14 @@ class CompositeNotificationAdapter(NotificationPort):
             raise ValueError("CompositeNotificationAdapter requires at least one channel")
         self.channels = channels
 
-    async def _dispatch(self, label: str, awaitables: Sequence[Awaitable[None]]) -> None:
-        """Run awaitables concurrently, logging and re-raising the first failure."""
+    async def _dispatch(self, label: str, awaitables: Sequence[Awaitable[Any]]) -> list[Any]:
+        """Run awaitables concurrently, logging and re-raising the first failure.
+
+        Returns the return values of the channels that succeeded, in channel order.
+        """
         results = await asyncio.gather(*awaitables, return_exceptions=True)
         first_error: BaseException | None = None
+        successes: list[Any] = []
         for channel, result in zip(self.channels, results):
             if isinstance(result, BaseException):
                 logger.error(
@@ -49,12 +54,21 @@ class CompositeNotificationAdapter(NotificationPort):
                 )
                 if first_error is None:
                     first_error = result
+            else:
+                successes.append(result)
         if first_error is not None:
             raise first_error
+        return successes
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
-        """Report a diagnosed signature to every configured channel concurrently."""
-        await self._dispatch("report", [c.report(signature, diagnosis) for c in self.channels])
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+        """Report a diagnosed signature to every configured channel concurrently.
+
+        Returns the first non-None alert timestamp among the channels' results
+        (in practice, at most one configured channel implements cooldown-gated
+        alerting), or None if no channel returned one.
+        """
+        results = await self._dispatch("report", [c.report(signature, diagnosis) for c in self.channels])
+        return next((r for r in results if r is not None), None)
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Report summary statistics to every configured channel concurrently."""

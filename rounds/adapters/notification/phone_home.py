@@ -6,7 +6,6 @@ Gated by severity, per-signature cooldown, and mute status to avoid alert
 fatigue on a channel intended for a single, non-threading SMS conversation.
 """
 
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,15 +13,9 @@ from typing import Any
 import httpx
 
 from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
-from rounds.core.ports import NotificationPort, SignatureStorePort
+from rounds.core.ports import NotificationPort
 
 logger = logging.getLogger(__name__)
-
-# The alert has already been sent by the time last_alerted_at is persisted,
-# so a store failure here risks duplicate alerts within the cooldown window
-# on the next poll cycle. Retry a few times before giving up.
-_COOLDOWN_PERSIST_MAX_ATTEMPTS = 3
-_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS = 1.0
 
 
 class PhoneHomeNotificationAdapter(NotificationPort):
@@ -35,15 +28,17 @@ class PhoneHomeNotificationAdapter(NotificationPort):
       (tracked via Signature.last_alerted_at).
 
     Any one of these failing suppresses the alert without raising. On a
-    successful POST, Signature.last_alerted_at is updated and persisted via
-    the store so the cooldown holds across poll cycles and process restarts.
+    successful POST, report() returns the alert timestamp; recording it onto
+    the signature and persisting it is the calling domain service's
+    responsibility (see NotificationPort.report()), so the cooldown holds
+    across poll cycles and process restarts without this adapter touching
+    the signature store.
     """
 
     def __init__(
         self,
         endpoint_url: str,
         auth_token: str,
-        store: SignatureStorePort,
         severity_gate: frozenset[Severity] = frozenset({Severity.ERROR, Severity.FATAL}),
         cooldown_hours: int = 24,
         client: httpx.AsyncClient | None = None,
@@ -54,8 +49,6 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             endpoint_url: URL of the phone-home endpoint that receives alerts.
             auth_token: Bearer credential for authenticating to the endpoint.
                 May be empty for endpoints that don't require authentication.
-            store: Signature store, used to persist last_alerted_at after a
-                successful alert.
             severity_gate: Severities that qualify for an alert. Empty means
                 no severity ever qualifies (phone-home effectively disabled).
             cooldown_hours: Minimum hours between alerts for the same signature.
@@ -65,7 +58,6 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             raise ValueError(f"cooldown_hours must be positive, got {cooldown_hours}")
         self.endpoint_url = endpoint_url
         self.auth_token = auth_token
-        self.store = store
         self.severity_gate = severity_gate
         self.cooldown_hours = cooldown_hours
         self._client = client
@@ -89,8 +81,13 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             await self._client.aclose()
             self._client = None
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
         """POST a self-contained alert for the signature, if it qualifies.
+
+        Returns:
+            The timestamp the alert was sent, for the caller to record as
+            the signature's cooldown checkpoint. `None` if suppressed by the
+            severity gate, cooldown, or mute status.
 
         Raises:
             Exception: If the phone-home endpoint is unreachable or returns
@@ -98,7 +95,7 @@ class PhoneHomeNotificationAdapter(NotificationPort):
                 or mute status is not an error and does not raise.
         """
         if not self._qualifies_for_alert(signature):
-            return
+            return None
 
         message = self._format_alert_message(signature, diagnosis)
 
@@ -129,44 +126,11 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             )
             raise
 
-        signature.record_alert(datetime.now(UTC))
-        await self._persist_cooldown(signature)
-
         logger.info(
             "Sent phone-home alert",
             extra={"signature_id": signature.id, "severity": signature.max_severity.value},
         )
-
-    async def _persist_cooldown(self, signature: Signature) -> None:
-        """Persist the just-sent alert's cooldown timestamp, retrying on failure.
-
-        The phone-home POST has already succeeded by the time this runs, so a
-        lost update here means the next poll cycle sees last_alerted_at as
-        unset and re-sends a duplicate alert within the cooldown window.
-        Retries give transient store errors a chance to clear before that
-        happens; a final failure is logged loudly but not re-raised, since a
-        duplicate alert is the acceptable worst case and this is not a
-        failure of the alert itself — the alert was already delivered.
-        """
-        for attempt in range(1, _COOLDOWN_PERSIST_MAX_ATTEMPTS + 1):
-            try:
-                await self.store.update(signature)
-                return
-            except Exception as e:
-                if attempt == _COOLDOWN_PERSIST_MAX_ATTEMPTS:
-                    logger.error(
-                        "Failed to persist phone-home cooldown after alert was sent; "
-                        "duplicate alerts may occur within the cooldown window",
-                        extra={"signature_id": signature.id, "attempts": attempt},
-                        exc_info=True,
-                    )
-                    return
-                logger.warning(
-                    f"Failed to persist phone-home cooldown (attempt {attempt}/"
-                    f"{_COOLDOWN_PERSIST_MAX_ATTEMPTS}): {e}",
-                    extra={"signature_id": signature.id},
-                )
-                await asyncio.sleep(_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS)
+        return datetime.now(UTC)
 
     def _qualifies_for_alert(self, signature: Signature) -> bool:
         """Apply the mute, severity-gate, and cooldown checks (FR21-23)."""

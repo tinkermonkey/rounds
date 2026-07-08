@@ -332,7 +332,18 @@ class ManagementService(ManagementPort):
         # investigation, so they should always receive the result regardless
         # of confidence level or previous status.
         try:
-            await self.notification.report(signature, diagnosis)
+            alerted_at = await self.notification.report(signature, diagnosis)
+            if alerted_at is not None:
+                signature.record_alert(alerted_at)
+                try:
+                    await self.store.update(signature)
+                except Exception as store_error:
+                    logger.error(
+                        f"Failed to persist alert cooldown after reinvestigation "
+                        f"notification for signature {signature_id}: {store_error}",
+                        extra={"signature_id": signature_id},
+                        exc_info=True,
+                    )
             logger.info(
                 f"Notification sent for reinvestigated signature {signature_id}",
                 extra={"signature_id": signature_id},

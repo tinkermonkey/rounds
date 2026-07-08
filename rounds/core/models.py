@@ -188,8 +188,9 @@ class Signature:
     # Diagnosis.suggested_resolution_hours after diagnosis; None falls back to
     # the global default resolution window.
     resolution_threshold_hours: int | None = None
-    # Timestamp of the last phone-home alert sent for this signature, used to
-    # enforce the phone-home cooldown. None means no alert has been sent yet.
+    # Timestamp of the last cooldown-gated notification alert sent for this
+    # signature (e.g. by the phone-home channel), used to enforce that
+    # channel's cooldown window. None means no such alert has been sent yet.
     last_alerted_at: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -288,10 +289,11 @@ class Signature:
             self.max_severity = severity
 
     def record_alert(self, timestamp: datetime) -> None:
-        """Record that a phone-home alert was just sent for this signature.
+        """Record that a cooldown-gated notification alert was just sent for this signature.
 
-        Used by the phone-home notification adapter to persist the cooldown
-        timestamp so subsequent alerts are suppressed until it elapses.
+        Called by the domain service layer after a NotificationPort.report()
+        call returns an alert timestamp (see NotificationPort.report()), so
+        that channel's subsequent alerts are suppressed until the cooldown elapses.
         """
         self.last_alerted_at = timestamp
 

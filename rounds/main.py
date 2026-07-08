@@ -928,7 +928,6 @@ async def bootstrap(
         phone_home = PhoneHomeNotificationAdapter(
             endpoint_url=settings.phone_home_endpoint_url,
             auth_token=settings.phone_home_auth_token.get_secret_value(),
-            store=store,
             severity_gate=severity_gate,
             cooldown_hours=settings.phone_home_cooldown_hours,
         )

@@ -158,11 +158,13 @@ class MarkdownNotificationAdapter(NotificationPort):
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
-    ) -> None:
+    ) -> datetime | None:
         """Report a diagnosed signature to markdown file.
 
         Thread-safe: Uses asyncio.Lock to serialize file writes and prevent
         concurrent modification issues when multiple diagnoses complete simultaneously.
+
+        Markdown files have no cooldown concept, so this always returns None.
         """
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
@@ -193,6 +195,8 @@ class MarkdownNotificationAdapter(NotificationPort):
                     exc_info=True,
                 )
                 raise
+
+        return None
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Write summary statistics to separate markdown file.

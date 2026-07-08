@@ -13,6 +13,7 @@ any issue-creation call would be attempted.
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, Signature
@@ -91,9 +92,9 @@ class RepoOwnershipNotificationAdapter(NotificationPort):
             self._github_adapters[key] = self._github_adapter_factory(owner, repo)
         return self._github_adapters[key]
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
         """Route to the owned repo's GitHub issue channel, or markdown if none is owned."""
-        await self._channel_for(signature.service).report(signature, diagnosis)
+        return await self._channel_for(signature.service).report(signature, diagnosis)
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Summaries have no per-service repo to target; always reported via the fallback channel."""

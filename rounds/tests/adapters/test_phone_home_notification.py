@@ -6,15 +6,12 @@ from typing import Any
 import httpx
 import pytest
 
-from rounds.adapters.notification import phone_home
 from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
 from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
-from rounds.tests.fakes.store import FakeSignatureStorePort
 
 
 def _make_adapter(
     transport: httpx.MockTransport,
-    store: FakeSignatureStorePort,
     severity_gate: frozenset[Severity] = frozenset({Severity.ERROR, Severity.FATAL}),
     cooldown_hours: int = 24,
 ) -> PhoneHomeNotificationAdapter:
@@ -22,7 +19,6 @@ def _make_adapter(
     adapter = PhoneHomeNotificationAdapter(
         endpoint_url="https://phone-home.example.com/alerts",
         auth_token="test-token",
-        store=store,
         severity_gate=severity_gate,
         cooldown_hours=cooldown_hours,
     )
@@ -81,12 +77,12 @@ class TestSeverityGate:
             posts.append(request)
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert len(posts) == 1
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_fatal_severity_posts_alert(self) -> None:
@@ -99,12 +95,12 @@ class TestSeverityGate:
             posts.append(request)
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert len(posts) == 1
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_warn_severity_sends_no_alert(self) -> None:
@@ -115,12 +111,11 @@ class TestSeverityGate:
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("No request should be made for a WARN signature")
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
-        assert store.updated_signatures == []
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_info_severity_sends_no_alert(self) -> None:
@@ -131,10 +126,11 @@ class TestSeverityGate:
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("No request should be made for an INFO signature")
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
+
+        assert result is None
 
 
 class TestCooldown:
@@ -151,10 +147,11 @@ class TestCooldown:
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("No request should be made within the cooldown window")
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_alert_sent_after_cooldown_expires(self) -> None:
@@ -169,29 +166,32 @@ class TestCooldown:
             posts.append(request)
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert len(posts) == 1
+        assert result is not None
 
     @pytest.mark.asyncio
-    async def test_successful_alert_persists_last_alerted_at(self) -> None:
-        """After a successful POST, last_alerted_at is updated and persisted via the store."""
+    async def test_successful_alert_returns_timestamp_without_mutating_signature(self) -> None:
+        """A successful POST returns the alert timestamp but leaves the signature untouched.
+
+        Recording and persisting the cooldown is the calling domain service's
+        responsibility (see NotificationPort.report()), not this adapter's.
+        """
         signature = _make_signature(last_alerted_at=None)
         diagnosis = _make_diagnosis()
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
-        assert signature.last_alerted_at is not None
-        assert store.updated_signatures == [signature]
+        assert result is not None
+        assert signature.last_alerted_at is None
 
     @pytest.mark.asyncio
     async def test_no_prior_alert_is_not_suppressed_by_cooldown(self) -> None:
@@ -204,12 +204,12 @@ class TestCooldown:
             posts.append(request)
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert len(posts) == 1
+        assert result is not None
 
 
 class TestMuteSuppression:
@@ -226,12 +226,11 @@ class TestMuteSuppression:
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("No request should be made for a muted signature")
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
+        adapter = _make_adapter(httpx.MockTransport(handler))
+        result = await adapter.report(signature, diagnosis)
         await adapter.close()
 
-        assert store.updated_signatures == []
+        assert result is None
 
 
 class TestSuppressionDoesNotRaise:
@@ -246,8 +245,7 @@ class TestSuppressionDoesNotRaise:
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("No request should be made")
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
+        adapter = _make_adapter(httpx.MockTransport(handler))
         # Should not raise.
         await adapter.report(signature, diagnosis)
         await adapter.close()
@@ -269,8 +267,7 @@ class TestSelfContainedMessage:
             posted_bodies.append(json.loads(request.content))
             return httpx.Response(200, json={"status": "ok"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
+        adapter = _make_adapter(httpx.MockTransport(handler))
         await adapter.report(signature, diagnosis)
         await adapter.close()
 
@@ -280,58 +277,6 @@ class TestSelfContainedMessage:
         assert diagnosis.root_cause in message
         assert diagnosis.suggested_fix in message
         assert signature.max_severity.value in message
-
-
-class TestCooldownPersistenceRetry:
-    """The alert is already sent when last_alerted_at is persisted, so a transient
-    store failure must be retried rather than silently losing the cooldown."""
-
-    @pytest.mark.asyncio
-    async def test_transient_store_failure_recovers_on_retry(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A store update that fails once still ends up persisted after retry."""
-        monkeypatch.setattr(phone_home, "_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0)
-        signature = _make_signature(last_alerted_at=None)
-        diagnosis = _make_diagnosis()
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"status": "ok"})
-
-        store = FakeSignatureStorePort()
-        store.update_fail_count = 1
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
-        await adapter.close()
-
-        assert signature.last_alerted_at is not None
-        assert store.updated_signatures == [signature]
-
-    @pytest.mark.asyncio
-    async def test_persistent_store_failure_does_not_raise_after_alert_sent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """If every retry fails, report() still returns normally: the alert
-        was already sent exactly once, and a lost cooldown write only risks
-        a duplicate alert next cycle, which is the documented worst case."""
-        monkeypatch.setattr(phone_home, "_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0)
-        signature = _make_signature(last_alerted_at=None)
-        diagnosis = _make_diagnosis()
-        posts = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            posts.append(request)
-            return httpx.Response(200, json={"status": "ok"})
-
-        store = FakeSignatureStorePort()
-        store.update_fail_count = 100
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
-        await adapter.report(signature, diagnosis)
-        await adapter.close()
-
-        assert len(posts) == 1
-        assert signature.last_alerted_at is not None
-        assert store.updated_signatures == []
 
 
 class TestHttpFailurePropagates:
@@ -346,11 +291,9 @@ class TestHttpFailurePropagates:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "boom"})
 
-        store = FakeSignatureStorePort()
-        adapter = _make_adapter(httpx.MockTransport(handler), store)
+        adapter = _make_adapter(httpx.MockTransport(handler))
         with pytest.raises(httpx.HTTPStatusError):
             await adapter.report(signature, diagnosis)
         await adapter.close()
 
         assert signature.last_alerted_at is None
-        assert store.updated_signatures == []
