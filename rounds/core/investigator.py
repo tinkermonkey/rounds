@@ -5,21 +5,21 @@ orchestrating interactions between the core domain logic and
 external diagnosis services.
 """
 
-import asyncio
 import logging
 
+from .alert_cooldown import persist_alert_cooldown
 from .models import Diagnosis, InvestigationContext, Signature
-from .ports import BudgetTracker, DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
+from .ports import (
+    BudgetTracker,
+    DiagnosisPort,
+    NotificationPort,
+    PartialNotificationError,
+    SignatureStorePort,
+    TelemetryPort,
+)
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
-
-# A notification channel's alert has already been sent by the time its
-# cooldown timestamp is persisted here, so a store failure risks a duplicate
-# alert within the cooldown window on the next poll cycle. Retry a few times
-# before giving up.
-_ALERT_COOLDOWN_PERSIST_MAX_ATTEMPTS = 3
-_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS = 1.0
 
 
 class Investigator:
@@ -151,7 +151,19 @@ class Investigator:
                 alerted_at = await self.notification.report(signature, diagnosis)
                 if alerted_at is not None:
                     signature.record_alert(alerted_at)
-                    await self._persist_alert_cooldown(signature)
+                    await persist_alert_cooldown(self.store, signature)
+        except PartialNotificationError as e:
+            # A sibling channel failed, but this channel already delivered its
+            # alert - the cooldown must still be recorded or the next poll
+            # cycle will re-send a duplicate, even though we're about to
+            # surface the sibling's failure to the caller below.
+            signature.record_alert(e.alerted_at)
+            await persist_alert_cooldown(self.store, signature)
+            logger.error(
+                f"Notification partially failed for signature {signature.fingerprint}: {e}",
+                exc_info=True,
+            )
+            notification_error = e
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis
             logger.error(
@@ -165,34 +177,3 @@ class Investigator:
             raise notification_error
 
         return diagnosis
-
-    async def _persist_alert_cooldown(self, signature: Signature) -> None:
-        """Persist a just-recorded alert cooldown timestamp, retrying on transient failure.
-
-        The notification channel has already delivered its alert by the time
-        this runs, so a lost update here means the next poll cycle sees the
-        cooldown as unset and may re-send a duplicate alert. Retries give
-        transient store errors a chance to clear before that happens; a
-        final failure is logged loudly but not re-raised, since a duplicate
-        alert is the acceptable worst case and this is not a failure of the
-        alert itself — the alert was already delivered.
-        """
-        for attempt in range(1, _ALERT_COOLDOWN_PERSIST_MAX_ATTEMPTS + 1):
-            try:
-                await self.store.update(signature)
-                return
-            except Exception as e:
-                if attempt == _ALERT_COOLDOWN_PERSIST_MAX_ATTEMPTS:
-                    logger.error(
-                        "Failed to persist alert cooldown after alert was sent; "
-                        "duplicate alerts may occur within the cooldown window",
-                        extra={"signature_id": signature.id, "attempts": attempt},
-                        exc_info=True,
-                    )
-                    return
-                logger.warning(
-                    f"Failed to persist alert cooldown (attempt {attempt}/"
-                    f"{_ALERT_COOLDOWN_PERSIST_MAX_ATTEMPTS}): {e}",
-                    extra={"signature_id": signature.id},
-                )
-                await asyncio.sleep(_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS)

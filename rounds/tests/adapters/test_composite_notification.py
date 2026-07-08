@@ -7,6 +7,7 @@ import pytest
 
 from rounds.adapters.notification.composite import CompositeNotificationAdapter
 from rounds.core.models import Diagnosis, Severity, Signature, SignatureStatus
+from rounds.core.ports import PartialNotificationError
 from rounds.tests.fakes.notification import FakeNotificationPort
 
 
@@ -118,6 +119,30 @@ class TestPartialFailureIsolation:
 
         assert healthy.get_reported_diagnosis_count() == 1
         assert failing.report_call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_alerted_at_is_preserved_when_a_sibling_channel_fails(self) -> None:
+        """A cooldown timestamp from one channel must not be lost when a sibling raises.
+
+        Regression test: previously `_dispatch` raised the sibling's error
+        before `report()` could inspect the successes, so a phone-home
+        alert's cooldown timestamp was silently discarded whenever GitHub
+        Issues (or any other channel) failed in the same fan-out.
+        """
+        signature = _make_signature()
+        diagnosis = _make_diagnosis()
+        alerted_at = datetime(2026, 7, 6, 12, 30, tzinfo=UTC)
+        phone_home = FakeNotificationPort()
+        phone_home.report_alerted_at = alerted_at
+        github = FakeNotificationPort()
+        github.set_should_fail(True, "github unreachable")
+        composite = CompositeNotificationAdapter([phone_home, github])
+
+        with pytest.raises(PartialNotificationError, match="github unreachable") as exc_info:
+            await composite.report(signature, diagnosis)
+
+        assert exc_info.value.alerted_at == alerted_at
+        assert phone_home.get_reported_diagnosis_count() == 1
 
     @pytest.mark.asyncio
     async def test_close_does_not_raise_on_channel_failure(self) -> None:

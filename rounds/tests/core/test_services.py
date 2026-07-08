@@ -25,6 +25,7 @@ from rounds.core.models import (
     TraceTree,
 )
 from rounds.core.poll_service import PollService
+from rounds.core.ports import PartialNotificationError
 from rounds.core.triage import TriageEngine
 from rounds.tests.fakes import (
     FakeBudgetTracker,
@@ -1905,10 +1906,10 @@ class TestAlertCooldownPersistence:
         self, signature: Signature, triage_engine: TriageEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A transient store failure while persisting the cooldown is retried, not fatal."""
-        from rounds.core import investigator as investigator_module
+        from rounds.core import alert_cooldown as alert_cooldown_module
 
         monkeypatch.setattr(
-            investigator_module, "_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
+            alert_cooldown_module, "ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
         )
 
         class FlakyOnCooldownPersistStore(FakeSignatureStorePort):
@@ -1948,10 +1949,10 @@ class TestAlertCooldownPersistence:
         """If every retry fails, investigate() still returns normally: the alert
         was already sent, and a lost cooldown write only risks a duplicate alert
         next cycle, which is the documented worst case."""
-        from rounds.core import investigator as investigator_module
+        from rounds.core import alert_cooldown as alert_cooldown_module
 
         monkeypatch.setattr(
-            investigator_module, "_ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
+            alert_cooldown_module, "ALERT_COOLDOWN_PERSIST_RETRY_DELAY_SECONDS", 0
         )
 
         class AlwaysFailingCooldownPersistStore(FakeSignatureStorePort):
@@ -1986,6 +1987,33 @@ class TestAlertCooldownPersistence:
         assert store.update_count == 5
         # Only the pre-notification updates (investigating, diagnosed) ever committed.
         assert len(store.updated_signatures) == 2
+
+    @pytest.mark.asyncio
+    async def test_investigate_persists_cooldown_on_partial_notification_failure(
+        self, signature: Signature, triage_engine: TriageEngine
+    ) -> None:
+        """Regression: a fan-out notification failure must not swallow a sibling
+        channel's alert timestamp (see CompositeNotificationAdapter.report())."""
+        alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
+
+        class PartiallyFailingNotificationPort(FakeNotificationPort):
+            async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime:
+                raise PartialNotificationError(alerted_at, RuntimeError("github unreachable"))
+
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = PartiallyFailingNotificationPort()
+
+        investigator = Investigator(
+            telemetry, store, diagnosis_engine, notification, triage_engine, "/app"
+        )
+
+        with pytest.raises(PartialNotificationError):
+            await investigator.investigate(signature)
+
+        assert signature.last_alerted_at == alerted_at
+        assert store.updated_signatures[-1].last_alerted_at == alerted_at
 
 
 @pytest.mark.asyncio
@@ -2279,3 +2307,54 @@ class TestManagementService:
         # update also fails (the store error is logged and swallowed).
         with pytest.raises(RuntimeError, match="LLM temporarily unavailable"):
             await management_service.reinvestigate(signature.id)
+
+    @pytest.mark.asyncio
+    async def test_reinvestigate_persists_cooldown_on_partial_notification_failure(
+        self,
+        diagnosis: Diagnosis,
+    ) -> None:
+        """Regression: like Investigator.investigate(), reinvestigate() must not lose
+        a sibling channel's alert timestamp when a fan-out notification partially fails."""
+        alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
+
+        class PartiallyFailingNotificationPort(FakeNotificationPort):
+            async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime:
+                raise PartialNotificationError(alerted_at, RuntimeError("github unreachable"))
+
+        signature = Signature(
+            id="sig-003",
+            fingerprint="fp-003",
+            error_type="ConnectionTimeout",
+            service="api",
+            message_template="Connection timeout",
+            stack_hash="stack-hash-003",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=5,
+            status=SignatureStatus.DIAGNOSED,
+            diagnosis=diagnosis,
+        )
+
+        store = FakeSignatureStorePort()
+        await store.save(signature)
+
+        telemetry = FakeTelemetryPort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = PartiallyFailingNotificationPort()
+        triage = TriageEngine()
+
+        management_service = ManagementService(
+            store=store,
+            telemetry=telemetry,
+            diagnosis_engine=diagnosis_engine,
+            notification=notification,
+            triage=triage,
+            codebase_path=".",
+        )
+
+        # reinvestigate() logs notification failures but does not re-raise them.
+        await management_service.reinvestigate(signature.id)
+
+        updated = await store.get_by_id(signature.id)
+        assert updated is not None
+        assert updated.last_alerted_at == alerted_at

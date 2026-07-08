@@ -10,6 +10,7 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
+from .alert_cooldown import persist_alert_cooldown
 from .models import (
     Diagnosis,
     InvestigationContext,
@@ -25,6 +26,7 @@ from .ports import (
     DiagnosisPort,
     ManagementPort,
     NotificationPort,
+    PartialNotificationError,
     SignatureStorePort,
     TelemetryPort,
 )
@@ -335,18 +337,22 @@ class ManagementService(ManagementPort):
             alerted_at = await self.notification.report(signature, diagnosis)
             if alerted_at is not None:
                 signature.record_alert(alerted_at)
-                try:
-                    await self.store.update(signature)
-                except Exception as store_error:
-                    logger.error(
-                        f"Failed to persist alert cooldown after reinvestigation "
-                        f"notification for signature {signature_id}: {store_error}",
-                        extra={"signature_id": signature_id},
-                        exc_info=True,
-                    )
+                await persist_alert_cooldown(self.store, signature)
             logger.info(
                 f"Notification sent for reinvestigated signature {signature_id}",
                 extra={"signature_id": signature_id},
+            )
+        except PartialNotificationError as e:
+            # A sibling channel failed, but this channel already delivered its
+            # alert - the cooldown must still be recorded or the next poll
+            # cycle will re-send a duplicate, even though we're about to log
+            # the sibling's failure below.
+            signature.record_alert(e.alerted_at)
+            await persist_alert_cooldown(self.store, signature)
+            logger.error(
+                f"Notification partially failed during reinvestigation for "
+                f"signature {signature_id}: {e}",
+                exc_info=True,
             )
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis

@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, Signature
-from rounds.core.ports import NotificationPort
+from rounds.core.ports import NotificationPort, PartialNotificationError
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,16 @@ class CompositeNotificationAdapter(NotificationPort):
             raise ValueError("CompositeNotificationAdapter requires at least one channel")
         self.channels = channels
 
-    async def _dispatch(self, label: str, awaitables: Sequence[Awaitable[Any]]) -> list[Any]:
-        """Run awaitables concurrently, logging and re-raising the first failure.
+    async def _gather(
+        self, label: str, awaitables: Sequence[Awaitable[Any]]
+    ) -> tuple[list[Any], BaseException | None]:
+        """Run awaitables concurrently, logging every failure.
 
-        Returns the return values of the channels that succeeded, in channel order.
+        Returns the return values of the channels that succeeded (in channel
+        order) alongside the first exception encountered, if any. Unlike
+        `_dispatch`, this never raises - callers that need to inspect the
+        successes before deciding whether/how to propagate the failure
+        (e.g. `report()`) should use this directly.
         """
         results = await asyncio.gather(*awaitables, return_exceptions=True)
         first_error: BaseException | None = None
@@ -56,6 +62,14 @@ class CompositeNotificationAdapter(NotificationPort):
                     first_error = result
             else:
                 successes.append(result)
+        return successes, first_error
+
+    async def _dispatch(self, label: str, awaitables: Sequence[Awaitable[Any]]) -> list[Any]:
+        """Run awaitables concurrently, logging and re-raising the first failure.
+
+        Returns the return values of the channels that succeeded, in channel order.
+        """
+        successes, first_error = await self._gather(label, awaitables)
         if first_error is not None:
             raise first_error
         return successes
@@ -66,9 +80,22 @@ class CompositeNotificationAdapter(NotificationPort):
         Returns the first non-None alert timestamp among the channels' results
         (in practice, at most one configured channel implements cooldown-gated
         alerting), or None if no channel returned one.
+
+        Raises:
+            PartialNotificationError: If a sibling channel failed but
+                another channel already returned an alert timestamp. Callers
+                must extract `alerted_at` from the exception and record it
+                before propagating, since that alert was already delivered.
         """
-        results = await self._dispatch("report", [c.report(signature, diagnosis) for c in self.channels])
-        return next((r for r in results if r is not None), None)
+        successes, first_error = await self._gather(
+            "report", [c.report(signature, diagnosis) for c in self.channels]
+        )
+        alerted_at = next((r for r in successes if r is not None), None)
+        if first_error is not None:
+            if alerted_at is not None:
+                raise PartialNotificationError(alerted_at, first_error) from first_error
+            raise first_error
+        return alerted_at
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Report summary statistics to every configured channel concurrently."""

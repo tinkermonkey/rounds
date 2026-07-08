@@ -481,6 +481,25 @@ class UsageQueryPort(ABC):
         """
 
 
+class PartialNotificationError(Exception):
+    """A sibling notification channel failed after another already sent an alert.
+
+    Fan-out `NotificationPort` implementations (e.g. a composite adapter
+    dispatching to multiple channels concurrently) should raise this instead
+    of the sibling's raw exception when at least one channel raised but
+    another channel already returned a cooldown timestamp from `report()`.
+    That alert has already been delivered, so callers must extract
+    `alerted_at` and record it (`Signature.record_alert()` plus a store
+    update) before propagating this error - otherwise the cooldown is
+    silently lost and the next poll cycle re-sends a duplicate alert.
+    """
+
+    def __init__(self, alerted_at: datetime, original_error: BaseException):
+        super().__init__(str(original_error))
+        self.alerted_at = alerted_at
+        self.original_error = original_error
+
+
 class NotificationPort(ABC):
     """Port for reporting findings to developers.
 
@@ -519,6 +538,10 @@ class NotificationPort(ABC):
         Raises:
             Exception: If notification channel is unavailable.
                 Caller may choose to queue for retry or log error.
+            PartialNotificationError: If this is a fan-out implementation
+                and a sibling channel failed after another channel already
+                returned an alert timestamp. Callers must handle this
+                specially - see the exception's docstring.
         """
 
     @abstractmethod
