@@ -313,6 +313,146 @@ async def test_run_loop_investigation_failure_tracking(
     assert scheduler._investigation_failure_count > 0
 
 @pytest.mark.asyncio
+async def test_daemon_continues_after_resolution_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon poll loop must survive 5 consecutive resolution failures and suspend them."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+    poll_port.should_fail_resolution = True
+
+    async def stop_after_suspension() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if (
+                scheduler._resolution_failure_count >= 5
+                and poll_port.poll_cycle_count >= 8
+            ):
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_suspension(),
+    )
+
+    # At least 5 consecutive failures — resolution suspended with backoff
+    assert scheduler._resolution_failure_count >= 5
+    assert scheduler._resolution_suspended_until is not None
+    # Poll loop continued beyond the threshold
+    assert poll_port.poll_cycle_count >= 8
+    # Resolution cycle was called exactly 5 times (once per failure, then suspended for 300s backoff)
+    assert poll_port.execute_resolution_cycle_call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_resolution_resumes_after_backoff_expires(
+    poll_port: FakePollPort,
+) -> None:
+    """Resolution retries after the suspension backoff expires, and resets on success."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Simulate being in the suspended state with an already-expired backoff
+    scheduler._resolution_failure_count = 5
+    scheduler._resolution_suspended_until = 0.0  # epoch — always in the past
+
+    # Resolution succeeds this time (should_fail_resolution defaults to False)
+
+    async def stop_after_reset() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._resolution_failure_count == 0:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_reset(),
+    )
+
+    assert scheduler._resolution_failure_count == 0
+    assert scheduler._resolution_suspended_until is None
+    assert poll_port.execute_resolution_cycle_call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_on_resolution_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification is sent via NotificationPort when resolution failures hit the threshold."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+    poll_port.should_fail_resolution = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._resolution_failure_count >= 5:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    assert notification_port.report_alert_call_count == 1
+    alert = notification_port.reported_alerts[0]
+    assert alert["alert"] == "resolution_pipeline_suspended"
+    assert alert["consecutive_failures"] == 5
+
+
+@pytest.mark.asyncio
+async def test_resolution_failure_count_resets_on_success(
+    poll_port: FakePollPort,
+) -> None:
+    """Failure counter resets to zero when a resolution cycle succeeds."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Pre-set failure counter; the next successful resolution cycle should reset it
+    scheduler._resolution_failure_count = 3
+
+    async def stop_after_success() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._resolution_failure_count == 0 and \
+               poll_port.execute_resolution_cycle_call_count >= 2:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_success(),
+    )
+
+    assert scheduler._resolution_failure_count == 0
+
+
+@pytest.mark.asyncio
 async def test_concurrent_cost_recording_is_thread_safe(
     poll_port: FakePollPort,
 ) -> None:

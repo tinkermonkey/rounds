@@ -33,7 +33,7 @@ class DaemonScheduler:
             poll_interval_seconds: Interval between poll cycles in seconds.
             budget_limit: Daily budget limit in USD (None = unlimited).
             notification_port: NotificationPort to alert operators when the investigation
-                pipeline is suspended due to persistent failures (optional).
+                or resolution pipeline is suspended due to persistent failures (optional).
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
@@ -47,6 +47,8 @@ class DaemonScheduler:
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0
         self._investigation_suspended_until: float | None = None
+        self._resolution_failure_count = 0
+        self._resolution_suspended_until: float | None = None
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -176,18 +178,70 @@ class DaemonScheduler:
                 # Execute resolution cycle: auto-close signatures gone quiet.
                 # Runs every cycle regardless of budget, since it incurs no
                 # LLM cost (just a store scan and, optionally, issue closes).
-                try:
-                    resolution_result = await poll_port.execute_resolution_cycle()
-                    if resolution_result.signatures_resolved > 0:
-                        logger.info(
-                            f"Resolution cycle #{cycle_number} completed: "
-                            f"{resolution_result.signatures_resolved} signatures auto-resolved"
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Error in resolution cycle #{cycle_number}: {e}",
-                        exc_info=True,
+                resolution_now = loop.time()
+                if (
+                    self._resolution_failure_count >= 5
+                    and self._resolution_suspended_until is not None
+                    and resolution_now < self._resolution_suspended_until
+                ):
+                    logger.warning(
+                        f"Skipping resolution cycle #{cycle_number}: "
+                        f"{self._resolution_failure_count} consecutive failures, "
+                        f"resolution suspended. "
+                        f"Review logs for root cause; daemon poll loop continues."
                     )
+                else:
+                    if self._resolution_failure_count >= 5:
+                        logger.info(
+                            f"Retrying resolution cycle #{cycle_number} after suspension "
+                            f"(previous consecutive failures: {self._resolution_failure_count})"
+                        )
+                    try:
+                        resolution_result = await poll_port.execute_resolution_cycle()
+                        self._resolution_failure_count = 0
+                        self._resolution_suspended_until = None
+                        if resolution_result.signatures_resolved > 0:
+                            logger.info(
+                                f"Resolution cycle #{cycle_number} completed: "
+                                f"{resolution_result.signatures_resolved} signatures auto-resolved"
+                            )
+                    except Exception as e:
+                        self._resolution_failure_count += 1
+                        backoff_seconds = max(self.poll_interval_seconds * 5, 300)
+                        self._resolution_suspended_until = loop.time() + backoff_seconds
+                        logger.error(
+                            f"Error in resolution cycle #{cycle_number}: {e} "
+                            f"(consecutive failures: {self._resolution_failure_count})",
+                            exc_info=True,
+                        )
+                        if self._resolution_failure_count >= 5:
+                            logger.critical(
+                                f"Resolution cycle has failed {self._resolution_failure_count} "
+                                f"consecutive times. Suspending resolution for "
+                                f"{backoff_seconds}s. "
+                                f"Review logs for root cause; daemon poll loop continues."
+                            )
+                            if (
+                                self._resolution_failure_count == 5
+                                and self.notification_port is not None
+                            ):
+                                try:
+                                    await self.notification_port.report_alert({
+                                        "alert": "resolution_pipeline_suspended",
+                                        "consecutive_failures": self._resolution_failure_count,
+                                        "suspended_for_seconds": backoff_seconds,
+                                        "message": (
+                                            f"Rounds resolution pipeline has failed "
+                                            f"{self._resolution_failure_count} consecutive times. "
+                                            f"Auto-resolution is suspended for {backoff_seconds}s. "
+                                            f"Review logs for root cause."
+                                        ),
+                                    })
+                                except Exception as notify_err:
+                                    logger.error(
+                                        f"Failed to send resolution failure alert: {notify_err}",
+                                        exc_info=True,
+                                    )
 
                 # Execute investigation cycle for pending diagnoses.
                 # Skipped when budget is exhausted, since diagnosis incurs LLM cost.
