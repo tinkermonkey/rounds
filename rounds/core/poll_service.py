@@ -352,12 +352,12 @@ class PollService(PollPort):
                 exc_info=True,
             )
             if self._ISSUE_CLOSE_PENDING_TAG not in signature.tags:
-                signature.tags = signature.tags | {self._ISSUE_CLOSE_PENDING_TAG}
+                signature.add_tag(self._ISSUE_CLOSE_PENDING_TAG)
                 await self._persist_tag_update(signature)
             return False
 
         if self._ISSUE_CLOSE_PENDING_TAG in signature.tags:
-            signature.tags = signature.tags - {self._ISSUE_CLOSE_PENDING_TAG}
+            signature.remove_tag(self._ISSUE_CLOSE_PENDING_TAG)
             await self._persist_tag_update(signature)
         return True
 

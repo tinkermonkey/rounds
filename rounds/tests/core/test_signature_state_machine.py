@@ -495,3 +495,50 @@ def test_diagnosis_rejects_non_positive_suggested_resolution_hours(
             cost_usd=0.02,
             suggested_resolution_hours=invalid_hours,
         )
+
+
+# ============================================================================
+# add_tag / remove_tag tests
+# ============================================================================
+
+
+def test_add_tag_adds_to_empty_tags(signature: Signature) -> None:
+    """add_tag should add a tag to a signature with no existing tags."""
+    assert signature.tags == frozenset()
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"issue-close-pending"})
+
+
+def test_add_tag_is_idempotent(signature: Signature) -> None:
+    """Adding the same tag twice should not duplicate or error."""
+    signature.add_tag("issue-close-pending")
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"issue-close-pending"})
+
+
+def test_add_tag_preserves_existing_tags(signature: Signature) -> None:
+    """add_tag should not remove other tags already present."""
+    signature.add_tag("existing-tag")
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"existing-tag", "issue-close-pending"})
+
+
+def test_remove_tag_removes_present_tag(signature: Signature) -> None:
+    """remove_tag should remove a tag that is present."""
+    signature.add_tag("issue-close-pending")
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset()
+
+
+def test_remove_tag_missing_tag_is_a_noop(signature: Signature) -> None:
+    """Removing a tag that isn't present should not error."""
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset()
+
+
+def test_remove_tag_preserves_other_tags(signature: Signature) -> None:
+    """remove_tag should only remove the specified tag, not others."""
+    signature.add_tag("existing-tag")
+    signature.add_tag("issue-close-pending")
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset({"existing-tag"})

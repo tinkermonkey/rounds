@@ -323,6 +323,14 @@ class Signature:
         """
         self.diagnosis = None
 
+    def add_tag(self, tag: str) -> None:
+        """Add a tag to this signature, if not already present."""
+        self.tags = self.tags | {tag}
+
+    def remove_tag(self, tag: str) -> None:
+        """Remove a tag from this signature, if present."""
+        self.tags = self.tags - {tag}
+
     def restore_state(self, status: SignatureStatus, diagnosis: Diagnosis | None = None) -> None:
         """Restore signature to a previous state.
 
