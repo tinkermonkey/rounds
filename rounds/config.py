@@ -14,6 +14,11 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from rounds.core.models import Severity
+
+# Valid OpenTelemetry severity level names, used to validate PHONE_HOME_SEVERITY_GATE.
+_VALID_SEVERITY_NAMES = {s.value for s in Severity}
+
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment.
@@ -200,6 +205,15 @@ class Settings(BaseSettings):
         default=15,
         description="Lookback window in minutes for error queries",
     )
+    resolution_threshold_hours_default: int = Field(
+        default=24,
+        description=(
+            "Default number of hours a diagnosed signature must have no new "
+            "occurrences before it is auto-resolved and its issue closed. "
+            "Overridden per-signature by Signature.resolution_threshold_hours "
+            "(populated from Diagnosis.suggested_resolution_hours)."
+        ),
+    )
 
     # Budget controls
     daily_budget_limit: float = Field(
@@ -264,6 +278,40 @@ class Settings(BaseSettings):
             'Example: SERVICE_HOST_MAP={"my-api":"t5610","worker":"petit-cochon"}'
         ),
     )
+    service_repo_map: str = Field(
+        default="",
+        description=(
+            "JSON map from telemetry service name to GitHub 'owner/repo'. "
+            "Used to route auto-created GitHub issues to the correct repository. "
+            "Unlike SERVICE_HOST_MAP, this is not templated by Ansible: repo "
+            "ownership is a small, stable mapping that changes rarely (only "
+            "when a new service gets its own repo). "
+            'Example: SERVICE_REPO_MAP={"my-api":"myorg/my-api","worker":"myorg/worker-svc"}'
+        ),
+    )
+
+    # Phone-home configuration (reports diagnosed defects to an external
+    # aggregation endpoint, gated by severity and rate-limited by cooldown)
+    phone_home_endpoint_url: str = Field(
+        default="",
+        description="URL of the phone-home endpoint that receives diagnosed defect reports",
+    )
+    phone_home_auth_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Bearer credential for authenticating to the phone-home endpoint",
+    )
+    phone_home_severity_gate: str = Field(
+        default="ERROR,FATAL",
+        description=(
+            "Comma-separated severity levels that trigger a phone-home report "
+            "(TRACE, DEBUG, INFO, WARN, ERROR, FATAL). "
+            "Example: PHONE_HOME_SEVERITY_GATE=ERROR,FATAL"
+        ),
+    )
+    phone_home_cooldown_hours: int = Field(
+        default=24,
+        description="Minimum hours between phone-home reports for the same signature",
+    )
 
     # Development
     debug: bool = Field(
@@ -309,6 +357,59 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
+        return v
+
+    @field_validator("service_repo_map")
+    @classmethod
+    def validate_service_repo_map(cls, v: str) -> str:
+        """Validate SERVICE_REPO_MAP is valid JSON with string 'owner/repo' values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"SERVICE_REPO_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"SERVICE_REPO_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        malformed = {
+            k: val
+            for k, val in result.items()
+            if not isinstance(val, str)
+            or val.count("/") != 1
+            or not all(part.strip() for part in val.split("/"))
+        }
+        if malformed:
+            raise ValueError(
+                f"SERVICE_REPO_MAP values must be 'owner/repo' strings, "
+                f"got malformed values: {malformed}"
+            )
+        return v
+
+    @field_validator("phone_home_severity_gate")
+    @classmethod
+    def validate_phone_home_severity_gate(cls, v: str) -> str:
+        """Validate PHONE_HOME_SEVERITY_GATE contains only known severity level names."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        levels = [s.strip().upper() for s in stripped.split(",") if s.strip()]
+        invalid = [s for s in levels if s not in _VALID_SEVERITY_NAMES]
+        if invalid:
+            raise ValueError(
+                f"PHONE_HOME_SEVERITY_GATE contains invalid severity levels: {invalid}. "
+                f"Valid levels: {sorted(_VALID_SEVERITY_NAMES)}"
+            )
+        return v
+
+    @field_validator("phone_home_cooldown_hours")
+    @classmethod
+    def validate_phone_home_cooldown_hours(cls, v: int) -> int:
+        """Ensure phone-home cooldown is positive."""
+        if v <= 0:
+            raise ValueError("phone_home_cooldown_hours must be positive")
         return v
 
     @field_validator("agent_node_service_map")
@@ -409,6 +510,14 @@ class Settings(BaseSettings):
             raise ValueError("error_lookback_minutes must be positive")
         return v
 
+    @field_validator("resolution_threshold_hours_default")
+    @classmethod
+    def validate_resolution_threshold_hours_default(cls, v: int) -> int:
+        """Ensure the default resolution threshold is positive."""
+        if v <= 0:
+            raise ValueError("resolution_threshold_hours_default must be positive")
+        return v
+
     @field_validator("webhook_port")
     @classmethod
     def validate_webhook_port(cls, v: int) -> int:
@@ -426,7 +535,8 @@ class Settings(BaseSettings):
         - OpenAI backend requires openai_api_key
         - Agent node backend requires agent_node_service_map, agent_node_host_map,
           and openai_api_key (used as fallback for unmapped services)
-        - GitHub notification requires github_token and github_repo
+        - GitHub notification requires github_token, github_repo_owner, and
+          service_repo_map
         - PostgreSQL store requires store_postgresql_url
         - Elasticsearch telemetry warns when no credentials are configured
         """
@@ -463,9 +573,14 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "github_token must be set when notification_backend is 'github_issue'"
                 )
-            if not self.github_repo:
+            if not self.github_repo_owner:
                 raise ValueError(
-                    "github_repo must be set when notification_backend is 'github_issue'"
+                    "github_repo_owner must be set when notification_backend is 'github_issue'"
+                )
+            if not self.get_service_repo_map():
+                raise ValueError(
+                    "service_repo_map must be set when notification_backend is 'github_issue' "
+                    "(maps telemetry service names to 'owner/repo' for issue routing)"
                 )
 
         # Validate store backend dependencies
@@ -521,6 +636,31 @@ class Settings(BaseSettings):
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
         return result
+
+    def get_service_repo_map(self) -> dict[str, str]:
+        """Parse service_repo_map string into a dict mapping service → 'owner/repo'.
+
+        Returns an empty dict when SERVICE_REPO_MAP is not configured.
+        Expects JSON format: ``{"my-api": "myorg/my-api", "worker": "myorg/worker-svc"}``
+        """
+        v = self.service_repo_map.strip()
+        if not v:
+            return {}
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"SERVICE_REPO_MAP must be a JSON object, got {type(result).__name__}")
+        return result
+
+    def get_phone_home_severity_gate(self) -> list[str]:
+        """Parse phone_home_severity_gate into a list of severity level names.
+
+        Returns an empty list when PHONE_HOME_SEVERITY_GATE is not configured,
+        meaning phone-home reporting is disabled for all severities.
+        """
+        v = self.phone_home_severity_gate.strip()
+        if not v:
+            return []
+        return [s.strip().upper() for s in v.split(",") if s.strip()]
 
     def get_agent_node_service_map(self) -> dict[str, tuple[str, str]]:
         """Parse agent_node_service_map string into a dict mapping service -> (mcp_key, workspace).

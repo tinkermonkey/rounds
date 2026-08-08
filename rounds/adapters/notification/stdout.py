@@ -6,6 +6,7 @@ human-readable formatting.
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from rounds.core.models import Diagnosis, Signature
@@ -27,8 +28,11 @@ class StdoutNotificationAdapter(NotificationPort):
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
-    ) -> None:
-        """Report a diagnosed signature to stdout."""
+    ) -> datetime | None:
+        """Report a diagnosed signature to stdout.
+
+        Stdout has no cooldown concept, so this always returns None.
+        """
         # Format header
         header = self._format_header(signature)
         await asyncio.to_thread(print, header)
@@ -43,6 +47,7 @@ class StdoutNotificationAdapter(NotificationPort):
 
         # Footer
         await asyncio.to_thread(print, self._format_footer())
+        return None
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Periodic summary report."""

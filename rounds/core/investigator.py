@@ -7,8 +7,16 @@ external diagnosis services.
 
 import logging
 
+from .alert_cooldown import persist_alert_cooldown
 from .models import Diagnosis, InvestigationContext, Signature
-from .ports import BudgetTracker, DiagnosisPort, NotificationPort, SignatureStorePort, TelemetryPort
+from .ports import (
+    BudgetTracker,
+    DiagnosisPort,
+    NotificationPort,
+    PartialNotificationError,
+    SignatureStorePort,
+    TelemetryPort,
+)
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
@@ -140,7 +148,22 @@ class Investigator:
         notification_error: Exception | None = None
         try:
             if self.triage.should_notify(signature, diagnosis, original_status=original_status):
-                await self.notification.report(signature, diagnosis)
+                alerted_at = await self.notification.report(signature, diagnosis)
+                if alerted_at is not None:
+                    signature.record_alert(alerted_at)
+                    await persist_alert_cooldown(self.store, signature)
+        except PartialNotificationError as e:
+            # A sibling channel failed, but this channel already delivered its
+            # alert - the cooldown must still be recorded or the next poll
+            # cycle will re-send a duplicate, even though we're about to
+            # surface the sibling's failure to the caller below.
+            signature.record_alert(e.alerted_at)
+            await persist_alert_cooldown(self.store, signature)
+            logger.error(
+                f"Notification partially failed for signature {signature.fingerprint}: {e}",
+                exc_info=True,
+            )
+            notification_error = e
         except Exception as e:
             # Log notification failure but don't revert the successful diagnosis
             logger.error(

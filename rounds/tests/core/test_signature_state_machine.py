@@ -11,6 +11,7 @@ import pytest
 
 from rounds.core.models import (
     Diagnosis,
+    Severity,
     Signature,
     SignatureStatus,
 )
@@ -330,3 +331,214 @@ def test_record_occurrence_does_not_move_last_seen_backwards(signature: Signatur
     signature.record_occurrence(mid_timestamp)
 
     assert signature.last_seen == original_last_seen
+
+
+# ============================================================================
+# resolution_threshold_hours, last_alerted_at, max_severity
+# ============================================================================
+
+
+def test_signature_defaults_for_new_fields(signature: Signature) -> None:
+    """New signatures default resolution_threshold_hours/last_alerted_at to
+    None and max_severity to ERROR, so no backfill is required for existing
+    signatures deserialized without these fields."""
+    assert signature.resolution_threshold_hours is None
+    assert signature.last_alerted_at is None
+    assert signature.max_severity == Severity.ERROR
+
+
+def test_signature_accepts_explicit_resolution_and_alert_fields() -> None:
+    """resolution_threshold_hours and last_alerted_at round-trip through construction."""
+    alerted_at = datetime(2024, 1, 1, 14, 0, 0, tzinfo=UTC)
+    sig = Signature(
+        id="sig-002",
+        fingerprint="fp-002",
+        error_type="NullPointerError",
+        service="billing-service",
+        message_template="Null reference in handler",
+        stack_hash="hash-stack-002",
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+        occurrence_count=1,
+        status=SignatureStatus.NEW,
+        resolution_threshold_hours=12,
+        last_alerted_at=alerted_at,
+        max_severity=Severity.FATAL,
+    )
+    assert sig.resolution_threshold_hours == 12
+    assert sig.last_alerted_at == alerted_at
+    assert sig.max_severity == Severity.FATAL
+
+
+@pytest.mark.parametrize("invalid_hours", [0, -1, -24])
+def test_signature_rejects_non_positive_resolution_threshold_hours(
+    invalid_hours: int,
+) -> None:
+    """A zero or negative resolution_threshold_hours (e.g. from a corrupt row)
+    must be rejected, since timedelta(hours=<non-positive>) would make every
+    diagnosed signature appear immediately overdue for auto-close."""
+    with pytest.raises(ValueError, match=r"resolution_threshold_hours must be positive"):
+        Signature(
+            id="sig-003",
+            fingerprint="fp-003",
+            error_type="NullPointerError",
+            service="billing-service",
+            message_template="Null reference in handler",
+            stack_hash="hash-stack-003",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+            resolution_threshold_hours=invalid_hours,
+        )
+
+
+def test_record_occurrence_raises_max_severity_when_new_event_is_more_severe(
+    signature: Signature,
+) -> None:
+    """record_occurrence should raise max_severity when a more severe event arrives."""
+    signature.record_occurrence(signature.last_seen, Severity.FATAL)
+
+    assert signature.max_severity == Severity.FATAL
+
+
+def test_record_occurrence_reverts_resolved_signature_to_new(signature: Signature) -> None:
+    """FR16: a recurrence against a RESOLVED signature (issue already auto-closed)
+    must bring it back to NEW so it re-enters triage/investigation, rather than
+    staying resolved under a closed issue."""
+    signature.status = SignatureStatus.RESOLVED
+    recurrence_timestamp = signature.last_seen + timedelta(days=2)
+
+    signature.record_occurrence(recurrence_timestamp)
+
+    assert signature.status == SignatureStatus.NEW
+    assert signature.last_seen == recurrence_timestamp
+
+
+def test_record_occurrence_does_not_alter_non_resolved_status(signature: Signature) -> None:
+    """record_occurrence should not touch status for signatures that aren't RESOLVED."""
+    signature.status = SignatureStatus.DIAGNOSED
+
+    signature.record_occurrence(signature.last_seen + timedelta(hours=1))
+
+    assert signature.status == SignatureStatus.DIAGNOSED
+
+
+def test_record_occurrence_does_not_lower_max_severity(signature: Signature) -> None:
+    """record_occurrence should not downgrade max_severity for a less severe event."""
+    signature.record_occurrence(signature.last_seen, Severity.FATAL)
+    signature.record_occurrence(signature.last_seen, Severity.WARN)
+
+    assert signature.max_severity == Severity.FATAL
+
+
+def test_record_occurrence_without_severity_leaves_max_severity_unchanged(
+    signature: Signature,
+) -> None:
+    """record_occurrence called without a severity (backward compatible) is a no-op for max_severity."""
+    original = signature.max_severity
+
+    signature.record_occurrence(signature.last_seen)
+
+    assert signature.max_severity == original
+
+
+def test_severity_rank_orders_from_trace_to_fatal() -> None:
+    """Severity.rank should increase from TRACE (least severe) to FATAL (most severe)."""
+    ordered = [
+        Severity.TRACE,
+        Severity.DEBUG,
+        Severity.INFO,
+        Severity.WARN,
+        Severity.ERROR,
+        Severity.FATAL,
+    ]
+    ranks = [s.rank for s in ordered]
+    assert ranks == sorted(ranks)
+
+
+def test_diagnosis_suggested_resolution_hours_defaults_to_none(diagnosis: Diagnosis) -> None:
+    """Diagnosis.suggested_resolution_hours defaults to None when not specified."""
+    assert diagnosis.suggested_resolution_hours is None
+
+
+def test_diagnosis_suggested_resolution_hours_round_trips() -> None:
+    """Diagnosis.suggested_resolution_hours round-trips through construction."""
+    d = Diagnosis(
+        root_cause="Transient network timeout",
+        evidence=("Connection reset observed once",),
+        suggested_fix="Add retry with backoff",
+        confidence="low",
+        diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
+        model="claude-code",
+        cost_usd=0.02,
+        suggested_resolution_hours=6,
+    )
+    assert d.suggested_resolution_hours == 6
+
+
+@pytest.mark.parametrize("invalid_hours", [0, -1, -24])
+def test_diagnosis_rejects_non_positive_suggested_resolution_hours(
+    invalid_hours: int,
+) -> None:
+    """A zero or negative suggested_resolution_hours would produce an
+    instantly-elapsed resolution threshold, so it must be rejected at
+    construction time rather than flowing through to auto-resolution."""
+    with pytest.raises(ValueError, match="suggested_resolution_hours must be positive"):
+        Diagnosis(
+            root_cause="Transient network timeout",
+            evidence=("Connection reset observed once",),
+            suggested_fix="Add retry with backoff",
+            confidence="low",
+            diagnosed_at=datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC),
+            model="claude-code",
+            cost_usd=0.02,
+            suggested_resolution_hours=invalid_hours,
+        )
+
+
+# ============================================================================
+# add_tag / remove_tag tests
+# ============================================================================
+
+
+def test_add_tag_adds_to_empty_tags(signature: Signature) -> None:
+    """add_tag should add a tag to a signature with no existing tags."""
+    assert signature.tags == frozenset()
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"issue-close-pending"})
+
+
+def test_add_tag_is_idempotent(signature: Signature) -> None:
+    """Adding the same tag twice should not duplicate or error."""
+    signature.add_tag("issue-close-pending")
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"issue-close-pending"})
+
+
+def test_add_tag_preserves_existing_tags(signature: Signature) -> None:
+    """add_tag should not remove other tags already present."""
+    signature.add_tag("existing-tag")
+    signature.add_tag("issue-close-pending")
+    assert signature.tags == frozenset({"existing-tag", "issue-close-pending"})
+
+
+def test_remove_tag_removes_present_tag(signature: Signature) -> None:
+    """remove_tag should remove a tag that is present."""
+    signature.add_tag("issue-close-pending")
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset()
+
+
+def test_remove_tag_missing_tag_is_a_noop(signature: Signature) -> None:
+    """Removing a tag that isn't present should not error."""
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset()
+
+
+def test_remove_tag_preserves_other_tags(signature: Signature) -> None:
+    """remove_tag should only remove the specified tag, not others."""
+    signature.add_tag("existing-tag")
+    signature.add_tag("issue-close-pending")
+    signature.remove_tag("issue-close-pending")
+    assert signature.tags == frozenset({"existing-tag"})

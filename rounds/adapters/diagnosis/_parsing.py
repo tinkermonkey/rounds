@@ -18,7 +18,7 @@ def parse_diagnosis_result(result: dict[str, Any], model: str) -> Diagnosis:
     Args:
         result: Parsed JSON dict from the LLM response, expected to contain
             root_cause, evidence, suggested_fix, confidence, and optionally
-            summary.
+            summary and suggested_resolution_hours.
         model: Name of the model that produced the response.
 
     Raises:
@@ -53,6 +53,10 @@ def parse_diagnosis_result(result: dict[str, Any], model: str) -> Diagnosis:
     # summary is optional; fall back to root_cause for backward compatibility
     summary = result.get("summary", "") or root_cause
 
+    suggested_resolution_hours = parse_suggested_resolution_hours(
+        result.get("suggested_resolution_hours")
+    )
+
     return Diagnosis(
         root_cause=root_cause,
         evidence=evidence,
@@ -62,7 +66,28 @@ def parse_diagnosis_result(result: dict[str, Any], model: str) -> Diagnosis:
         model=model,
         cost_usd=0.0,  # Will be filled in by the caller
         summary=summary,
+        suggested_resolution_hours=suggested_resolution_hours,
     )
+
+
+def parse_suggested_resolution_hours(raw: Any) -> int | None:
+    """Parse the optional `suggested_resolution_hours` field.
+
+    Absent or null means the LLM was uncertain; the global default resolution
+    window applies instead (see Diagnosis.suggested_resolution_hours).
+
+    Raises:
+        ValueError: If present but not coercible to an int.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "'suggested_resolution_hours' must be an integer, got "
+            f"{raw!r}"
+        ) from None
 
 
 def parse_trace_investigation_result(

@@ -21,7 +21,7 @@ Port Interface Categories:
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from .models import (
@@ -32,6 +32,7 @@ from .models import (
     LogEntry,
     PartialResultsInfo,
     PollResult,
+    ResolutionResult,
     RoundStep,
     Signature,
     SignatureDetails,
@@ -480,6 +481,25 @@ class UsageQueryPort(ABC):
         """
 
 
+class PartialNotificationError(Exception):
+    """A sibling notification channel failed after another already sent an alert.
+
+    Fan-out `NotificationPort` implementations (e.g. a composite adapter
+    dispatching to multiple channels concurrently) should raise this instead
+    of the sibling's raw exception when at least one channel raised but
+    another channel already returned a cooldown timestamp from `report()`.
+    That alert has already been delivered, so callers must extract
+    `alerted_at` and record it (`Signature.record_alert()` plus a store
+    update) before propagating this error - otherwise the cooldown is
+    silently lost and the next poll cycle re-sends a duplicate alert.
+    """
+
+    def __init__(self, alerted_at: datetime, original_error: BaseException):
+        super().__init__(str(original_error))
+        self.alerted_at = alerted_at
+        self.original_error = original_error
+
+
 class NotificationPort(ABC):
     """Port for reporting findings to developers.
 
@@ -498,16 +518,30 @@ class NotificationPort(ABC):
     @abstractmethod
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
-    ) -> None:
+    ) -> datetime | None:
         """Report a diagnosed signature through whatever channel the adapter implements.
 
         Args:
             signature: The signature that was diagnosed.
             diagnosis: The diagnosis results to report.
 
+        Returns:
+            The timestamp to record as the signature's alert cooldown
+            checkpoint, if this channel performs cooldown-gated alerting and
+            just sent one. `None` if the channel has no cooldown concept, or
+            if the alert was suppressed by the channel's own gating logic
+            (e.g. severity gate, mute status, cooldown window). Adapters must
+            not mutate `signature` or persist to a store themselves — the
+            calling domain service is responsible for recording the
+            cooldown via `Signature.record_alert()` and persisting it.
+
         Raises:
             Exception: If notification channel is unavailable.
                 Caller may choose to queue for retry or log error.
+            PartialNotificationError: If this is a fan-out implementation
+                and a sibling channel failed after another channel already
+                returned an alert timestamp. Callers must handle this
+                specially - see the exception's docstring.
         """
 
     @abstractmethod
@@ -551,6 +585,24 @@ class NotificationPort(ABC):
 
         Raises:
             Exception: If resource cleanup fails.
+        """
+        pass
+
+    async def close_resolved_issue(self, signature: Signature) -> None:
+        """Close whatever open issue/thread was created for this signature.
+
+        Called by the resolution-detection cycle after a signature transitions
+        to RESOLVED (no new occurrences within its resolution threshold).
+        Optional lifecycle method: adapters with no notion of an "open" item
+        to close (stdout, markdown) inherit this no-op default. Adapters that
+        track open state (e.g. GitHub issues) should override it to close that
+        item with a comment explaining the error has stopped occurring.
+
+        Args:
+            signature: The signature that was just auto-resolved.
+
+        Raises:
+            Exception: If the notification channel is unavailable.
         """
         pass
 
@@ -630,6 +682,22 @@ class PollPort(ABC):
         Raises:
             Exception: Only for fatal errors.
         """
+
+    async def execute_resolution_cycle(self) -> ResolutionResult:
+        """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
+
+        Optional lifecycle method backing the resolution-detection cycle.
+        Default implementation is a no-op that reports zero resolutions;
+        implementations that support auto-close should override this.
+
+        Returns:
+            ResolutionResult summarizing how many signatures were auto-resolved.
+
+        Raises:
+            Exception: Only for fatal errors. Transient errors should be logged
+                and the cycle should continue with partial results.
+        """
+        return ResolutionResult(signatures_resolved=0, timestamp=datetime.now(UTC))
 
 
 class ManagementPort(ABC):

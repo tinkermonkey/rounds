@@ -123,6 +123,55 @@ class TestParseDiagnosisResult:
         with pytest.raises(ValueError, match="root_cause"):
             parse_diagnosis_result({}, model="claude-opus")
 
+    def test_suggested_resolution_hours_is_parsed(self) -> None:
+        result = {
+            "root_cause": "Root cause text",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Fix it",
+            "confidence": "high",
+            "suggested_resolution_hours": 12,
+        }
+
+        diagnosis = parse_diagnosis_result(result, model="claude-opus")
+
+        assert diagnosis.suggested_resolution_hours == 12
+
+    def test_suggested_resolution_hours_defaults_to_none_when_absent(self) -> None:
+        result = {
+            "root_cause": "Root cause text",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Fix it",
+            "confidence": "high",
+        }
+
+        diagnosis = parse_diagnosis_result(result, model="claude-opus")
+
+        assert diagnosis.suggested_resolution_hours is None
+
+    def test_suggested_resolution_hours_not_coercible_raises(self) -> None:
+        result = {
+            "root_cause": "Root cause text",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Fix it",
+            "confidence": "high",
+            "suggested_resolution_hours": "a while",
+        }
+
+        with pytest.raises(ValueError, match="suggested_resolution_hours"):
+            parse_diagnosis_result(result, model="claude-opus")
+
+    def test_suggested_resolution_hours_non_positive_raises(self) -> None:
+        result = {
+            "root_cause": "Root cause text",
+            "evidence": ["evidence 1"],
+            "suggested_fix": "Fix it",
+            "confidence": "high",
+            "suggested_resolution_hours": 0,
+        }
+
+        with pytest.raises(ValueError, match="suggested_resolution_hours"):
+            parse_diagnosis_result(result, model="claude-opus")
+
 
 class TestParseTraceInvestigationResult:
     """Tests for parse_trace_investigation_result."""

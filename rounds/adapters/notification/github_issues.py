@@ -4,7 +4,9 @@ Implements NotificationPort by creating or updating GitHub issues for diagnosed 
 Enables integration with development workflows and issue tracking.
 """
 
+import json
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -77,21 +79,85 @@ class GitHubIssueNotificationAdapter(NotificationPort):
 
     async def report(
         self, signature: Signature, diagnosis: Diagnosis
+    ) -> datetime | None:
+        """Report a diagnosed signature by creating or updating a GitHub issue.
+
+        Deduplicates on the signature's fingerprint: if an open issue already
+        carries the fingerprint label, a recurrence comment is posted to it
+        instead of creating a second issue for the same failure pattern.
+
+        GitHub issues have no cooldown concept, so this always returns None.
+        """
+        fingerprint_label = self._fingerprint_label(signature.fingerprint)
+        existing_issue = await self._find_existing_issue(fingerprint_label)
+
+        if existing_issue is not None:
+            await self._post_recurrence_comment(existing_issue["number"], signature)
+            return None
+
+        await self._create_issue(signature, diagnosis, fingerprint_label)
+        return None
+
+    async def _find_existing_issue(
+        self, fingerprint_label: str
+    ) -> dict[str, Any] | None:
+        """Search for an open issue already labeled with this fingerprint.
+
+        Returns:
+            The first matching open issue, or None if no match exists.
+        """
+        try:
+            client = await self._get_client()
+
+            response = await client.get(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues",
+                params={"labels": fingerprint_label, "state": "open"},
+            )
+            response.raise_for_status()
+
+            # The issues list endpoint also returns pull requests; exclude them.
+            issues = [item for item in response.json() if "pull_request" not in item]
+            return issues[0] if issues else None
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to search for existing GitHub issue: {e.response.status_code}",
+                extra={"fingerprint_label": fingerprint_label, "response": e.response.text},
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(
+                f"Failed to search for existing GitHub issue: {e}",
+                extra={"fingerprint_label": fingerprint_label},
+                exc_info=True,
+            )
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to parse GitHub issue search response as JSON: {e}",
+                extra={"fingerprint_label": fingerprint_label},
+                exc_info=True,
+            )
+            raise
+
+    async def _create_issue(
+        self, signature: Signature, diagnosis: Diagnosis, fingerprint_label: str
     ) -> None:
-        """Report a diagnosed signature by creating a GitHub issue."""
+        """Create a new GitHub issue for a signature with no existing open issue."""
         issue_title = self._format_issue_title(signature)
         issue_body = self._format_issue_body(signature, diagnosis)
+        labels = self._build_labels(signature, fingerprint_label)
 
         try:
             client = await self._get_client()
 
-            # Create the issue
             response = await client.post(
                 f"/repos/{self.repo_owner}/{self.repo_name}/issues",
                 json={
                     "title": issue_title,
                     "body": issue_body,
-                    "labels": self.labels,
+                    "labels": labels,
                     "assignees": self.assignees,
                 },
             )
@@ -125,6 +191,237 @@ class GitHubIssueNotificationAdapter(NotificationPort):
                 exc_info=True,
             )
             raise
+
+    async def _post_recurrence_comment(
+        self, issue_number: int, signature: Signature
+    ) -> None:
+        """Post a recurrence comment to an existing open issue for this fingerprint."""
+        comment_body = self._format_recurrence_comment(signature)
+
+        try:
+            client = await self._get_client()
+
+            response = await client.post(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments",
+                json={"body": comment_body},
+            )
+
+            response.raise_for_status()
+
+            logger.info(
+                f"Posted recurrence comment on GitHub issue #{issue_number}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                },
+            )
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to post recurrence comment: {e.response.status_code}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                    "response": e.response.text,
+                },
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(
+                f"Failed to post recurrence comment: {e}",
+                extra={"signature_id": signature.id, "issue_number": issue_number},
+                exc_info=True,
+            )
+            raise
+
+    async def close_resolved_issue(self, signature: Signature) -> None:
+        """Close the open issue for an auto-resolved signature.
+
+        Looks up the open issue by fingerprint label (same lookup used for
+        report()'s dedup) and, if found, closes it and posts a resolution
+        comment. If no open issue exists (already closed, or never created),
+        this is a no-op — there is nothing to close.
+
+        The issue is closed before the comment is posted: the resolution
+        cycle treats this call as fire-and-forget (see poll_service.py), so a
+        signature is never retried after being marked resolved. If the
+        comment were posted first and the close call then failed, the issue
+        would be left open with a comment claiming it was closed — a
+        contradiction with no retry to correct it. Closing first means the
+        only possible partial failure is a closed issue missing its
+        explanatory comment, which is not contradictory.
+        """
+        fingerprint_label = self._fingerprint_label(signature.fingerprint)
+        existing_issue = await self._find_existing_issue(fingerprint_label)
+
+        if existing_issue is None:
+            return
+
+        await self._close_issue(existing_issue["number"], signature)
+
+        try:
+            await self._post_resolution_comment(existing_issue["number"], signature)
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            # _post_resolution_comment already logged the underlying error;
+            # the close above succeeded, so a missing comment is not a failure.
+            logger.warning(
+                f"Issue #{existing_issue['number']} was closed but its resolution "
+                "comment failed to post",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": existing_issue["number"],
+                },
+            )
+
+    async def _post_resolution_comment(
+        self, issue_number: int, signature: Signature
+    ) -> None:
+        """Post a comment explaining the error has stopped occurring."""
+        comment_body = self._format_resolution_comment(signature)
+
+        try:
+            client = await self._get_client()
+
+            response = await client.post(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments",
+                json={"body": comment_body},
+            )
+
+            response.raise_for_status()
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to post resolution comment: {e.response.status_code}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                    "response": e.response.text,
+                },
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(
+                f"Failed to post resolution comment: {e}",
+                extra={"signature_id": signature.id, "issue_number": issue_number},
+                exc_info=True,
+            )
+            raise
+
+    async def _close_issue(self, issue_number: int, signature: Signature) -> None:
+        """Close a GitHub issue by setting its state to closed."""
+        try:
+            client = await self._get_client()
+
+            response = await client.patch(
+                f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}",
+                json={"state": "closed"},
+            )
+
+            response.raise_for_status()
+
+            logger.info(
+                f"Closed GitHub issue #{issue_number} (signature auto-resolved)",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                },
+            )
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to close GitHub issue: {e.response.status_code}",
+                extra={
+                    "signature_id": signature.id,
+                    "issue_number": issue_number,
+                    "response": e.response.text,
+                },
+                exc_info=True,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(
+                f"Failed to close GitHub issue: {e}",
+                extra={"signature_id": signature.id, "issue_number": issue_number},
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
+    def _format_resolution_comment(signature: Signature) -> str:
+        """Format the comment posted when auto-closing a resolved signature.
+
+        Args:
+            signature: The signature that was auto-resolved.
+
+        Returns:
+            Formatted markdown comment body.
+        """
+        lines = [
+            "## Auto-Resolved",
+            "",
+            f"No new occurrences of this error since {signature.last_seen.isoformat()}. "
+            "Closing this issue automatically.",
+            "",
+            f"- **Total Occurrences**: {signature.occurrence_count}",
+            f"- **First Seen**: {signature.first_seen.isoformat()}",
+            f"- **Last Seen**: {signature.last_seen.isoformat()}",
+            "",
+            "If this error recurs, a new issue will be created.",
+            "",
+            "_Generated by Rounds diagnostic system_",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fingerprint_label(fingerprint: str) -> str:
+        """Derive a GitHub label encoding the signature's fingerprint.
+
+        Truncated to stay within GitHub's 50-character label limit; 16 hex
+        characters (64 bits) of the sha256 fingerprint is ample to avoid
+        collisions between distinct failure patterns.
+        """
+        return f"fingerprint:{fingerprint[:16]}"
+
+    def _build_labels(self, signature: Signature, fingerprint_label: str) -> list[str]:
+        """Build the full label set for a newly created issue.
+
+        Combines the fixed triage scheme (rounds, auto-detected, severity,
+        service, fingerprint) with any configured extra labels, de-duplicated
+        while preserving order.
+        """
+        labels = [
+            "rounds",
+            "auto-detected",
+            f"severity-{signature.max_severity.value.lower()}",
+            f"service-{signature.service}",
+            fingerprint_label,
+            *self.labels,
+        ]
+        return list(dict.fromkeys(labels))
+
+    @staticmethod
+    def _format_recurrence_comment(signature: Signature) -> str:
+        """Format a recurrence comment for an existing open issue.
+
+        Args:
+            signature: The signature that recurred.
+
+        Returns:
+            Formatted markdown comment body.
+        """
+        lines = [
+            "## Recurrence Detected",
+            "",
+            f"- **Occurrence Count**: {signature.occurrence_count}",
+            f"- **Latest Occurrence**: {signature.last_seen.isoformat()}",
+            f"- **Service**: {signature.service}",
+            f"- **Severity**: {signature.max_severity.value}",
+            "",
+            "_Generated by Rounds diagnostic system_",
+        ]
+        return "\n".join(lines)
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Periodic summary report via GitHub issue.

@@ -32,7 +32,12 @@ class StackFrame:
 
 
 class Severity(Enum):
-    """Log severity levels from OpenTelemetry."""
+    """Log severity levels from OpenTelemetry.
+
+    Declaration order is significant: it defines the severity ordering
+    used by `rank` to compare levels (e.g. to track a signature's highest
+    observed severity).
+    """
 
     TRACE = "TRACE"
     DEBUG = "DEBUG"
@@ -40,6 +45,11 @@ class Severity(Enum):
     WARN = "WARN"
     ERROR = "ERROR"
     FATAL = "FATAL"
+
+    @property
+    def rank(self) -> int:
+        """Relative ordering of this severity level, higher is more severe."""
+        return list(Severity).index(self)
 
 
 @dataclass(frozen=True)
@@ -113,12 +123,25 @@ class Diagnosis:
     model: str  # which model produced this
     cost_usd: float
     summary: str = ""  # one-paragraph overview of the diagnosis findings
+    # Suggested auto-close window based on error characteristics: shorter
+    # (6-12h) for transient/infra errors, longer (24-48h) for persistent code
+    # defects. None means the diagnosis backend was uncertain and the global
+    # default resolution window should apply instead.
+    suggested_resolution_hours: int | None = None
 
     def __post_init__(self) -> None:
         """Validate diagnosis invariants on creation."""
         if self.cost_usd < 0:
             raise ValueError(
                 f"cost_usd must be non-negative, got {self.cost_usd}"
+            )
+        if (
+            self.suggested_resolution_hours is not None
+            and self.suggested_resolution_hours <= 0
+        ):
+            raise ValueError(
+                "suggested_resolution_hours must be positive, got "
+                f"{self.suggested_resolution_hours}"
             )
 
 
@@ -136,6 +159,7 @@ class Signature:
         - INVESTIGATING → NEW (revert_to_new, for error recovery)
         - NEW → DIAGNOSED (mark_diagnosed, direct transition)
         - ANY → RESOLVED (mark_resolved)
+        - RESOLVED → NEW (record_occurrence, on error recurrence)
         - ANY → MUTED (mark_muted)
         - ANY → NEW (reset_to_new, for management operations)
 
@@ -155,6 +179,19 @@ class Signature:
     status: SignatureStatus
     diagnosis: Diagnosis | None = None
     tags: frozenset[str] = field(default_factory=frozenset)  # immutable set
+    # Highest severity observed across this signature's ErrorEvents. Drives the
+    # severity-{level} issue label and the phone-home severity gate. Defaults to
+    # ERROR so existing signatures (persisted before this field existed) don't
+    # need a backfill.
+    max_severity: Severity = Severity.ERROR
+    # Per-signature override for the auto-close window, in hours. Set from
+    # Diagnosis.suggested_resolution_hours after diagnosis; None falls back to
+    # the global default resolution window.
+    resolution_threshold_hours: int | None = None
+    # Timestamp of the last cooldown-gated notification alert sent for this
+    # signature (e.g. by the phone-home channel), used to enforce that
+    # channel's cooldown window. None means no such alert has been sent yet.
+    last_alerted_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Validate signature invariants on creation or deserialization."""
@@ -167,6 +204,14 @@ class Signature:
                 f"last_seen ({self.last_seen}) cannot be before "
                 f"first_seen ({self.first_seen})"
             )
+        if (
+            self.resolution_threshold_hours is not None
+            and self.resolution_threshold_hours <= 0
+        ):
+            raise ValueError(
+                "resolution_threshold_hours must be positive, got "
+                f"{self.resolution_threshold_hours}"
+            )
 
     def mark_investigating(self) -> None:
         """Transition signature to investigating status."""
@@ -178,6 +223,10 @@ class Signature:
 
     def mark_diagnosed(self, diagnosis: Diagnosis) -> None:
         """Transition signature to diagnosed status with diagnosis.
+
+        Also adopts diagnosis.suggested_resolution_hours as the signature's
+        resolution_threshold_hours when the diagnosis provides one, keeping
+        both mutations atomic.
 
         Raises:
             ValueError: If signature is already RESOLVED or MUTED, as these are
@@ -194,6 +243,8 @@ class Signature:
                 "Unmute the signature first if diagnosis is needed."
             )
         self.diagnosis = diagnosis
+        if diagnosis.suggested_resolution_hours is not None:
+            self.resolution_threshold_hours = diagnosis.suggested_resolution_hours
         self.status = SignatureStatus.DIAGNOSED
 
     def mark_resolved(self) -> None:
@@ -208,19 +259,43 @@ class Signature:
             raise ValueError("Signature is already muted")
         self.status = SignatureStatus.MUTED
 
-    def record_occurrence(self, timestamp: datetime) -> None:
+    def record_occurrence(
+        self, timestamp: datetime, severity: Severity | None = None
+    ) -> None:
         """Record a new occurrence and update time bounds.
 
         Accepts any timestamp — events may arrive out-of-order when the telemetry
         backend returns results newest-first or when the lookback window overlaps
         with a previous poll cycle. first_seen tracks the earliest observed
         timestamp; last_seen tracks the latest.
+
+        A recurrence against a RESOLVED signature (its issue was already
+        auto-closed) transitions it back to NEW so it re-enters the triage and
+        investigation pipeline rather than staying dormant under a closed issue.
+
+        Args:
+            timestamp: When the new occurrence was observed.
+            severity: Severity of the new occurrence. If more severe than the
+                signature's current max_severity, max_severity is raised to match.
         """
+        if self.status == SignatureStatus.RESOLVED:
+            self.status = SignatureStatus.NEW
         self.occurrence_count += 1
         if timestamp < self.first_seen:
             self.first_seen = timestamp
         if timestamp > self.last_seen:
             self.last_seen = timestamp
+        if severity is not None and severity.rank > self.max_severity.rank:
+            self.max_severity = severity
+
+    def record_alert(self, timestamp: datetime) -> None:
+        """Record that a cooldown-gated notification alert was just sent for this signature.
+
+        Called by the domain service layer after a NotificationPort.report()
+        call returns an alert timestamp (see NotificationPort.report()), so
+        that channel's subsequent alerts are suppressed until the cooldown elapses.
+        """
+        self.last_alerted_at = timestamp
 
     def revert_to_new(self) -> None:
         """Revert signature from INVESTIGATING back to NEW status.
@@ -249,6 +324,14 @@ class Signature:
         for a fresh diagnosis attempt.
         """
         self.diagnosis = None
+
+    def add_tag(self, tag: str) -> None:
+        """Add a tag to this signature, if not already present."""
+        self.tags = self.tags | {tag}
+
+    def remove_tag(self, tag: str) -> None:
+        """Remove a tag from this signature, if present."""
+        self.tags = self.tags - {tag}
 
     def restore_state(self, status: SignatureStatus, diagnosis: Diagnosis | None = None) -> None:
         """Restore signature to a previous state.
@@ -407,6 +490,23 @@ class InvestigationResult:
     diagnoses_produced: tuple[Diagnosis, ...]  # Successfully completed diagnoses
     investigations_attempted: int  # Number of signatures attempted
     investigations_failed: int = 0  # Number of investigations that failed
+
+
+@dataclass(frozen=True)
+class ResolutionResult:
+    """Summary of a resolution-detection cycle execution.
+
+    Default implementation of PollPort.execute_resolution_cycle() returns
+    zero counts; implementations that support auto-close override it to
+    compare Signature.last_seen against its resolution_threshold_hours.
+    """
+
+    signatures_resolved: int
+    timestamp: datetime
+    # Count of signatures whose GitHub issue (or other notification channel
+    # item) failed to close this cycle. These are tagged for retry on a
+    # future resolution cycle rather than left permanently dangling.
+    issue_close_failures: int = 0
 
 
 @dataclass(frozen=True)

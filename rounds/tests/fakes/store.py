@@ -24,6 +24,8 @@ class FakeSignatureStorePort(SignatureStorePort):
         self.get_by_fingerprint_calls: list[str] = []
         self.get_pending_investigation_call_count = 0
         self.get_similar_calls: list[tuple[Signature, int]] = []
+        self.update_fail_count = 0
+        self.update_fail_after_write = False
 
     async def get_by_id(self, signature_id: str) -> Signature | None:
         """Get a signature by ID.
@@ -53,8 +55,22 @@ class FakeSignatureStorePort(SignatureStorePort):
     async def update(self, signature: Signature) -> None:
         """Update an existing signature.
 
-        Updates the signature and marks it as updated for assertion.
+        Raises a RuntimeError instead if update_fail_count is positive,
+        decrementing it each time, to simulate transient or persistent
+        store failures. Otherwise updates the signature and marks it as
+        updated for assertion.
+
+        When update_fail_after_write is also set, the write is applied
+        before raising, simulating infrastructure failures (e.g. a timeout)
+        that occur after the write has already committed.
         """
+        if self.update_fail_count > 0:
+            self.update_fail_count -= 1
+            if self.update_fail_after_write:
+                self.signatures[signature.fingerprint] = signature
+                self.signatures_by_id[signature.id] = signature
+                self.updated_signatures.append(signature)
+            raise RuntimeError("Simulated store update failure")
         self.signatures[signature.fingerprint] = signature
         self.signatures_by_id[signature.id] = signature
         self.updated_signatures.append(signature)

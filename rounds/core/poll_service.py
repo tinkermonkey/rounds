@@ -14,10 +14,11 @@ from .investigator import Investigator
 from .models import (
     InvestigationResult,
     PollResult,
+    ResolutionResult,
     Signature,
     SignatureStatus,
 )
-from .ports import BudgetTracker, PollPort, SignatureStorePort, TelemetryPort
+from .ports import BudgetTracker, NotificationPort, PollPort, SignatureStorePort, TelemetryPort
 from .triage import TriageEngine
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ class PollService(PollPort):
         services: list[str] | None = None,
         batch_size: int | None = None,
         budget_tracker: BudgetTracker | None = None,
+        notification: NotificationPort | None = None,
+        resolution_threshold_hours_default: int = 24,
     ):
         self.telemetry = telemetry
         self.store = store
@@ -54,6 +57,8 @@ class PollService(PollPort):
         self.services = services
         self.batch_size = batch_size
         self.budget_tracker = budget_tracker
+        self.notification = notification
+        self.resolution_threshold_hours_default = resolution_threshold_hours_default
 
     async def execute_poll_cycle(self) -> PollResult:
         """Check for new errors, fingerprint, dedup, and queue investigations.
@@ -113,12 +118,13 @@ class PollService(PollPort):
                         status=SignatureStatus.NEW,
                         diagnosis=None,
                         tags=frozenset(),
+                        max_severity=error.severity,
                     )
                     await self.store.save(signature)
                     new_signatures += 1
                 else:
                     # Update existing signature
-                    signature.record_occurrence(error.timestamp)
+                    signature.record_occurrence(error.timestamp, error.severity)
                     await self.store.update(signature)
                     updated_signatures += 1
 
@@ -205,3 +211,168 @@ class PollService(PollPort):
             investigations_attempted=investigations_attempted,
             investigations_failed=investigations_failed,
         )
+
+    # Tag applied to a RESOLVED signature when closing its notification-channel
+    # item (e.g. GitHub issue) fails, so a future resolution cycle can find and
+    # retry it instead of leaving it permanently dangling with no operator
+    # visibility.
+    _ISSUE_CLOSE_PENDING_TAG = "issue-close-pending"
+
+    async def execute_resolution_cycle(self) -> ResolutionResult:
+        """Check diagnosed signatures against their resolution threshold and auto-close stale ones.
+
+        For each DIAGNOSED signature, compares its last_seen timestamp against
+        its resolution threshold (signature.resolution_threshold_hours if set,
+        otherwise resolution_threshold_hours_default). Signatures quiet for at
+        least that long are marked RESOLVED and, if a notification port is
+        configured, have their corresponding issue closed.
+
+        Before processing newly-stale signatures, also retries closing the
+        issue for any already-RESOLVED signature tagged from a previous
+        cycle's close failure.
+
+        A failure resolving or closing one signature is logged and does not
+        prevent the rest of the cycle from proceeding.
+
+        Raises:
+            Exception: If fetching diagnosed signatures from the store fails.
+        """
+        now = datetime.now(UTC)
+
+        issue_close_failures = 0
+        try:
+            previously_dangling = await self.store.get_all(status=SignatureStatus.RESOLVED)
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch resolved signatures for issue-close retry: {e}",
+                exc_info=True,
+            )
+            previously_dangling = []
+
+        for signature in previously_dangling:
+            if self._ISSUE_CLOSE_PENDING_TAG not in signature.tags:
+                continue
+            if not await self._close_resolved_issue(signature):
+                issue_close_failures += 1
+
+        try:
+            diagnosed = await self.store.get_all(status=SignatureStatus.DIAGNOSED)
+        except Exception as e:
+            logger.error(f"Failed to fetch diagnosed signatures: {e}", exc_info=True)
+            raise
+
+        signatures_resolved = 0
+
+        for signature in diagnosed:
+            threshold_hours = (
+                signature.resolution_threshold_hours
+                if signature.resolution_threshold_hours is not None
+                else self.resolution_threshold_hours_default
+            )
+            if now - signature.last_seen < timedelta(hours=threshold_hours):
+                continue
+
+            original_status = signature.status
+            try:
+                signature.mark_resolved()
+                await self.store.update(signature)
+            except (MemoryError, SystemExit, KeyboardInterrupt):
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Failed to auto-resolve signature {signature.fingerprint}: {e}",
+                    exc_info=True,
+                )
+                if await self._was_persisted_as_resolved(signature):
+                    # The store write actually committed despite the raised
+                    # exception (e.g. a timeout after the write landed) -
+                    # trust the persisted state instead of rolling back and
+                    # clobbering a successful write with stale data.
+                    pass
+                else:
+                    # The write genuinely never landed, so nothing needs to be
+                    # undone in the store - just resync the in-memory object.
+                    signature.restore_state(original_status, signature.diagnosis)
+                    continue
+
+            signatures_resolved += 1
+            if not await self._close_resolved_issue(signature):
+                issue_close_failures += 1
+
+        if issue_close_failures:
+            logger.error(
+                f"{issue_close_failures} signature(s) resolved but failed to close "
+                "their notification-channel issue; tagged for retry on the next "
+                "resolution cycle"
+            )
+
+        return ResolutionResult(
+            signatures_resolved=signatures_resolved,
+            timestamp=now,
+            issue_close_failures=issue_close_failures,
+        )
+
+    async def _was_persisted_as_resolved(self, signature: Signature) -> bool:
+        """Check the store's ground truth after a failed auto-resolve write.
+
+        A store.update() call can raise after its write already committed
+        (e.g. the connection dropped while waiting for the response), so a
+        failed lookup here is treated the same as "not persisted" - the
+        safest assumption when we can't confirm what's actually stored.
+        """
+        try:
+            persisted = await self.store.get_by_id(signature.id)
+        except Exception as e:
+            logger.error(
+                f"Failed to verify persisted state for signature "
+                f"{signature.fingerprint} after auto-resolve failure: {e}",
+                exc_info=True,
+            )
+            return False
+        return persisted is not None and persisted.status == SignatureStatus.RESOLVED
+
+    async def _close_resolved_issue(self, signature: Signature) -> bool:
+        """Close the notification-channel issue for a resolved signature.
+
+        Returns True on success (or when no notification port is configured).
+        On failure, tags the signature so it's retried on a future resolution
+        cycle instead of leaving the issue dangling with no way to discover
+        it. Tag mutations are persisted immediately so the retry state
+        survives process restarts.
+        """
+        if self.notification is None:
+            return True
+
+        try:
+            await self.notification.close_resolved_issue(signature)
+        except Exception as e:
+            logger.error(
+                f"Failed to close issue for resolved signature "
+                f"{signature.fingerprint}: {e}",
+                exc_info=True,
+            )
+            if self._ISSUE_CLOSE_PENDING_TAG not in signature.tags:
+                signature.add_tag(self._ISSUE_CLOSE_PENDING_TAG)
+                await self._persist_tag_update(signature)
+            return False
+
+        if self._ISSUE_CLOSE_PENDING_TAG in signature.tags:
+            signature.remove_tag(self._ISSUE_CLOSE_PENDING_TAG)
+            await self._persist_tag_update(signature)
+        return True
+
+    async def _persist_tag_update(self, signature: Signature) -> None:
+        """Best-effort persistence of a tag change on an already-resolved signature.
+
+        A failure here only means the retry bookkeeping is stale (e.g. a
+        previously-failed close gets retried again next cycle, which is
+        harmless) - it must not affect the signature's resolved status.
+        """
+        try:
+            await self.store.update(signature)
+        except Exception as e:
+            logger.error(
+                f"Failed to persist issue-close tag update for signature "
+                f"{signature.fingerprint}: {e}",
+                exc_info=True,
+            )

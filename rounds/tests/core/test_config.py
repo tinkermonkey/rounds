@@ -265,3 +265,106 @@ class TestValidateBackendDependencies:
         )
         assert s.get_agent_node_service_map() == {"my-api": ("node1", "workspace-a")}
         assert s.get_agent_node_host_map() == {"node1": "host-a"}
+
+    def test_github_issue_backend_requires_github_token(self) -> None:
+        with pytest.raises(Exception, match="github_token must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="",
+                github_repo_owner="myorg",
+                service_repo_map='{"my-api": "myorg/my-api"}',
+            )
+
+    def test_github_issue_backend_requires_github_repo_owner(self) -> None:
+        with pytest.raises(Exception, match="github_repo_owner must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="ghp_test",
+                github_repo_owner="",
+                service_repo_map='{"my-api": "myorg/my-api"}',
+            )
+
+    def test_github_issue_backend_requires_service_repo_map(self) -> None:
+        with pytest.raises(Exception, match="service_repo_map must be set"):
+            _settings(
+                notification_backend="github_issue",
+                github_token="ghp_test",
+                github_repo_owner="myorg",
+                service_repo_map="",
+            )
+
+    def test_github_issue_backend_with_documented_config_succeeds(self) -> None:
+        """Mirrors the env vars .env.rounds.template documents for github_issue:
+        GITHUB_TOKEN, GITHUB_REPO_OWNER, and SERVICE_REPO_MAP, with no GITHUB_REPO.
+        """
+        s = _settings(
+            notification_backend="github_issue",
+            github_token="ghp_test",
+            github_repo_owner="myorg",
+            service_repo_map='{"my-api": "myorg/my-api"}',
+        )
+        assert s.notification_backend == "github_issue"
+
+
+class TestGetServiceRepoMap:
+    """Tests for Settings.get_service_repo_map()."""
+
+    def test_empty_string_returns_empty_dict(self) -> None:
+        s = _settings(service_repo_map="")
+        assert s.get_service_repo_map() == {}
+
+    def test_default_returns_empty_dict(self) -> None:
+        s = _settings()
+        assert s.get_service_repo_map() == {}
+
+    def test_json_string(self) -> None:
+        s = _settings(
+            service_repo_map='{"my-api": "myorg/my-api", "worker": "myorg/worker-svc"}'
+        )
+        assert s.get_service_repo_map() == {
+            "my-api": "myorg/my-api",
+            "worker": "myorg/worker-svc",
+        }
+
+    def test_json_array_raises_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_REPO_MAP must be a JSON object"):
+            _settings(service_repo_map="[1, 2, 3]")
+
+    def test_malformed_json_raises_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_REPO_MAP must be valid JSON"):
+            _settings(service_repo_map="not json")
+
+    def test_non_owner_repo_shaped_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_REPO_MAP values must be"):
+            _settings(service_repo_map='{"my-api": "not-owner-slash-repo"}')
+
+    def test_non_string_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_REPO_MAP values must be"):
+            _settings(service_repo_map='{"my-api": 42}')
+
+
+class TestPhoneHomeSettings:
+    """Tests for phone-home configuration fields and validation."""
+
+    def test_defaults(self) -> None:
+        s = _settings()
+        assert s.phone_home_endpoint_url == ""
+        assert s.phone_home_auth_token.get_secret_value() == ""
+        assert s.get_phone_home_severity_gate() == ["ERROR", "FATAL"]
+        assert s.phone_home_cooldown_hours == 24
+
+    def test_severity_gate_parses_comma_separated_levels(self) -> None:
+        s = _settings(phone_home_severity_gate="warn, error , fatal")
+        assert s.get_phone_home_severity_gate() == ["WARN", "ERROR", "FATAL"]
+
+    def test_empty_severity_gate_disables_phone_home(self) -> None:
+        s = _settings(phone_home_severity_gate="")
+        assert s.get_phone_home_severity_gate() == []
+
+    def test_invalid_severity_gate_level_raises_at_construction(self) -> None:
+        with pytest.raises(Exception, match="invalid severity levels"):
+            _settings(phone_home_severity_gate="ERROR,CATASTROPHIC")
+
+    def test_non_positive_cooldown_raises_at_construction(self) -> None:
+        with pytest.raises(Exception, match="phone_home_cooldown_hours must be positive"):
+            _settings(phone_home_cooldown_hours=0)
