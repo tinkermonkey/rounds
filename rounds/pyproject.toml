@@ -49,9 +49,32 @@ Homepage = "https://github.com/tinkermonkey/rounds"
 Issues = "https://github.com/tinkermonkey/rounds/issues"
 Discussions = "https://github.com/tinkermonkey/rounds/discussions"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["core*", "adapters*"]
+# pyproject.toml lives inside the "rounds" package's own root directory
+# (alongside __init__.py/main.py/config.py/telemetry.py), not one level
+# above it, so `packages.find` (which only ever discovers subdirectories of
+# `where`, never `where` itself) can never surface a "rounds" package no
+# matter what `include`/`where` say -- it only ever found "core"/"adapters"
+# as unnamespaced top-level packages, and never packaged rounds/__init__.py,
+# main.py, config.py, or telemetry.py at all. package-dir remaps "." (this
+# directory) to be the source root of the "rounds" package itself; packages
+# is the explicit, fully-enumerated list (root + every real subpackage,
+# including adapters' nested cli/diagnosis/notification/scheduler/store/
+# telemetry/webhook submodules) so everything lands correctly namespaced
+# under rounds.* instead of loose top-level core/adapters.
+[tool.setuptools]
+package-dir = {"rounds" = "."}
+packages = [
+    "rounds",
+    "rounds.adapters",
+    "rounds.adapters.cli",
+    "rounds.adapters.diagnosis",
+    "rounds.adapters.notification",
+    "rounds.adapters.scheduler",
+    "rounds.adapters.store",
+    "rounds.adapters.telemetry",
+    "rounds.adapters.webhook",
+    "rounds.core",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
