@@ -48,5 +48,18 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
+# Documentation and non-runtime files
+docs/
+*.md
+LICENSE
+
+# Docker files (not needed in build context)
+docker/
+docker-compose*.yml
+
+# Ansible
+*.yml
+!requirements.yml
+
 # MCP configuration (development only)
 .mcp.json

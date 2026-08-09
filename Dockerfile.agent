@@ -81,12 +81,20 @@ RUN mkdir -p /app/data /app/reports && \
     chown -R orchestrator:orchestrator /app/data /app/reports
 
 # ============================================================================
-# Stage 4: Switch to Runtime User
+# Stage 4: Set PYTHONPATH for Runtime
+# ============================================================================
+# Source code is mounted at /workspace/rounds at runtime by the orchestrator.
+# The 'rounds' package lives at /workspace/rounds/rounds/, so the parent
+# directory must be on PYTHONPATH for imports to resolve.
+ENV PYTHONPATH="/workspace/rounds"
+
+# ============================================================================
+# Stage 5: Switch to Runtime User
 # ============================================================================
 USER orchestrator
 
 # ============================================================================
-# Stage 5: Verification (MANDATORY)
+# Stage 6: Verification (MANDATORY)
 # ============================================================================
 # Verify all critical CLIs are present (from base image)
 RUN claude --version && \
