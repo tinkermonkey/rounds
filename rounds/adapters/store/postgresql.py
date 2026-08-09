@@ -157,7 +157,8 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                         tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
                         resolution_threshold_hours INTEGER,
                         last_alerted_at TIMESTAMPTZ,
-                        max_severity TEXT NOT NULL DEFAULT 'ERROR'
+                        max_severity TEXT NOT NULL DEFAULT 'ERROR',
+                        recurrence_count INTEGER NOT NULL DEFAULT 0
                     )
                     """
                 )
@@ -175,6 +176,10 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 await conn.execute(
                     "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
                     "max_severity TEXT NOT NULL DEFAULT 'ERROR'"
+                )
+                await conn.execute(
+                    "ALTER TABLE signatures ADD COLUMN IF NOT EXISTS "
+                    "recurrence_count INTEGER NOT NULL DEFAULT 0"
                 )
 
                 # Migrate columns created before UTC-awareness was required, so
@@ -275,8 +280,8 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 (id, fingerprint, error_type, service, message_template,
                  stack_hash, first_seen, last_seen, occurrence_count, status,
                  diagnosis_json, tags, resolution_threshold_hours,
-                 last_alerted_at, max_severity)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                 last_alerted_at, max_severity, recurrence_count)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 ON CONFLICT (id) DO UPDATE SET
                     fingerprint = $2,
                     error_type = $3,
@@ -291,7 +296,8 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                     tags = $12,
                     resolution_threshold_hours = $13,
                     last_alerted_at = $14,
-                    max_severity = $15
+                    max_severity = $15,
+                    recurrence_count = $16
                 """,
                 signature.id,
                 signature.fingerprint,
@@ -308,6 +314,7 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 signature.resolution_threshold_hours,
                 signature.last_alerted_at,
                 signature.max_severity.value,
+                signature.recurrence_count,
             )
 
     async def update(self, signature: Signature) -> None:
@@ -447,12 +454,28 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             oldest_age_hours = stats_row[0] if stats_row and stats_row[0] is not None else None
             avg_occurrence = float(stats_row[1]) if stats_row and stats_row[1] is not None else 0.0
 
+            # Recurrence rate: proportion of signatures that have ever been
+            # resolved (currently RESOLVED, or previously RESOLVED and later
+            # recurred back to NEW) whose recurrence_count is nonzero.
+            recurrence_row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'resolved' OR recurrence_count > 0) as ever_resolved,
+                    COUNT(*) FILTER (WHERE recurrence_count > 0) as recurred
+                FROM signatures
+                """
+            )
+            ever_resolved = recurrence_row[0] if recurrence_row else 0
+            recurred = recurrence_row[1] if recurrence_row else 0
+            recurrence_rate = recurred / ever_resolved if ever_resolved > 0 else 0.0
+
             return StoreStats(
                 total_signatures=total,
                 by_status=status_counts,
                 by_service=service_counts,
                 oldest_signature_age_hours=oldest_age_hours,
                 avg_occurrence_count=avg_occurrence,
+                recurrence_rate=recurrence_rate,
             )
 
     def _row_to_signature(self, row: asyncpg.Record) -> Signature:
@@ -477,6 +500,7 @@ class PostgreSQLSignatureStore(SignatureStorePort):
             resolution_threshold_hours = row["resolution_threshold_hours"]
             last_alerted_at = row["last_alerted_at"]
             max_severity = row["max_severity"]
+            recurrence_count = row["recurrence_count"]
 
             # Validate required fields
             if not sig_id or not fingerprint:
@@ -522,6 +546,7 @@ class PostgreSQLSignatureStore(SignatureStorePort):
                 resolution_threshold_hours=resolution_threshold_hours,
                 last_alerted_at=last_alerted_at,
                 max_severity=Severity(max_severity),
+                recurrence_count=recurrence_count,
             )
 
         except ValueError as e:

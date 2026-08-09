@@ -304,6 +304,7 @@ class CLICommandHandler:
         # Status and counts
         lines.append(f"Status: {sig.status.value}")
         lines.append(f"Occurrences: {sig.occurrence_count}")
+        lines.append(f"Recurrence Count: {sig.recurrence_count}")
         lines.append(f"First Seen: {sig.first_seen.isoformat()}")
         lines.append(f"Last Seen: {sig.last_seen.isoformat()}")
         lines.append("")

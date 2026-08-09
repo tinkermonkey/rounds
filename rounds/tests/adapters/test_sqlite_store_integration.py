@@ -203,6 +203,7 @@ async def test_resolution_and_severity_fields_round_trip(
         resolution_threshold_hours=12,
         last_alerted_at=alerted_at,
         max_severity=Severity.FATAL,
+        recurrence_count=3,
     )
     await store.save(sig)
 
@@ -212,6 +213,7 @@ async def test_resolution_and_severity_fields_round_trip(
     assert loaded.resolution_threshold_hours == 12
     assert loaded.last_alerted_at == alerted_at
     assert loaded.max_severity == Severity.FATAL
+    assert loaded.recurrence_count == 3
 
 
 @pytest.mark.asyncio
@@ -241,6 +243,7 @@ async def test_new_nullable_fields_default_when_absent(
     assert loaded.resolution_threshold_hours is None
     assert loaded.last_alerted_at is None
     assert loaded.max_severity == Severity.ERROR
+    assert loaded.recurrence_count == 0
 
 
 @pytest.mark.asyncio
@@ -310,6 +313,7 @@ async def test_schema_migration_adds_new_columns_to_pre_existing_database() -> N
             assert loaded.resolution_threshold_hours is None
             assert loaded.last_alerted_at is None
             assert loaded.max_severity == Severity.ERROR
+            assert loaded.recurrence_count == 0
 
             # New writes to the migrated database should also round-trip.
             loaded.resolution_threshold_hours = 8
@@ -319,3 +323,73 @@ async def test_schema_migration_adds_new_columns_to_pre_existing_database() -> N
             assert reloaded.resolution_threshold_hours == 8
         finally:
             await store.close_pool()
+
+
+@pytest.mark.asyncio
+async def test_get_stats_computes_recurrence_rate(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """recurrence_rate is the proportion of ever-resolved signatures that have recurred.
+
+    "Ever resolved" includes signatures currently RESOLVED and signatures
+    that recurred back to NEW after a prior resolution (recurrence_count > 0).
+    """
+    store, _db_path = temp_db
+
+    def make_signature(
+        sig_id: str, status: SignatureStatus, recurrence_count: int
+    ) -> Signature:
+        return Signature(
+            id=sig_id,
+            fingerprint=f"fp-{sig_id}",
+            error_type="TestError",
+            service="test-service",
+            message_template="test message",
+            stack_hash=f"hash-{sig_id}",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=1,
+            status=status,
+            recurrence_count=recurrence_count,
+        )
+
+    # Never resolved: excluded from the denominator.
+    await store.save(make_signature("never-resolved", SignatureStatus.NEW, 0))
+    # Resolved, never recurred: in the denominator, not the numerator.
+    await store.save(make_signature("resolved-clean", SignatureStatus.RESOLVED, 0))
+    # Resolved and recurred at least once, currently back in NEW: in both.
+    await store.save(make_signature("recurred-now-new", SignatureStatus.NEW, 2))
+    # Resolved again after a prior recurrence: in both.
+    await store.save(make_signature("recurred-now-resolved", SignatureStatus.RESOLVED, 1))
+
+    stats = await store.get_stats()
+
+    # ever_resolved = resolved-clean, recurred-now-new, recurred-now-resolved = 3
+    # recurred = recurred-now-new, recurred-now-resolved = 2
+    assert stats.recurrence_rate == pytest.approx(2 / 3)
+
+
+@pytest.mark.asyncio
+async def test_get_stats_recurrence_rate_is_zero_when_nothing_resolved(
+    temp_db: tuple[SQLiteSignatureStore, Path],
+) -> None:
+    """recurrence_rate defaults to 0.0 when no signature has ever been resolved."""
+    store, _db_path = temp_db
+
+    sig = Signature(
+        id="test-id",
+        fingerprint="test-fp",
+        error_type="TestError",
+        service="test-service",
+        message_template="test message",
+        stack_hash="test-hash",
+        first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+        occurrence_count=1,
+        status=SignatureStatus.NEW,
+    )
+    await store.save(sig)
+
+    stats = await store.get_stats()
+
+    assert stats.recurrence_rate == 0.0

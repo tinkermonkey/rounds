@@ -239,6 +239,7 @@ class WebhookReceiver:
                     "first_seen": details.signature.first_seen.isoformat(),
                     "last_seen": details.signature.last_seen.isoformat(),
                     "occurrence_count": details.signature.occurrence_count,
+                    "recurrence_count": details.signature.recurrence_count,
                     "status": details.signature.status.value,
                     "tags": sorted(details.signature.tags),
                     "diagnosis": (
