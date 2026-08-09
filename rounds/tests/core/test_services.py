@@ -2053,6 +2053,7 @@ class TestBudgetTracking:
             ("diagnose", 0.42),
             ("confirm", 0.0),
         ]
+        assert budget_tracker.recorded_services == [signature.service, signature.service]
 
     async def test_investigate_without_budget_tracker_does_not_raise(
         self,
@@ -2127,6 +2128,73 @@ class TestBudgetTracking:
 
         result = await poll_service.execute_poll_cycle()
         assert result.errors_found == 1
+
+    async def test_investigation_cycle_skips_signature_when_service_budget_exceeded(
+        self,
+        fingerprinter: Fingerprinter,
+        triage_engine: TriageEngine,
+    ) -> None:
+        """Signatures for a service whose per-service cap is exhausted are skipped,
+        while other services' signatures continue to be investigated normally."""
+        telemetry = FakeTelemetryPort()
+        store = FakeSignatureStorePort()
+        diagnosis_engine = FakeDiagnosisPort()
+        notification = FakeNotificationPort()
+        budget_tracker = FakeBudgetTracker()
+        budget_tracker.exceeded_services.add("noisy-service")
+
+        investigator = Investigator(
+            telemetry,
+            store,
+            diagnosis_engine,
+            notification,
+            triage_engine,
+            "/app",
+            budget_tracker=budget_tracker,
+        )
+        poll_service = PollService(
+            telemetry,
+            store,
+            fingerprinter,
+            triage_engine,
+            investigator,
+            budget_tracker=budget_tracker,
+        )
+
+        now = datetime.now(UTC)
+        capped_signature = Signature(
+            id="sig-capped",
+            fingerprint="fp-capped",
+            error_type="Error",
+            service="noisy-service",
+            message_template="msg",
+            stack_hash="hash-capped",
+            first_seen=now,
+            last_seen=now,
+            occurrence_count=10,
+            status=SignatureStatus.NEW,
+        )
+        other_signature = Signature(
+            id="sig-other",
+            fingerprint="fp-other",
+            error_type="Error",
+            service="other-service",
+            message_template="msg",
+            stack_hash="hash-other",
+            first_seen=now,
+            last_seen=now,
+            occurrence_count=10,
+            status=SignatureStatus.NEW,
+        )
+        store.pending_signatures = [capped_signature, other_signature]
+
+        result = await poll_service.execute_investigation_cycle()
+
+        assert capped_signature.status == SignatureStatus.NEW
+        assert capped_signature.diagnosis is None
+        assert other_signature.status == SignatureStatus.DIAGNOSED
+        assert result.investigations_attempted == 1
+        assert len(result.diagnoses_produced) == 1
 
 
 @pytest.mark.asyncio

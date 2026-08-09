@@ -25,6 +25,7 @@ class DaemonScheduler:
         poll_interval_seconds: int = 60,
         budget_limit: float | None = None,
         notification_port: NotificationPort | None = None,
+        service_budget_map: dict[str, float] | None = None,
     ):
         """Initialize daemon scheduler.
 
@@ -34,6 +35,8 @@ class DaemonScheduler:
             budget_limit: Daily budget limit in USD (None = unlimited).
             notification_port: NotificationPort to alert operators when the investigation
                 or resolution pipeline is suspended due to persistent failures (optional).
+            service_budget_map: Per-service daily USD budget cap, keyed by service
+                name. Services with no entry are governed only by budget_limit.
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
@@ -43,6 +46,8 @@ class DaemonScheduler:
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
         self._cost_by_step: dict[RoundStep, float] = defaultdict(float)
+        self._cost_by_service: dict[str, float] = defaultdict(float)
+        self._service_budget_map: dict[str, float] = dict(service_budget_map or {})
         self._budget_date = datetime.now(UTC).date()
         self._budget_lock = asyncio.Lock()
         self._investigation_failure_count = 0
@@ -346,12 +351,42 @@ class DaemonScheduler:
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._cost_by_step.clear()
+                self._cost_by_service.clear()
                 self._budget_date = today
                 return False
 
             return self._daily_cost_usd >= self.budget_limit
 
-    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
+    async def is_service_budget_exceeded(self, service: str) -> bool:
+        """Check if a service's per-service daily budget cap has been reached.
+
+        Thread-safe: Uses the same asyncio.Lock as record_cost to protect
+        budget state mutations and prevent TOCTOU races.
+
+        Returns:
+            False when no cap is configured for the service (uncapped
+            services are governed only by the global daily budget), or when
+            the accumulated cost for the service is still under its cap.
+        """
+        cap = self._service_budget_map.get(service)
+        if cap is None:
+            return False
+
+        async with self._budget_lock:
+            # Reset daily cost if date has changed
+            today = datetime.now(UTC).date()
+            if today != self._budget_date:
+                self._daily_cost_usd = 0.0
+                self._cost_by_step.clear()
+                self._cost_by_service.clear()
+                self._budget_date = today
+                return False
+
+            return self._cost_by_service.get(service, 0.0) >= cap
+
+    async def record_cost(
+        self, step: RoundStep, cost_usd: float, *, service: str | None = None
+    ) -> None:
         """Record a rounds step's cost towards the daily budget.
 
         Thread-safe: uses asyncio.Lock to protect budget state mutations.
@@ -361,6 +396,11 @@ class DaemonScheduler:
                 incurred the cost, tracked separately in cost_by_step for
                 per-step spend visibility.
             cost_usd: Cost incurred by that step, in USD.
+            service: The service to also attribute this cost to, tracked
+                separately in cost_by_service for per-service spend
+                visibility and budget cap enforcement. Optional - costs not
+                attributable to a single signature's service (e.g. poll,
+                fingerprint) omit it.
         """
         async with self._budget_lock:
             # Reset daily cost if date has changed
@@ -368,6 +408,7 @@ class DaemonScheduler:
             if today != self._budget_date:
                 self._daily_cost_usd = 0.0
                 self._cost_by_step.clear()
+                self._cost_by_service.clear()
                 self._budget_date = today
 
             self._daily_cost_usd += cost_usd
@@ -379,10 +420,25 @@ class DaemonScheduler:
                     f"${self.budget_limit:.2f})"
                 )
 
+            if service is not None:
+                self._cost_by_service[service] += cost_usd
+                cap = self._service_budget_map.get(service)
+                if cap is not None and self._cost_by_service[service] >= cap:
+                    logger.warning(
+                        f"Per-service budget cap reached for '{service}' "
+                        f"(${self._cost_by_service[service]:.2f}/${cap:.2f}), "
+                        "further investigations for this service will be skipped today"
+                    )
+
     @property
     def cost_by_step(self) -> dict[RoundStep, float]:
         """Read-only snapshot of today's accumulated cost, broken down by RoundStep."""
         return dict(self._cost_by_step)
+
+    @property
+    def cost_by_service(self) -> dict[str, float]:
+        """Read-only snapshot of today's accumulated cost, broken down by service."""
+        return dict(self._cost_by_service)
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""

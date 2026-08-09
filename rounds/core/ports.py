@@ -612,11 +612,34 @@ class BudgetTracker(Protocol):
 
     Costs are attributed per RoundStep so spend can be broken down across
     the full poll -> fingerprint -> diagnose -> confirm cycle, not just the
-    diagnose step where LLM calls currently occur.
+    diagnose step where LLM calls currently occur. Costs incurred while
+    investigating a signature are additionally attributed to that
+    signature's service, enabling per-service budget caps alongside the
+    global daily budget.
     """
 
-    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
-        """Record a cost incurred by a rounds step towards the daily budget."""
+    async def record_cost(
+        self, step: RoundStep, cost_usd: float, *, service: str | None = None
+    ) -> None:
+        """Record a cost incurred by a rounds step towards the daily budget.
+
+        Args:
+            step: Which rounds step incurred the cost.
+            cost_usd: Cost incurred by that step, in USD.
+            service: The service the cost should also be attributed to for
+                per-service budget tracking. Optional and keyword-only so
+                existing callers are unaffected; omitted for steps (like
+                poll/fingerprint) that aren't attributable to a single
+                signature's service.
+        """
+        ...
+
+    async def is_service_budget_exceeded(self, service: str) -> bool:
+        """Check whether a service's per-service daily budget cap has been reached.
+
+        Returns False when no cap is configured for the service - uncapped
+        services are governed only by the global daily budget.
+        """
         ...
 
 

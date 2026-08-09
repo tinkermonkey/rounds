@@ -953,6 +953,7 @@ async def bootstrap(
             poll_interval_seconds=settings.poll_interval_seconds,
             budget_limit=settings.daily_budget_limit,
             notification_port=notification,
+            service_budget_map=settings.get_service_budget_map(),
         )
 
     # Investigator (orchestrates investigation workflow)

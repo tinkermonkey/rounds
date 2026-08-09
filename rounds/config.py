@@ -220,6 +220,18 @@ class Settings(BaseSettings):
         default=100.0,
         description="Daily limit for diagnosis spending in USD",
     )
+    service_budget_map: str = Field(
+        default="",
+        description=(
+            "JSON map from telemetry service name to a daily USD diagnosis "
+            "budget cap for that service, distinct from DAILY_BUDGET_LIMIT. "
+            "Once a service's accumulated diagnosis cost for the day reaches "
+            "its cap, investigation is skipped for that service's signatures "
+            "for the rest of the day; services with no entry here are only "
+            "governed by DAILY_BUDGET_LIMIT. "
+            'Example: SERVICE_BUDGET_MAP={"my-api": 25.0, "worker": 10.0}'
+        ),
+    )
 
     # Logging configuration
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
@@ -502,6 +514,33 @@ class Settings(BaseSettings):
             raise ValueError("daily_budget_limit must be non-negative")
         return v
 
+    @field_validator("service_budget_map")
+    @classmethod
+    def validate_service_budget_map(cls, v: str) -> str:
+        """Validate SERVICE_BUDGET_MAP is valid JSON with non-negative numeric values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"SERVICE_BUDGET_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"SERVICE_BUDGET_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        invalid = {
+            k: val
+            for k, val in result.items()
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0
+        }
+        if invalid:
+            raise ValueError(
+                f"SERVICE_BUDGET_MAP values must be non-negative numbers, "
+                f"got invalid values: {invalid}"
+            )
+        return v
+
     @field_validator("error_lookback_minutes")
     @classmethod
     def validate_lookback_minutes(cls, v: int) -> int:
@@ -636,6 +675,22 @@ class Settings(BaseSettings):
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
         return result
+
+    def get_service_budget_map(self) -> dict[str, float]:
+        """Parse service_budget_map string into a dict mapping service → daily USD cap.
+
+        Returns an empty dict when SERVICE_BUDGET_MAP is not configured, meaning
+        no service has a per-service cap (all services are governed only by
+        DAILY_BUDGET_LIMIT).
+        Expects JSON format: ``{"my-api": 25.0, "worker": 10.0}``
+        """
+        v = self.service_budget_map.strip()
+        if not v:
+            return {}
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"SERVICE_BUDGET_MAP must be a JSON object, got {type(result).__name__}")
+        return {k: float(val) for k, val in result.items()}
 
     def get_service_repo_map(self) -> dict[str, str]:
         """Parse service_repo_map string into a dict mapping service → 'owner/repo'.

@@ -121,7 +121,9 @@ class Investigator:
 
         # 4. Record cost if budget tracker available
         if self.budget_tracker:
-            await self.budget_tracker.record_cost("diagnose", diagnosis.cost_usd)
+            await self.budget_tracker.record_cost(
+                "diagnose", diagnosis.cost_usd, service=signature.service
+            )
 
         # 5. Persist diagnosis before notification
         # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
@@ -143,7 +145,9 @@ class Investigator:
             # Triage is pure decision logic today (no LLM call), so this is
             # always 0.0 - recorded so the confirm step is represented in
             # per-step cost accounting alongside poll/fingerprint/diagnose.
-            await self.budget_tracker.record_cost("confirm", 0.0)
+            await self.budget_tracker.record_cost(
+                "confirm", 0.0, service=signature.service
+            )
 
         notification_error: Exception | None = None
         try:

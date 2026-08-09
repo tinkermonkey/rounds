@@ -126,6 +126,100 @@ async def test_no_budget_limit_allows_unlimited_costs(
     assert await scheduler._is_budget_exceeded() is False
 
 
+# --- Per-service budget cap tests ---
+
+
+@pytest.mark.asyncio
+async def test_service_budget_exceeded_blocks_investigation(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that a service's per-service cap is detected as exceeded once reached."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 3.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is False
+
+    await scheduler.record_cost("diagnose", 2.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is True
+    assert scheduler.cost_by_service == {"noisy-service": 5.00}
+
+
+@pytest.mark.asyncio
+async def test_uncapped_service_never_reports_exceeded(
+    poll_port: FakePollPort,
+) -> None:
+    """A service with no entry in service_budget_map is only governed by the global budget."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 1000.00, service="quiet-service")
+    assert await scheduler.is_service_budget_exceeded("quiet-service") is False
+
+
+@pytest.mark.asyncio
+async def test_service_budgets_are_independent(
+    poll_port: FakePollPort,
+) -> None:
+    """Exhausting one service's cap must not affect another service's cap."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"service-a": 5.00, "service-b": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 5.00, service="service-a")
+
+    assert await scheduler.is_service_budget_exceeded("service-a") is True
+    assert await scheduler.is_service_budget_exceeded("service-b") is False
+    assert scheduler.cost_by_service == {"service-a": 5.00}
+
+
+@pytest.mark.asyncio
+async def test_service_budget_resets_on_date_change(
+    poll_port: FakePollPort,
+) -> None:
+    """Per-service accumulated cost resets alongside the global daily budget reset."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 5.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is True
+
+    original_date = scheduler._budget_date
+    scheduler._budget_date = original_date - timedelta(days=1)
+
+    # First check after the date change should reset and report not-exceeded
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is False
+    assert scheduler.cost_by_service == {}
+    assert scheduler._budget_date == original_date
+
+
+@pytest.mark.asyncio
+async def test_record_cost_without_service_does_not_populate_cost_by_service(
+    poll_port: FakePollPort,
+) -> None:
+    """Costs recorded without a service (e.g. poll/fingerprint) aren't attributed to any service."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+    )
+
+    await scheduler.record_cost("poll", 0.0)
+    await scheduler.record_cost("fingerprint", 0.0)
+
+    assert scheduler.cost_by_service == {}
+
+
 # --- _run_loop Tests ---
 
 
