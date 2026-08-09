@@ -954,6 +954,7 @@ async def bootstrap(
             budget_limit=settings.daily_budget_limit,
             notification_port=notification,
             service_budget_map=settings.get_service_budget_map(),
+            poll_failure_threshold=settings.poll_failure_threshold,
         )
 
     # Investigator (orchestrates investigation workflow)
@@ -1043,7 +1044,26 @@ async def bootstrap(
             if settings.run_mode == "daemon":
                 # Start daemon polling loop
                 assert scheduler is not None
-                await scheduler.start()
+
+                # Expose /health so a hung or crashed daemon is surfaced to
+                # monitoring even though daemon mode has no other reason to
+                # run an HTTP server. Reuses the webhook server since it
+                # already implements the /health endpoint; webhook_receiver
+                # is omitted because daemon mode has no webhook-triggered
+                # operations.
+                health_server = WebhookHTTPServer(
+                    webhook_receiver=None,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                    api_key=settings.webhook_api_key if settings.webhook_api_key else None,
+                    require_auth=settings.webhook_require_auth,
+                    health_provider=scheduler,
+                )
+                await health_server.start()
+                try:
+                    await scheduler.start()
+                finally:
+                    await health_server.stop()
 
             elif settings.run_mode == "cli":
                 # CLI mode handles interactive commands via CLICommandHandler

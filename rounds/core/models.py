@@ -510,6 +510,23 @@ class ResolutionResult:
 
 
 @dataclass(frozen=True)
+class HealthSnapshot:
+    """Read-only snapshot of daemon poll-cycle health.
+
+    Reflects only the daemon's own polling loop (consecutive
+    execute_poll_cycle() failures), not the health of any single
+    dependency such as the telemetry backend, so an outage there alone
+    doesn't flip the daemon to unhealthy unless it also makes polling
+    itself fail repeatedly.
+    """
+
+    healthy: bool
+    last_poll_completed_at: datetime | None
+    consecutive_poll_failures: int
+    poll_failure_threshold: int
+
+
+@dataclass(frozen=True)
 class StoreStats:
     """Statistics about the signature store."""
 

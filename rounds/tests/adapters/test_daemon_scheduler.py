@@ -899,3 +899,271 @@ async def test_investigation_failure_count_resets_on_success(
     )
 
     assert scheduler._investigation_failure_count == 0
+
+
+# ============================================================================
+# Poll-cycle health / self-monitoring circuit breaker
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_health_snapshot_healthy_before_any_poll(
+    poll_port: FakePollPort,
+) -> None:
+    """A freshly created scheduler reports healthy with no recorded poll yet."""
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is None
+    assert snapshot.consecutive_poll_failures == 0
+    assert snapshot.poll_failure_threshold == 5  # default matches the existing 5-failure pattern
+
+
+@pytest.mark.asyncio
+async def test_last_poll_completed_at_updates_after_success(
+    poll_port: FakePollPort,
+) -> None:
+    """Last-successful-poll timestamp is recorded after each successful poll cycle."""
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=0)
+    scheduler.running = True
+
+    async def stop_after_first_poll() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if poll_port.execute_poll_cycle_call_count >= 1:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(scheduler._run_loop(), stop_after_first_poll())
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is not None
+    assert snapshot.consecutive_poll_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_daemon_continues_after_poll_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon loop must survive 5 consecutive poll-cycle failures and suspend polling."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_suspension() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 5:
+                # Once suspended, execute_poll_cycle is no longer called each
+                # iteration — let a few more empty loop iterations run to
+                # prove the daemon keeps going instead of crashing.
+                await asyncio.sleep(0.05)
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # If the circuit breaker didn't catch the exception, gather would raise
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_suspension(),
+    )
+
+    assert scheduler._poll_failure_count == 5
+    assert scheduler._poll_suspended_until is not None
+    # Poll cycle was attempted exactly 5 times (once per failure), then
+    # suspended for backoff — no further attempts despite more loop iterations
+    assert poll_port.execute_poll_cycle_call_count == 5
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is False
+    assert snapshot.consecutive_poll_failures >= 5
+    assert snapshot.last_poll_completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_poll_resumes_after_backoff_expires(
+    poll_port: FakePollPort,
+) -> None:
+    """Polling retries after the suspension backoff expires, and resets on success."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Simulate being in the suspended state with an already-expired backoff
+    scheduler._poll_failure_count = 5
+    scheduler._poll_suspended_until = 0.0  # epoch — always in the past
+    # poll_port.should_fail_poll defaults to False, so the retry succeeds
+
+    async def stop_after_reset() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count == 0:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_reset(),
+    )
+
+    assert scheduler._poll_failure_count == 0
+    assert scheduler._poll_suspended_until is None
+    assert poll_port.execute_poll_cycle_call_count >= 1
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_on_poll_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification is sent via NotificationPort when poll failures hit the threshold."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 5:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    assert notification_port.report_alert_call_count == 1
+    alert = notification_port.reported_alerts[0]
+    assert alert["alert"] == "poll_cycle_pipeline_suspended"
+    assert alert["consecutive_failures"] == 5
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_only_once_per_poll_failure_run(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification fires exactly once when the poll threshold is crossed, not again after."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+
+    # Pre-set to 4 failures; one more crosses the threshold (5), then failures
+    # accumulate past 5 with an already-expired suspension so retries run immediately
+    scheduler._poll_failure_count = 4
+    scheduler._poll_suspended_until = 0.0  # always expired
+    poll_port.should_fail_poll = True
+
+    async def stop_after_extra_failures() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 8:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_extra_failures(),
+    )
+
+    # Threshold crossed only once, so notification fires exactly once
+    assert notification_port.report_alert_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_failure_count_independent_of_investigation_and_resolution(
+    poll_port: FakePollPort,
+) -> None:
+    """Poll failure counter is tracked independently of investigation/resolution counters."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Poll succeeds every cycle; resolution fails every cycle. With no poll
+    # failures, investigations never queue (default PollResult has
+    # investigations_queued=0), so the investigation cycle is never invoked —
+    # pre-seed its failure count to prove it stays untouched.
+    scheduler._investigation_failure_count = 3
+    poll_port.should_fail_resolution = True
+
+    async def stop_after_a_few_cycles() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if poll_port.execute_resolution_cycle_call_count >= 3:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_a_few_cycles(),
+    )
+
+    assert scheduler._poll_failure_count == 0
+    assert scheduler._investigation_failure_count == 3
+    assert scheduler._resolution_failure_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_custom_poll_failure_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """poll_failure_threshold is configurable and gates both suspension and health status."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        poll_failure_threshold=2,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 2:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    # Suspended after only 2 failures (not the default 5), and calls stop there
+    assert poll_port.execute_poll_cycle_call_count == 2
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is False
+    assert snapshot.poll_failure_threshold == 2

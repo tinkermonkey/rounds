@@ -25,6 +25,7 @@ class FakePollPort(PollPort):
         self.default_resolution_result: ResolutionResult | None = None
         self.should_fail: bool = False
         self.fail_message: str = "Poll failed"
+        self.should_fail_poll: bool = False
         self.should_fail_investigation: bool = False
         self.should_fail_resolution: bool = False
 
@@ -60,7 +61,7 @@ class FakePollPort(PollPort):
         """
         self.execute_poll_cycle_call_count += 1
 
-        if self.should_fail:
+        if self.should_fail or self.should_fail_poll:
             raise RuntimeError(self.fail_message)
 
         if self.poll_results:
@@ -136,6 +137,7 @@ class FakePollPort(PollPort):
         self.default_investigation_result = None
         self.default_resolution_result = None
         self.should_fail = False
+        self.should_fail_poll = False
         self.should_fail_investigation = False
         self.should_fail_resolution = False
         self.fail_message = "Poll failed"

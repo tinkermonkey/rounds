@@ -214,6 +214,14 @@ class Settings(BaseSettings):
             "(populated from Diagnosis.suggested_resolution_hours)."
         ),
     )
+    poll_failure_threshold: int = Field(
+        default=5,
+        description=(
+            "Number of consecutive poll-cycle failures before the daemon "
+            "suspends polling, sends an operator alert, and the /health "
+            "endpoint reports unhealthy."
+        ),
+    )
 
     # Budget controls
     daily_budget_limit: float = Field(
@@ -488,6 +496,14 @@ class Settings(BaseSettings):
         """Ensure batch size is positive."""
         if v <= 0:
             raise ValueError("poll_batch_size must be positive")
+        return v
+
+    @field_validator("poll_failure_threshold")
+    @classmethod
+    def validate_poll_failure_threshold(cls, v: int) -> int:
+        """Ensure poll failure threshold is positive."""
+        if v <= 0:
+            raise ValueError("poll_failure_threshold must be positive")
         return v
 
     @field_validator("claude_code_budget_usd")

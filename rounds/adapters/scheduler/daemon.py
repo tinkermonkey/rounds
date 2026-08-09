@@ -10,7 +10,7 @@ import signal
 from collections import defaultdict
 from datetime import UTC, datetime
 
-from rounds.core.models import RoundStep
+from rounds.core.models import HealthSnapshot, RoundStep
 from rounds.core.ports import NotificationPort, PollPort
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class DaemonScheduler:
         budget_limit: float | None = None,
         notification_port: NotificationPort | None = None,
         service_budget_map: dict[str, float] | None = None,
+        poll_failure_threshold: int = 5,
     ):
         """Initialize daemon scheduler.
 
@@ -37,11 +38,15 @@ class DaemonScheduler:
                 or resolution pipeline is suspended due to persistent failures (optional).
             service_budget_map: Per-service daily USD budget cap, keyed by service
                 name. Services with no entry are governed only by budget_limit.
+            poll_failure_threshold: Number of consecutive execute_poll_cycle()
+                failures before polling is suspended, an alert is raised, and
+                get_health_snapshot() reports unhealthy.
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
         self.budget_limit = budget_limit
         self.notification_port = notification_port
+        self.poll_failure_threshold = poll_failure_threshold
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
@@ -54,6 +59,9 @@ class DaemonScheduler:
         self._investigation_suspended_until: float | None = None
         self._resolution_failure_count = 0
         self._resolution_suspended_until: float | None = None
+        self._poll_failure_count = 0
+        self._poll_suspended_until: float | None = None
+        self._last_poll_completed_at: datetime | None = None
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -157,28 +165,92 @@ class DaemonScheduler:
                 # gating stays consistent within this cycle)
                 budget_exceeded = await self._is_budget_exceeded()
 
-                if budget_exceeded:
+                # Poll-cycle circuit breaker: mirrors the resolution/investigation
+                # pattern below. result stays None when polling is suspended or
+                # fails, which downstream resolution/investigation gating checks.
+                result = None
+                poll_now = loop.time()
+                if (
+                    self._poll_failure_count >= self.poll_failure_threshold
+                    and self._poll_suspended_until is not None
+                    and poll_now < self._poll_suspended_until
+                ):
                     logger.warning(
-                        f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
-                        f"${self.budget_limit:.2f}), skipping investigation cycles"
+                        f"Skipping poll cycle #{cycle_number}: "
+                        f"{self._poll_failure_count} consecutive failures, "
+                        f"polling suspended. "
+                        f"Review logs for root cause; daemon will retry after backoff."
                     )
-                    # Still poll for errors, but don't diagnose
-                    result = await poll_port.execute_poll_cycle()
                 else:
-                    start_time = loop.time()
+                    if self._poll_failure_count >= self.poll_failure_threshold:
+                        logger.info(
+                            f"Retrying poll cycle #{cycle_number} after suspension "
+                            f"(previous consecutive failures: {self._poll_failure_count})"
+                        )
+                    try:
+                        if budget_exceeded:
+                            logger.warning(
+                                f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
+                                f"${self.budget_limit:.2f}), skipping investigation cycles"
+                            )
+                            # Still poll for errors, but don't diagnose
+                            result = await poll_port.execute_poll_cycle()
+                        else:
+                            start_time = loop.time()
 
-                    # Execute poll cycle
-                    result = await poll_port.execute_poll_cycle()
+                            # Execute poll cycle
+                            result = await poll_port.execute_poll_cycle()
 
-                    elapsed = loop.time() - start_time
+                            elapsed = loop.time() - start_time
 
-                    logger.info(
-                        f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
-                        f"{result.errors_found} errors, "
-                        f"{result.new_signatures} new, "
-                        f"{result.updated_signatures} updated, "
-                        f"{result.investigations_queued} investigations queued"
-                    )
+                            logger.info(
+                                f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
+                                f"{result.errors_found} errors, "
+                                f"{result.new_signatures} new, "
+                                f"{result.updated_signatures} updated, "
+                                f"{result.investigations_queued} investigations queued"
+                            )
+
+                        self._poll_failure_count = 0
+                        self._poll_suspended_until = None
+                        self._last_poll_completed_at = datetime.now(UTC)
+                    except Exception as e:
+                        self._poll_failure_count += 1
+                        backoff_seconds = max(self.poll_interval_seconds * 5, 300)
+                        self._poll_suspended_until = loop.time() + backoff_seconds
+                        logger.error(
+                            f"Error in poll cycle #{cycle_number}: {e} "
+                            f"(consecutive failures: {self._poll_failure_count})",
+                            exc_info=True,
+                        )
+                        if self._poll_failure_count >= self.poll_failure_threshold:
+                            logger.critical(
+                                f"Poll cycle has failed {self._poll_failure_count} "
+                                f"consecutive times. Suspending polling for "
+                                f"{backoff_seconds}s. "
+                                f"Review logs for root cause; daemon will retry after backoff."
+                            )
+                            if (
+                                self._poll_failure_count == self.poll_failure_threshold
+                                and self.notification_port is not None
+                            ):
+                                try:
+                                    await self.notification_port.report_alert({
+                                        "alert": "poll_cycle_pipeline_suspended",
+                                        "consecutive_failures": self._poll_failure_count,
+                                        "suspended_for_seconds": backoff_seconds,
+                                        "message": (
+                                            f"Rounds poll cycle has failed "
+                                            f"{self._poll_failure_count} consecutive times. "
+                                            f"Polling is suspended for {backoff_seconds}s. "
+                                            f"Review logs for root cause."
+                                        ),
+                                    })
+                                except Exception as notify_err:
+                                    logger.error(
+                                        f"Failed to send poll failure alert: {notify_err}",
+                                        exc_info=True,
+                                    )
 
                 # Execute resolution cycle: auto-close signatures gone quiet.
                 # Runs every cycle regardless of budget, since it incurs no
@@ -249,8 +321,13 @@ class DaemonScheduler:
                                     )
 
                 # Execute investigation cycle for pending diagnoses.
-                # Skipped when budget is exhausted, since diagnosis incurs LLM cost.
-                if not budget_exceeded and result.investigations_queued > 0:
+                # Skipped when budget is exhausted, since diagnosis incurs LLM cost,
+                # or when this cycle's poll was suspended/failed (result is None).
+                if (
+                    not budget_exceeded
+                    and result is not None
+                    and result.investigations_queued > 0
+                ):
                     now = loop.time()
                     if (
                         self._investigation_failure_count >= 5
@@ -439,6 +516,20 @@ class DaemonScheduler:
     def cost_by_service(self) -> dict[str, float]:
         """Read-only snapshot of today's accumulated cost, broken down by service."""
         return dict(self._cost_by_service)
+
+    def get_health_snapshot(self) -> HealthSnapshot:
+        """Read-only snapshot of poll-cycle health, for monitoring endpoints.
+
+        Reports unhealthy once consecutive_poll_failures reaches
+        poll_failure_threshold, independent of the investigation and
+        resolution failure counters and of any single telemetry backend.
+        """
+        return HealthSnapshot(
+            healthy=self._poll_failure_count < self.poll_failure_threshold,
+            last_poll_completed_at=self._last_poll_completed_at,
+            consecutive_poll_failures=self._poll_failure_count,
+            poll_failure_threshold=self.poll_failure_threshold,
+        )
 
     async def run_investigation_cycle(self) -> None:
         """Run a single investigation cycle (on-demand)."""

@@ -13,6 +13,7 @@ Port Interface Categories:
    - UsageQueryPort: Query actual diagnosis cost from OTLP usage data
    - NotificationPort: Report findings to developers
    - BudgetTracker: Track accumulated spend per round step
+   - HealthCheckPort: Expose daemon poll-cycle health for monitoring
 
 2. **Driving Ports** (adapters/external systems call into core)
    - PollPort: Entry point for poll and investigation cycles
@@ -27,6 +28,7 @@ from typing import Any, Protocol
 from .models import (
     Diagnosis,
     ErrorEvent,
+    HealthSnapshot,
     InvestigationContext,
     InvestigationResult,
     LogEntry,
@@ -640,6 +642,19 @@ class BudgetTracker(Protocol):
         Returns False when no cap is configured for the service - uncapped
         services are governed only by the global daily budget.
         """
+        ...
+
+
+class HealthCheckPort(Protocol):
+    """Protocol for exposing daemon poll-cycle health to monitoring endpoints.
+
+    Lets adapters such as the webhook HTTP server report daemon health
+    (e.g. for /health) without importing the concrete DaemonScheduler
+    adapter directly.
+    """
+
+    def get_health_snapshot(self) -> HealthSnapshot:
+        """Return a read-only snapshot of poll-cycle health state."""
         ...
 
 
