@@ -1,0 +1,337 @@
+{
+  "title": "Rounds Self-Observability",
+  "description": "Health of the Rounds diagnostic daemon itself: poll/investigation/resolution cycle latency, signature volume by status, and diagnosis spend. Populated from the rounds-cli self-telemetry OTLP export (ENABLE_SELF_TELEMETRY=true), independent of any target-application telemetry.",
+  "tags": ["rounds", "self-observability"],
+  "layout": [
+    { "i": "poll-cycle-latency", "x": 0, "y": 0, "w": 6, "h": 3 },
+    { "i": "investigation-cycle-latency", "x": 6, "y": 0, "w": 6, "h": 3 },
+    { "i": "resolution-cycle-latency", "x": 0, "y": 3, "w": 6, "h": 3 },
+    { "i": "poll-cycle-error-rate", "x": 6, "y": 3, "w": 6, "h": 3 },
+    { "i": "signature-counts-by-status", "x": 0, "y": 6, "w": 6, "h": 3 },
+    { "i": "daily-diagnosis-cost-total", "x": 6, "y": 6, "w": 3, "h": 3 },
+    { "i": "daily-diagnosis-cost-by-step", "x": 9, "y": 6, "w": 3, "h": 3 }
+  ],
+  "variables": {},
+  "widgets": [
+    {
+      "id": "poll-cycle-latency",
+      "title": "Poll Cycle Latency (p50 / p95)",
+      "description": "Duration of each executed poll cycle, from rounds.daemon.poll_cycle.duration.",
+      "panelTypes": "graph",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "s",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "p50",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.poll_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "A",
+              "disabled": false,
+              "legend": "p50"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.poll_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "B",
+              "disabled": false,
+              "legend": "p95"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "investigation-cycle-latency",
+      "title": "Investigation Cycle Latency (p50 / p95)",
+      "description": "Duration of each executed investigation cycle, from rounds.daemon.investigation_cycle.duration.",
+      "panelTypes": "graph",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "s",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "p50",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.investigation_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "A",
+              "disabled": false,
+              "legend": "p50"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.investigation_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "B",
+              "disabled": false,
+              "legend": "p95"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "resolution-cycle-latency",
+      "title": "Resolution Cycle Latency (p50 / p95)",
+      "description": "Duration of each executed resolution cycle, from rounds.daemon.resolution_cycle.duration.",
+      "panelTypes": "graph",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "s",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "p50",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.resolution_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "A",
+              "disabled": false,
+              "legend": "p50"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.resolution_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": {
+                "items": [
+                  { "key": { "key": "service.name" }, "op": "=", "value": "rounds-cli" }
+                ],
+                "op": "AND"
+              },
+              "groupBy": [],
+              "expression": "B",
+              "disabled": false,
+              "legend": "p95"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "poll-cycle-error-rate",
+      "title": "Poll / Investigation / Resolution Cycle Outcomes",
+      "description": "Count of executed cycles by outcome (success/error), grouped by cycle type via the rounds.daemon.*.duration histograms' sample count.",
+      "panelTypes": "graph",
+      "isStacked": true,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "none",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {
+                "key": "rounds.daemon.poll_cycle.duration",
+                "dataType": "float64",
+                "type": "Histogram"
+              },
+              "filters": { "items": [], "op": "AND" },
+              "groupBy": [{ "key": "outcome", "dataType": "string", "type": "tag" }],
+              "expression": "A",
+              "disabled": false,
+              "legend": "poll {{outcome}}"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "signature-counts-by-status",
+      "title": "Signature Counts by Status",
+      "description": "Current signature counts grouped by status (new, investigating, diagnosed, resolved, muted), from rounds.signatures.count_by_status.",
+      "panelTypes": "graph",
+      "isStacked": true,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "none",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "avg",
+              "aggregateAttribute": {
+                "key": "rounds.signatures.count_by_status",
+                "dataType": "float64",
+                "type": "Gauge"
+              },
+              "filters": { "items": [], "op": "AND" },
+              "groupBy": [{ "key": "status", "dataType": "string", "type": "tag" }],
+              "expression": "A",
+              "disabled": false,
+              "legend": "{{status}}"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "daily-diagnosis-cost-total",
+      "title": "Today's Diagnosis Cost (USD)",
+      "description": "Total diagnosis spend accrued today, from rounds.diagnosis.daily_cost_usd.",
+      "panelTypes": "value",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "none",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "avg",
+              "aggregateAttribute": {
+                "key": "rounds.diagnosis.daily_cost_usd",
+                "dataType": "float64",
+                "type": "Gauge"
+              },
+              "filters": { "items": [], "op": "AND" },
+              "groupBy": [],
+              "expression": "A",
+              "disabled": false,
+              "legend": "today's cost"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    },
+    {
+      "id": "daily-diagnosis-cost-by-step",
+      "title": "Today's Diagnosis Cost by Step (USD)",
+      "description": "Diagnosis spend accrued today, broken down by pipeline step (poll, fingerprint, diagnose, confirm), from rounds.diagnosis.daily_cost_usd_by_step.",
+      "panelTypes": "table",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "yAxisUnit": "none",
+      "query": {
+        "queryType": "builder",
+        "promql": [],
+        "clickhouse_sql": [],
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "avg",
+              "aggregateAttribute": {
+                "key": "rounds.diagnosis.daily_cost_usd_by_step",
+                "dataType": "float64",
+                "type": "Gauge"
+              },
+              "filters": { "items": [], "op": "AND" },
+              "groupBy": [{ "key": "step", "dataType": "string", "type": "tag" }],
+              "expression": "A",
+              "disabled": false,
+              "legend": "{{step}}"
+            }
+          ],
+          "queryFormulas": []
+        }
+      }
+    }
+  ]
+}

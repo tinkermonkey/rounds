@@ -10,8 +10,10 @@ import signal
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
+from opentelemetry import metrics, trace
+
 from rounds.core.models import HealthSnapshot, RoundStep
-from rounds.core.ports import DigestFlushPort, NotificationPort, PollPort
+from rounds.core.ports import DigestFlushPort, NotificationPort, PollPort, SignatureStorePort
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ class DaemonScheduler:
         poll_failure_threshold: int = 5,
         digest_notifier: DigestFlushPort | None = None,
         digest_interval_seconds: int = 86400,
+        signature_store: SignatureStorePort | None = None,
     ):
         """Initialize daemon scheduler.
 
@@ -50,6 +53,11 @@ class DaemonScheduler:
                 seconds. Only relevant when digest_notifier is set. Checked
                 every poll cycle but only acts once the window has elapsed,
                 so it stays decoupled from poll_interval_seconds.
+            signature_store: SignatureStorePort used to refresh signature counts
+                by status once per poll cycle, for the self-observability
+                dashboard's `rounds.signatures.count_by_status` gauge. None
+                (the default) disables this refresh; signature_counts_by_status
+                then stays empty.
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
@@ -73,6 +81,30 @@ class DaemonScheduler:
         self._poll_failure_count = 0
         self._poll_suspended_until: float | None = None
         self._last_poll_completed_at: datetime | None = None
+
+        # Self-observability dashboard instrumentation. self._tracer/_meter
+        # resolve to OpenTelemetry API no-ops when self-telemetry is disabled
+        # (no provider registered in telemetry.py), so this instrumentation
+        # carries zero export overhead in that case.
+        self._signature_store = signature_store
+        self._signature_counts_by_status: dict[str, int] = {}
+        self._tracer = trace.get_tracer(__name__)
+        meter = metrics.get_meter(__name__)
+        self._poll_latency_histogram = meter.create_histogram(
+            "rounds.daemon.poll_cycle.duration",
+            unit="s",
+            description="Duration of each executed poll cycle, in seconds",
+        )
+        self._investigation_latency_histogram = meter.create_histogram(
+            "rounds.daemon.investigation_cycle.duration",
+            unit="s",
+            description="Duration of each executed investigation cycle, in seconds",
+        )
+        self._resolution_latency_histogram = meter.create_histogram(
+            "rounds.daemon.resolution_cycle.duration",
+            unit="s",
+            description="Duration of each executed resolution cycle, in seconds",
+        )
 
     async def start(self) -> None:
         """Start the daemon scheduler loop.
@@ -198,34 +230,50 @@ class DaemonScheduler:
                             f"Retrying poll cycle #{cycle_number} after suspension "
                             f"(previous consecutive failures: {self._poll_failure_count})"
                         )
+                    poll_start_time = loop.time()
                     try:
-                        if budget_exceeded:
-                            logger.warning(
-                                f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
-                                f"${self.budget_limit:.2f}), skipping investigation cycles"
-                            )
-                            # Still poll for errors, but don't diagnose
-                            result = await poll_port.execute_poll_cycle()
-                        else:
-                            start_time = loop.time()
+                        with self._tracer.start_as_current_span(
+                            "rounds.daemon.poll_cycle"
+                        ) as span:
+                            span.set_attribute("rounds.cycle_number", cycle_number)
+                            span.set_attribute("rounds.budget_exceeded", budget_exceeded)
+                            if budget_exceeded:
+                                logger.warning(
+                                    f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
+                                    f"${self.budget_limit:.2f}), skipping investigation cycles"
+                                )
+                                # Still poll for errors, but don't diagnose
+                                result = await poll_port.execute_poll_cycle()
+                            else:
+                                # Execute poll cycle
+                                result = await poll_port.execute_poll_cycle()
 
-                            # Execute poll cycle
-                            result = await poll_port.execute_poll_cycle()
+                                elapsed = loop.time() - poll_start_time
 
-                            elapsed = loop.time() - start_time
+                                logger.info(
+                                    f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
+                                    f"{result.errors_found} errors, "
+                                    f"{result.new_signatures} new, "
+                                    f"{result.updated_signatures} updated, "
+                                    f"{result.investigations_queued} investigations queued"
+                                )
+                                span.set_attribute(
+                                    "rounds.poll_cycle.errors_found", result.errors_found
+                                )
+                                span.set_attribute(
+                                    "rounds.poll_cycle.new_signatures", result.new_signatures
+                                )
 
-                            logger.info(
-                                f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
-                                f"{result.errors_found} errors, "
-                                f"{result.new_signatures} new, "
-                                f"{result.updated_signatures} updated, "
-                                f"{result.investigations_queued} investigations queued"
-                            )
-
+                        self._poll_latency_histogram.record(
+                            loop.time() - poll_start_time, {"outcome": "success"}
+                        )
                         self._poll_failure_count = 0
                         self._poll_suspended_until = None
                         self._last_poll_completed_at = datetime.now(UTC)
                     except Exception as e:
+                        self._poll_latency_histogram.record(
+                            loop.time() - poll_start_time, {"outcome": "error"}
+                        )
                         self._poll_failure_count += 1
                         backoff_seconds = max(self.poll_interval_seconds * 5, 300)
                         self._poll_suspended_until = loop.time() + backoff_seconds
@@ -284,8 +332,20 @@ class DaemonScheduler:
                             f"Retrying resolution cycle #{cycle_number} after suspension "
                             f"(previous consecutive failures: {self._resolution_failure_count})"
                         )
+                    resolution_start_time = loop.time()
                     try:
-                        resolution_result = await poll_port.execute_resolution_cycle()
+                        with self._tracer.start_as_current_span(
+                            "rounds.daemon.resolution_cycle"
+                        ) as span:
+                            span.set_attribute("rounds.cycle_number", cycle_number)
+                            resolution_result = await poll_port.execute_resolution_cycle()
+                            span.set_attribute(
+                                "rounds.resolution_cycle.signatures_resolved",
+                                resolution_result.signatures_resolved,
+                            )
+                        self._resolution_latency_histogram.record(
+                            loop.time() - resolution_start_time, {"outcome": "success"}
+                        )
                         self._resolution_failure_count = 0
                         self._resolution_suspended_until = None
                         if resolution_result.signatures_resolved > 0:
@@ -294,6 +354,9 @@ class DaemonScheduler:
                                 f"{resolution_result.signatures_resolved} signatures auto-resolved"
                             )
                     except Exception as e:
+                        self._resolution_latency_histogram.record(
+                            loop.time() - resolution_start_time, {"outcome": "error"}
+                        )
                         self._resolution_failure_count += 1
                         backoff_seconds = max(self.poll_interval_seconds * 5, 300)
                         self._resolution_suspended_until = loop.time() + backoff_seconds
@@ -373,8 +436,24 @@ class DaemonScheduler:
                             )
                         else:
                             logger.debug(f"Starting investigation cycle #{cycle_number}")
+                        investigation_start_time = loop.time()
                         try:
-                            inv_result = await poll_port.execute_investigation_cycle()
+                            with self._tracer.start_as_current_span(
+                                "rounds.daemon.investigation_cycle"
+                            ) as span:
+                                span.set_attribute("rounds.cycle_number", cycle_number)
+                                inv_result = await poll_port.execute_investigation_cycle()
+                                span.set_attribute(
+                                    "rounds.investigation_cycle.diagnoses_produced",
+                                    len(inv_result.diagnoses_produced),
+                                )
+                                span.set_attribute(
+                                    "rounds.investigation_cycle.investigations_failed",
+                                    inv_result.investigations_failed,
+                                )
+                            self._investigation_latency_histogram.record(
+                                loop.time() - investigation_start_time, {"outcome": "success"}
+                            )
                             self._investigation_failure_count = 0
                             self._investigation_suspended_until = None
                             logger.info(
@@ -384,6 +463,9 @@ class DaemonScheduler:
                                 f"(out of {inv_result.investigations_attempted} attempted)"
                             )
                         except Exception as e:
+                            self._investigation_latency_histogram.record(
+                                loop.time() - investigation_start_time, {"outcome": "error"}
+                            )
                             self._investigation_failure_count += 1
                             backoff_seconds = max(self.poll_interval_seconds * 5, 300)
                             self._investigation_suspended_until = loop.time() + backoff_seconds
@@ -421,6 +503,12 @@ class DaemonScheduler:
                                             exc_info=True,
                                         )
 
+                # Refresh cached signature counts by status for the
+                # self-observability dashboard's gauge. Runs once per cycle,
+                # independent of poll/budget/resolution outcome, so the count
+                # stays reasonably current even if polling is suspended.
+                await self._refresh_signature_counts()
+
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -434,6 +522,25 @@ class DaemonScheduler:
                     await asyncio.sleep(self.poll_interval_seconds)
                 except asyncio.CancelledError:
                     raise
+
+    async def _refresh_signature_counts(self) -> None:
+        """Refresh the cached signature-counts-by-status snapshot.
+
+        No-op when no signature_store was configured. Failures are logged
+        and swallowed so a store hiccup never interrupts the poll loop -
+        the dashboard gauge simply reports the last-known counts until the
+        next successful refresh.
+        """
+        if self._signature_store is None:
+            return
+
+        try:
+            stats = await self._signature_store.get_stats()
+            self._signature_counts_by_status = dict(stats.by_status)
+        except Exception as e:
+            logger.warning(
+                f"Failed to refresh signature counts for telemetry: {e}", exc_info=True
+            )
 
     async def _is_budget_exceeded(self) -> bool:
         """Check if daily budget limit has been exceeded.
@@ -541,6 +648,20 @@ class DaemonScheduler:
     def cost_by_service(self) -> dict[str, float]:
         """Read-only snapshot of today's accumulated cost, broken down by service."""
         return dict(self._cost_by_service)
+
+    @property
+    def daily_cost_usd(self) -> float:
+        """Read-only snapshot of today's total accumulated diagnosis cost, in USD."""
+        return self._daily_cost_usd
+
+    @property
+    def signature_counts_by_status(self) -> dict[str, int]:
+        """Read-only snapshot of signature counts by status.
+
+        Refreshed once per poll cycle when a signature_store was configured;
+        empty otherwise.
+        """
+        return dict(self._signature_counts_by_status)
 
     def get_health_snapshot(self) -> HealthSnapshot:
         """Read-only snapshot of poll-cycle health, for monitoring endpoints.

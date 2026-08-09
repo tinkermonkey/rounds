@@ -22,7 +22,7 @@ import urllib.parse
 from typing import Any, Literal
 
 import httpx
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 
@@ -733,13 +733,26 @@ async def bootstrap(
     logger.info("Loading Rounds diagnostic system...")
 
     # Step 2.5: Initialize telemetry if enabled
+    self_telemetry_meter: metrics.Meter | None = None
     if settings.enable_self_telemetry:
-        from rounds.telemetry import initialize_telemetry
+        from rounds.telemetry import initialize_metrics, initialize_telemetry
 
         initialize_telemetry(
             service_name=settings.self_telemetry_service_name,
             otlp_endpoint=settings.self_telemetry_otlp_endpoint or None,
             enable_console_export=settings.self_telemetry_console_export,
+        )
+        traces_endpoint = settings.self_telemetry_otlp_endpoint
+        metrics_endpoint = (
+            traces_endpoint[: -len("/v1/traces")] + "/v1/metrics"
+            if traces_endpoint.endswith("/v1/traces")
+            else traces_endpoint
+        )
+        self_telemetry_meter = initialize_metrics(
+            service_name=settings.self_telemetry_service_name,
+            otlp_endpoint=metrics_endpoint or None,
+            enable_console_export=settings.self_telemetry_console_export,
+            export_interval_millis=settings.self_telemetry_metric_export_interval_seconds * 1000,
         )
         logger.info("Self-telemetry enabled")
     else:
@@ -970,7 +983,12 @@ async def bootstrap(
             poll_failure_threshold=settings.poll_failure_threshold,
             digest_notifier=digest_notifier,
             digest_interval_seconds=settings.warn_digest_interval_seconds,
+            signature_store=store,
         )
+        if self_telemetry_meter is not None:
+            from rounds.telemetry import register_dashboard_gauges
+
+            register_dashboard_gauges(self_telemetry_meter, scheduler)
 
     # Investigator (orchestrates investigation workflow)
     investigator = Investigator(

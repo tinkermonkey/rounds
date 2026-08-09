@@ -375,6 +375,14 @@ class Settings(BaseSettings):
         default=False,
         description="Enable console export for rounds CLI telemetry (for debugging)",
     )
+    self_telemetry_metric_export_interval_seconds: int = Field(
+        default=60,
+        description=(
+            "How often self-telemetry metrics (poll/investigation/resolution "
+            "cycle latency, signature counts by status, diagnosis cost) are "
+            "exported, in seconds. Only relevant when ENABLE_SELF_TELEMETRY is true."
+        ),
+    )
 
     @field_validator("service_host_map")
     @classmethod
