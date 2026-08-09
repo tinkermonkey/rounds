@@ -10,9 +10,8 @@ import signal
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.core.models import HealthSnapshot, RoundStep
-from rounds.core.ports import NotificationPort, PollPort
+from rounds.core.ports import DigestFlushPort, NotificationPort, PollPort
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class DaemonScheduler:
         notification_port: NotificationPort | None = None,
         service_budget_map: dict[str, float] | None = None,
         poll_failure_threshold: int = 5,
-        digest_notifier: DigestNotificationAdapter | None = None,
+        digest_notifier: DigestFlushPort | None = None,
         digest_interval_seconds: int = 86400,
     ):
         """Initialize daemon scheduler.
@@ -44,7 +43,7 @@ class DaemonScheduler:
             poll_failure_threshold: Number of consecutive execute_poll_cycle()
                 failures before polling is suspended, an alert is raised, and
                 get_health_snapshot() reports unhealthy.
-            digest_notifier: DigestNotificationAdapter to flush on a schedule
+            digest_notifier: DigestFlushPort implementation to flush on a schedule
                 independent of poll_interval_seconds (see digest_interval_seconds).
                 None (the default) disables WARN-digest flushing entirely.
             digest_interval_seconds: How often to flush the WARN digest, in

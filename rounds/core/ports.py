@@ -22,7 +22,7 @@ Port Interface Categories:
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from .models import (
@@ -655,6 +655,28 @@ class HealthCheckPort(Protocol):
 
     def get_health_snapshot(self) -> HealthSnapshot:
         """Return a read-only snapshot of poll-cycle health state."""
+        ...
+
+
+class DigestFlushPort(Protocol):
+    """Protocol for flushing a periodic digest of batched notifications.
+
+    Lets adapters such as DaemonScheduler drive the WARN-digest flush
+    schedule without importing the concrete DigestNotificationAdapter
+    adapter directly.
+    """
+
+    async def flush_if_due(self, now: datetime, window: timedelta) -> bool:
+        """Flush the digest if at least `window` has elapsed since it opened.
+
+        Args:
+            now: Current timestamp.
+            window: Digest window duration.
+
+        Returns:
+            True if the window was due and flushed (the buffer may have been
+            empty), False if the window hasn't elapsed yet.
+        """
         ...
 
 
