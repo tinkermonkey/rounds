@@ -8,8 +8,9 @@ import asyncio
 import logging
 import signal
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.core.models import HealthSnapshot, RoundStep
 from rounds.core.ports import NotificationPort, PollPort
 
@@ -27,6 +28,8 @@ class DaemonScheduler:
         notification_port: NotificationPort | None = None,
         service_budget_map: dict[str, float] | None = None,
         poll_failure_threshold: int = 5,
+        digest_notifier: DigestNotificationAdapter | None = None,
+        digest_interval_seconds: int = 86400,
     ):
         """Initialize daemon scheduler.
 
@@ -41,12 +44,21 @@ class DaemonScheduler:
             poll_failure_threshold: Number of consecutive execute_poll_cycle()
                 failures before polling is suspended, an alert is raised, and
                 get_health_snapshot() reports unhealthy.
+            digest_notifier: DigestNotificationAdapter to flush on a schedule
+                independent of poll_interval_seconds (see digest_interval_seconds).
+                None (the default) disables WARN-digest flushing entirely.
+            digest_interval_seconds: How often to flush the WARN digest, in
+                seconds. Only relevant when digest_notifier is set. Checked
+                every poll cycle but only acts once the window has elapsed,
+                so it stays decoupled from poll_interval_seconds.
         """
         self.poll_port = poll_port
         self.poll_interval_seconds = poll_interval_seconds
         self.budget_limit = budget_limit
         self.notification_port = notification_port
         self.poll_failure_threshold = poll_failure_threshold
+        self.digest_notifier = digest_notifier
+        self.digest_interval_seconds = digest_interval_seconds
         self.running = False
         self._task: asyncio.Task[None] | None = None
         self._daily_cost_usd = 0.0
@@ -319,6 +331,20 @@ class DaemonScheduler:
                                         f"Failed to send resolution failure alert: {notify_err}",
                                         exc_info=True,
                                     )
+
+                # Flush the WARN digest if its window has elapsed. Runs every
+                # cycle regardless of poll/budget/resolution outcome, on a
+                # schedule governed by digest_interval_seconds rather than
+                # poll_interval_seconds, so the digest cadence is independent
+                # of how often the daemon polls.
+                if self.digest_notifier is not None:
+                    try:
+                        await self.digest_notifier.flush_if_due(
+                            datetime.now(UTC),
+                            timedelta(seconds=self.digest_interval_seconds),
+                        )
+                    except Exception as e:
+                        logger.error(f"Error flushing WARN digest: {e}", exc_info=True)
 
                 # Execute investigation cycle for pending diagnoses.
                 # Skipped when budget is exhausted, since diagnosis incurs LLM cost,

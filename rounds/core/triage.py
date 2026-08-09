@@ -7,7 +7,7 @@ conditions.
 
 from datetime import UTC, datetime, timedelta
 
-from .models import Confidence, Diagnosis, Signature, SignatureStatus
+from .models import Confidence, Diagnosis, Severity, Signature, SignatureStatus
 
 
 class TriageEngine:
@@ -21,6 +21,7 @@ class TriageEngine:
         min_occurrence_for_investigation: int = 3,
         investigation_cooldown_hours: int = 24,
         high_confidence_threshold: Confidence = "high",
+        batch_severity_ceiling: Severity = Severity.WARN,
     ):
         if min_occurrence_for_investigation <= 0:
             raise ValueError(
@@ -35,6 +36,9 @@ class TriageEngine:
         self.min_occurrence_for_investigation = min_occurrence_for_investigation
         self.investigation_cooldown_hours = investigation_cooldown_hours
         self.high_confidence_threshold = high_confidence_threshold
+        # Diagnoses at or below this severity qualify for WARN-digest batching
+        # (see should_batch()), e.g. WARN, INFO, DEBUG, TRACE but not ERROR/FATAL.
+        self.batch_severity_ceiling = batch_severity_ceiling
 
     def should_investigate(self, signature: Signature) -> bool:
         """Is this signature worth sending to the diagnosis engine?
@@ -98,6 +102,28 @@ class TriageEngine:
             return True
 
         return False
+
+    def should_batch(self, signature: Signature, diagnosis: Diagnosis) -> bool:
+        """Should a notify-worthy diagnosis be deferred into the periodic
+        WARN digest instead of sent as an individual immediate notification?
+
+        Only meaningful for diagnoses that already passed should_notify() —
+        this narrows that set down to the low-priority tail that can safely
+        wait for the next digest window. High-confidence and critical-tagged
+        diagnoses always bypass batching so they're never held back.
+
+        Considers:
+        - Confidence level (high confidence is always immediate)
+        - Critical tag (always immediate)
+        - Signature severity (only WARN-level-or-below qualifies for batching)
+        """
+        if diagnosis.confidence == self.high_confidence_threshold:
+            return False
+
+        if "critical" in signature.tags:
+            return False
+
+        return signature.max_severity.rank <= self.batch_severity_ceiling.rank
 
     def calculate_priority(self, signature: Signature) -> int:
         """Order signatures for investigation when multiple are pending.

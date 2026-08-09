@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.adapters.notification.composite import CompositeNotificationAdapter
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
@@ -945,6 +946,18 @@ async def bootstrap(
     fingerprinter = Fingerprinter()
     triage = TriageEngine()
 
+    # WARN digest: batches low-severity/low-confidence diagnoses into a single
+    # periodic summary instead of notifying individually. Wraps the notification
+    # chain built above, so it applies to every configured channel. Disabled by
+    # default, which leaves per-diagnosis notification behavior unchanged.
+    digest_notifier: DigestNotificationAdapter | None = None
+    if settings.warn_digest_enabled:
+        digest_notifier = DigestNotificationAdapter(inner=notification, triage=triage)
+        notification = digest_notifier
+        logger.info(
+            f"WARN digest enabled: flush interval={settings.warn_digest_interval_seconds}s"
+        )
+
     # Create daemon scheduler first (needed for budget tracking in investigator)
     scheduler: DaemonScheduler | None = None
     if settings.run_mode == "daemon":
@@ -955,6 +968,8 @@ async def bootstrap(
             notification_port=notification,
             service_budget_map=settings.get_service_budget_map(),
             poll_failure_threshold=settings.poll_failure_threshold,
+            digest_notifier=digest_notifier,
+            digest_interval_seconds=settings.warn_digest_interval_seconds,
         )
 
     # Investigator (orchestrates investigation workflow)

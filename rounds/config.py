@@ -223,6 +223,25 @@ class Settings(BaseSettings):
         ),
     )
 
+    # WARN digest configuration
+    warn_digest_enabled: bool = Field(
+        default=False,
+        description=(
+            "Batch WARN-level/informational diagnoses into a single periodic "
+            "digest notification instead of notifying individually. Higher-severity "
+            "or higher-confidence diagnoses are always notified immediately. "
+            "When False (default), per-diagnosis notification behavior is unchanged."
+        ),
+    )
+    warn_digest_interval_seconds: int = Field(
+        default=86400,
+        description=(
+            "How often to flush the WARN digest, in seconds (default: one day). "
+            "Configured independently of POLL_INTERVAL_SECONDS. Only relevant "
+            "when WARN_DIGEST_ENABLED is true."
+        ),
+    )
+
     # Budget controls
     daily_budget_limit: float = Field(
         default=100.0,
@@ -504,6 +523,14 @@ class Settings(BaseSettings):
         """Ensure poll failure threshold is positive."""
         if v <= 0:
             raise ValueError("poll_failure_threshold must be positive")
+        return v
+
+    @field_validator("warn_digest_interval_seconds")
+    @classmethod
+    def validate_warn_digest_interval_seconds(cls, v: int) -> int:
+        """Ensure the WARN digest interval is positive."""
+        if v <= 0:
+            raise ValueError("warn_digest_interval_seconds must be positive")
         return v
 
     @field_validator("claude_code_budget_usd")

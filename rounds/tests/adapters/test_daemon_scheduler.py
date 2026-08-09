@@ -5,8 +5,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
-from rounds.core.models import PollResult
+from rounds.core.models import Diagnosis, PollResult, Severity, Signature, SignatureStatus
+from rounds.core.triage import TriageEngine
 from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.poll import FakePollPort
 
@@ -1167,3 +1169,101 @@ async def test_custom_poll_failure_threshold(
     snapshot = scheduler.get_health_snapshot()
     assert snapshot.healthy is False
     assert snapshot.poll_failure_threshold == 2
+
+
+# --- WARN Digest Flush Tests ---
+
+
+def _make_batchable_signature(service: str = "svc") -> Signature:
+    """A DIAGNOSED, WARN-severity signature that qualifies for digest batching."""
+    now = datetime.now(UTC)
+    return Signature(
+        id=f"sig-{service}",
+        fingerprint=f"fp-{service}",
+        error_type="TransientError",
+        service=service,
+        message_template="transient failure",
+        stack_hash="hash-warn",
+        first_seen=now,
+        last_seen=now,
+        occurrence_count=1,
+        status=SignatureStatus.DIAGNOSED,
+        max_severity=Severity.WARN,
+    )
+
+
+def _make_low_confidence_diagnosis() -> Diagnosis:
+    return Diagnosis(
+        root_cause="root",
+        evidence=(),
+        suggested_fix="fix",
+        confidence="low",
+        diagnosed_at=datetime.now(UTC),
+        model="model",
+        cost_usd=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_loop_flushes_digest_when_window_elapsed(
+    poll_port: FakePollPort,
+) -> None:
+    """DaemonScheduler drives the digest flush timer on its own schedule,
+    decoupled from poll_interval_seconds - a digest_interval_seconds of 0
+    means every loop iteration is due."""
+    inner = FakeNotificationPort()
+    digest_notifier = DigestNotificationAdapter(inner=inner, triage=TriageEngine())
+    await digest_notifier.report(_make_batchable_signature(), _make_low_confidence_diagnosis())
+    assert digest_notifier.pending_count == 1
+
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+        digest_notifier=digest_notifier,
+        digest_interval_seconds=0,
+    )
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert inner.report_summary_call_count == 1
+    stats = inner.get_last_summary_report()
+    assert stats is not None
+    assert stats["count"] == 1
+    # Window rolled over after the flush, and the buffer is empty again -
+    # a second iteration must not re-report the same diagnosis.
+    assert digest_notifier.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_loop_without_digest_notifier_never_flushes(
+    poll_port: FakePollPort,
+) -> None:
+    """digest_notifier=None (the default) disables digest flushing entirely -
+    current per-diagnosis notification behavior is unaffected."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+    )
+    assert scheduler.digest_notifier is None
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert poll_port.poll_cycle_count > 0
