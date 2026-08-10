@@ -687,15 +687,17 @@ class DaemonScheduler:
         backend.
         """
         poll_failure_count = self._poll_failure_count
+        investigation_failure_count = self._investigation_failure_count
+        resolution_failure_count = self._resolution_failure_count
         return HealthSnapshot(
             last_poll_completed_at=self._last_poll_completed_at,
             consecutive_poll_failures=poll_failure_count,
             poll_failure_threshold=self.poll_failure_threshold,
             investigation_suspended=(
-                self._investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD
+                investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD
             ),
             resolution_suspended=(
-                self._resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD
+                resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD
             ),
         )
 
