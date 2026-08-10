@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from rounds.core.models import Confidence, Diagnosis, Signature
+from rounds.core.models import Confidence, Diagnosis, Signature, SignatureStatus
 from rounds.core.ports import NotificationPort
 from rounds.core.triage import TriageEngine
 
@@ -33,6 +33,7 @@ class _DigestEntry:
     fingerprint: str
     service: str
     error_type: str
+    status: SignatureStatus
     confidence: Confidence
 
 
@@ -86,6 +87,7 @@ class DigestNotificationAdapter(NotificationPort):
                 fingerprint=signature.fingerprint,
                 service=signature.service,
                 error_type=signature.error_type,
+                status=signature.status,
                 confidence=diagnosis.confidence,
             )
             async with self._lock:
@@ -207,15 +209,26 @@ class DigestNotificationAdapter(NotificationPort):
         (stdout, markdown, github_issues) actually renders via dict.get(). Without
         the latter, those adapters silently fall back to their zero/empty
         defaults and a flushed digest produces an invisible, all-zero summary.
-        by_status is repurposed as a confidence-level breakdown (low/medium/high)
-        since _DigestEntry doesn't carry a Signature status - it's the closest
-        analogous categorical dimension the digest actually has.
+
+        by_status carries the real Signature.status breakdown (new/investigating/
+        diagnosed/...), matching every other producer of by_status in the codebase
+        (StoreStats, the OTEL count_by_status gauge). Confidence is a distinct
+        dimension and is reported separately under by_confidence, which the
+        stdout/markdown/github_issues formatters render as its own section.
+
+        total_signatures counts unique signatures (a signature re-diagnosed
+        multiple times within one digest window still counts once), while
+        total_errors_seen counts every batched diagnosis in the window.
         """
         by_service: dict[str, int] = defaultdict(int)
+        by_status: dict[str, int] = defaultdict(int)
         by_confidence: dict[str, int] = defaultdict(int)
+        unique_signature_ids: set[str] = set()
         for entry in entries:
             by_service[entry.service] += 1
+            by_status[entry.status.value] += 1
             by_confidence[entry.confidence] += 1
+            unique_signature_ids.add(entry.signature_id)
 
         return {
             "type": "warn_digest",
@@ -233,8 +246,9 @@ class DigestNotificationAdapter(NotificationPort):
                 }
                 for entry in entries
             ],
-            "total_signatures": len(entries),
+            "total_signatures": len(unique_signature_ids),
             "total_errors_seen": len(entries),
-            "by_status": dict(by_confidence),
+            "by_status": dict(by_status),
+            "by_confidence": dict(by_confidence),
             "by_service": dict(by_service),
         }

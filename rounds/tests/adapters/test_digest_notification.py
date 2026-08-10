@@ -156,8 +156,51 @@ async def test_flush_after_window_elapsed_emits_digest_with_count_services_and_s
     assert stats["services"] == ["svc-a", "svc-b"]
     signature_ids = {entry["signature_id"] for entry in stats["signatures"]}
     assert signature_ids == {sig_a.id, sig_b.id}
+    # total_signatures/total_errors_seen/by_status/by_service are what the
+    # report_summary() formatters (stdout, markdown, github_issues) actually
+    # render - without these keys a flushed digest is an invisible, all-zero
+    # summary.
+    assert stats["total_signatures"] == 2
+    assert stats["total_errors_seen"] == 2
+    assert stats["by_status"] == {"diagnosed": 2}
+    assert stats["by_confidence"] == {"low": 2}
+    assert stats["by_service"] == {"svc-a": 1, "svc-b": 1}
     # Buffer and window reset after flush.
     assert adapter.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_flush_digest_stats_deduplicate_signatures_and_track_status(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """total_signatures counts unique signatures; total_errors_seen counts every diagnosis.
+
+    Also verifies by_status carries real SignatureStatus values (not confidence)
+    and by_confidence carries the confidence breakdown as its own dimension.
+    """
+    window_start = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage, window_start=window_start)
+    # sig_a is re-diagnosed twice within the same window - same signature id
+    # (derived from service), distinct diagnoses.
+    sig_a = _make_signature(service="svc-a")
+    sig_b = _make_signature(service="svc-b")
+    await adapter.report(sig_a, _make_diagnosis(confidence="low"))
+    await adapter.report(sig_a, _make_diagnosis(confidence="medium"))
+    await adapter.report(sig_b, _make_diagnosis(confidence="low"))
+
+    now = window_start + timedelta(days=1)
+    await adapter.flush_if_due(now, timedelta(days=1))
+
+    stats = inner.get_last_summary_report()
+    assert stats is not None
+    assert stats["count"] == 3
+    # sig_a counted once despite being batched twice; sig_b counted once.
+    assert stats["total_signatures"] == 2
+    # Every batched diagnosis is counted, including the repeat for sig_a.
+    assert stats["total_errors_seen"] == 3
+    assert stats["by_status"] == {"diagnosed": 3}
+    assert stats["by_confidence"] == {"low": 2, "medium": 1}
+    assert stats["by_service"] == {"svc-a": 2, "svc-b": 1}
 
 
 @pytest.mark.asyncio

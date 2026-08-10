@@ -169,6 +169,13 @@ class StdoutNotificationAdapter(NotificationPort):
             for status, count in sorted(by_status.items()):
                 lines.append(f"  {status.upper()}: {count}")
 
+        by_confidence = stats.get("by_confidence", {})
+        if by_confidence:
+            lines.append("")
+            lines.append("By Confidence:")
+            for confidence, count in sorted(by_confidence.items()):
+                lines.append(f"  {confidence.upper()}: {count}")
+
         by_service = stats.get("by_service", {})
         if by_service:
             lines.append("")

@@ -377,6 +377,14 @@ class MarkdownNotificationAdapter(NotificationPort):
                 lines.append(f"- **{status.upper()}**: {count}")
             lines.append("")
 
+        # By confidence
+        by_confidence = stats.get("by_confidence", {})
+        if by_confidence:
+            lines.append("### By Confidence")
+            for confidence, count in sorted(by_confidence.items()):
+                lines.append(f"- **{confidence.upper()}**: {count}")
+            lines.append("")
+
         # By service
         by_service = stats.get("by_service", {})
         if by_service:
