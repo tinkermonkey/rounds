@@ -227,6 +227,16 @@ Roots causes are hypotheses from LLM analysis, not absolute truth. Confidence le
 
 **Note**: This is a deliberate design choice trading immutability guarantees for ergonomic state management. Test code should not directly assign Signature fields; instead, tests should use domain methods or create fixtures with the desired initial state.
 
+### 9. Switchyard / Clauditoreum Evaluation (No Adapter Built)
+
+**Question**: Should rounds gain a push-based `NotificationPort` adapter that delivers diagnosed defects directly to Switchyard (formerly Clauditoreum), the agent-orchestration platform this repo's `Dockerfile.agent` builds against, so findings can flow into an automated fix workflow?
+
+**Finding: integration is pull-based, not push-based.** Nothing in this repo, its Docker images, or its configuration references a Switchyard/Clauditoreum HTTP API, webhook endpoint, or client SDK that rounds could POST findings to. The only concrete touchpoint is `Dockerfile.agent`, which builds the rounds agent image `FROM switchyard-orchestrator:latest` (`Dockerfile.agent:11`) so that image inherits the orchestrator's Claude CLI, git, and `gh` tooling. That direction is the opposite of a push integration: Switchyard invokes rounds (spins up a containerized agent, pointed at a target repo and an issue) — rounds does not invoke Switchyard. There is no documented API for rounds to push into, so a `SwitchyardNotificationAdapter` would have nothing real to call; it would have to invent and maintain an unverified contract against a platform that only consumes work, never accepts pushed events.
+
+**Value assessment: no gap versus the existing GitHub issue channel.** Switchyard's fix-workflow automation is triggered by picking up GitHub issues and dispatching an agent against them — the same mechanism `GitHubIssueNotificationAdapter` (`rounds/adapters/notification/github_issues.py`) already drives for every diagnosed signature. Filing a GitHub issue *is* the integration point with Switchyard's automated fix workflow; there is no additional fix-workflow functionality a direct push channel would unlock; it would only be a second, parallel path to a queue Switchyard already reads via the issue tracker.
+
+**Decision**: No `SwitchyardNotificationAdapter` is implemented. If Switchyard later exposes a documented push API (webhook or REST endpoint) that offers functionality the GitHub issue channel cannot (e.g. structured payloads the fix-workflow can act on without re-parsing issue text), this evaluation should be revisited and an adapter added following the `PhoneHomeNotificationAdapter` pattern, composed via `CompositeNotificationAdapter` alongside — not instead of — the GitHub issue channel.
+
 ## Common Tasks
 
 ### Adding a New Telemetry Adapter
