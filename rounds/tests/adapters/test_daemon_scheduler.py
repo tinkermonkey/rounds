@@ -320,6 +320,20 @@ async def test_run_loop_executes_resolution_cycle_when_budget_exceeded(
     """Resolution detection incurs no LLM cost, so it must keep running on
     the normal cadence even once the daily budget is exhausted — only
     diagnosis (investigation) is gated by budget."""
+    # Queue investigations so that, absent the budget gate, an investigation
+    # cycle would be triggered. This ensures the assertions below actually
+    # exercise the `not budget_exceeded` guard rather than passing vacuously
+    # because nothing was ever queued for investigation.
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+
     scheduler = DaemonScheduler(
         poll_port=poll_port,
         poll_interval_seconds=1,
@@ -345,6 +359,9 @@ async def test_run_loop_executes_resolution_cycle_when_budget_exceeded(
     assert (
         poll_port.execute_resolution_cycle_call_count == poll_port.poll_cycle_count
     )
+    # Investigation (diagnosis) is the LLM-cost-incurring step and must be
+    # gated by the budget check, even though investigations were queued.
+    assert poll_port.execute_investigation_cycle_call_count == 0
 
 
 @pytest.mark.asyncio
