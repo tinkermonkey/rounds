@@ -12,6 +12,10 @@ from rounds.adapters.webhook.http_server import WebhookHTTPServer
 from rounds.core.models import HealthSnapshot
 from rounds.tests.fakes.health import FakeFailingHealthCheckPort, FakeHealthCheckPort
 from rounds.tests.fakes.management import FakeManagementPort
+from rounds.tests.fakes.metrics import (
+    FakeDashboardMetricsPort,
+    FakeFailingDashboardMetricsPort,
+)
 from rounds.tests.fakes.poll import FakePollPort
 
 
@@ -271,6 +275,118 @@ class TestWebhookHealthEndpoint:
                 assert response.status == 503
                 body = json.loads(response.read().decode())
                 assert body["status"] == "unhealthy"
+            finally:
+                conn.close()
+        finally:
+            await server.stop()
+
+
+class TestWebhookDashboardCostsEndpoint:
+    """Tests for the /dashboard/costs endpoint (FR-3.7 cost accounting)."""
+
+    @pytest.mark.asyncio
+    async def test_dashboard_costs_requires_auth(self) -> None:
+        """/dashboard/costs rejects unauthenticated requests, unlike /health."""
+        server = WebhookHTTPServer(
+            webhook_receiver=None,
+            host="127.0.0.1",
+            port=18086,
+            api_key="test-secret-key",
+            require_auth=True,
+            metrics_provider=FakeDashboardMetricsPort(
+                daily_cost_usd=12.5, cost_by_service={"svc-a": 12.5}
+            ),
+        )
+        await server.start()
+        await asyncio.sleep(0.1)
+        try:
+            conn = HTTPConnection("127.0.0.1", 18086, timeout=5)
+            try:
+                conn.request("GET", "/dashboard/costs")
+                response = conn.getresponse()
+                assert response.status == 401
+                response.read()
+            finally:
+                conn.close()
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_costs_without_provider_returns_empty_breakdown(
+        self,
+    ) -> None:
+        """Without a metrics_provider (e.g. webhook mode), reports an empty
+        breakdown rather than failing.
+        """
+        server = WebhookHTTPServer(
+            webhook_receiver=None,
+            host="127.0.0.1",
+            port=18087,
+        )
+        await server.start()
+        await asyncio.sleep(0.1)
+        try:
+            conn = HTTPConnection("127.0.0.1", 18087, timeout=5)
+            try:
+                conn.request("GET", "/dashboard/costs")
+                response = conn.getresponse()
+                assert response.status == 200
+                body = json.loads(response.read().decode())
+                assert body == {"daily_cost_usd": 0.0, "cost_by_service": {}}
+            finally:
+                conn.close()
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_costs_returns_live_data(self) -> None:
+        """Returns the live per-service cost breakdown from the metrics_provider."""
+        server = WebhookHTTPServer(
+            webhook_receiver=None,
+            host="127.0.0.1",
+            port=18088,
+            metrics_provider=FakeDashboardMetricsPort(
+                daily_cost_usd=42.75,
+                cost_by_service={"api": 30.0, "worker": 12.75},
+            ),
+        )
+        await server.start()
+        await asyncio.sleep(0.1)
+        try:
+            conn = HTTPConnection("127.0.0.1", 18088, timeout=5)
+            try:
+                conn.request("GET", "/dashboard/costs")
+                response = conn.getresponse()
+                assert response.status == 200
+                body = json.loads(response.read().decode())
+                assert body["daily_cost_usd"] == 42.75
+                assert body["cost_by_service"] == {"api": 30.0, "worker": 12.75}
+            finally:
+                conn.close()
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_costs_provider_exception_returns_503(self) -> None:
+        """A metrics_provider that raises must still get a proper HTTP response -
+        not a dropped connection with a leaked traceback.
+        """
+        server = WebhookHTTPServer(
+            webhook_receiver=None,
+            host="127.0.0.1",
+            port=18089,
+            metrics_provider=FakeFailingDashboardMetricsPort(),
+        )
+        await server.start()
+        await asyncio.sleep(0.1)
+        try:
+            conn = HTTPConnection("127.0.0.1", 18089, timeout=5)
+            try:
+                conn.request("GET", "/dashboard/costs")
+                response = conn.getresponse()
+                assert response.status == 503
+                body = json.loads(response.read().decode())
+                assert body["error"] == "dashboard query failed"
             finally:
                 conn.close()
         finally:

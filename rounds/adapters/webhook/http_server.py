@@ -110,7 +110,11 @@ def make_webhook_handler(
                 self.send_error(401, "Unauthorized: invalid or missing API key")
                 return
 
-            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                self.send_error(400, "Invalid Content-Length header")
+                return
 
             # Add 1MB body size limit to prevent DoS
             max_body_size = 1024 * 1024

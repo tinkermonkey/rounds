@@ -164,6 +164,28 @@ class TestWebhookDoSProtection:
             conn.close()
 
     @pytest.mark.asyncio
+    async def test_non_numeric_content_length_returns_400(
+        self, dos_server: WebhookHTTPServer
+    ) -> None:
+        """Should reject a non-numeric Content-Length with 400, not a raw
+        traceback from `int()` raising ValueError.
+        """
+        conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
+
+        try:
+            conn.putrequest("POST", "/investigate")
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", "not-a-number")
+            conn.endheaders()
+            response = conn.getresponse()
+
+            assert response.status == 400
+            body = response.read().decode()
+            assert "Invalid Content-Length" in body
+        finally:
+            conn.close()
+
+    @pytest.mark.asyncio
     async def test_normal_size_body_accepted(
         self, dos_server: WebhookHTTPServer
     ) -> None:
