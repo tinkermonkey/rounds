@@ -7,7 +7,7 @@ diagnosis operations, and error patterns within the rounds system.
 
 import logging
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
@@ -20,8 +20,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.trace import Status, StatusCode
 
-if TYPE_CHECKING:
-    from rounds.adapters.scheduler.daemon import DaemonScheduler
+from rounds.core.ports import DashboardMetricsPort
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +131,7 @@ def initialize_metrics(
     return meter
 
 
-def register_dashboard_gauges(meter: metrics.Meter, scheduler: "DaemonScheduler") -> None:
+def register_dashboard_gauges(meter: metrics.Meter, scheduler: DashboardMetricsPort) -> None:
     """Register observable gauges backing the self-observability dashboard.
 
     Reads are backed entirely by in-memory state already maintained by the
@@ -142,7 +141,8 @@ def register_dashboard_gauges(meter: metrics.Meter, scheduler: "DaemonScheduler"
 
     Args:
         meter: Meter obtained from initialize_metrics().
-        scheduler: DaemonScheduler instance whose live state backs the gauges.
+        scheduler: DashboardMetricsPort implementation (e.g. DaemonScheduler)
+            whose live state backs the gauges.
     """
 
     def _signature_counts_callback(options: CallbackOptions) -> Iterable[Observation]:

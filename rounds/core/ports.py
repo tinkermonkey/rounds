@@ -680,6 +680,29 @@ class DigestFlushPort(Protocol):
         ...
 
 
+class DashboardMetricsPort(Protocol):
+    """Protocol for exposing daemon state backing the self-observability dashboard.
+
+    Lets telemetry.py register the dashboard's observable gauges without
+    importing the concrete DaemonScheduler adapter directly.
+    """
+
+    @property
+    def signature_counts_by_status(self) -> dict[str, int]:
+        """Current count of error signatures grouped by status."""
+        ...
+
+    @property
+    def daily_cost_usd(self) -> float:
+        """Today's total accumulated diagnosis cost, in USD."""
+        ...
+
+    @property
+    def cost_by_step(self) -> dict[RoundStep, float]:
+        """Today's accumulated diagnosis cost, broken down by pipeline step."""
+        ...
+
+
 # ============================================================================
 # DRIVING PORTS (Adapters/external systems call into core)
 # ============================================================================
