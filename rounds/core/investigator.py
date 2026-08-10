@@ -126,8 +126,8 @@ class Investigator:
             )
 
         # 5. Persist diagnosis before notification
-        # IMPORTANT: original_status was captured before this mutation (line 96)
-        # so should_notify() below can still see the pre-diagnosis status
+        # IMPORTANT: original_status (captured above, before any mutation) lets
+        # should_notify() below still see the pre-diagnosis status
         # (e.g. to allow medium-confidence NEW signatures to notify) even
         # though signature.status is now DIAGNOSED.
         signature.mark_diagnosed(diagnosis)
