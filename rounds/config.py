@@ -541,6 +541,14 @@ class Settings(BaseSettings):
             raise ValueError("warn_digest_interval_seconds must be positive")
         return v
 
+    @field_validator("self_telemetry_metric_export_interval_seconds")
+    @classmethod
+    def validate_self_telemetry_metric_export_interval(cls, v: int) -> int:
+        """Ensure the self-telemetry metric export interval is positive."""
+        if v <= 0:
+            raise ValueError("self_telemetry_metric_export_interval_seconds must be positive")
+        return v
+
     @field_validator("claude_code_budget_usd")
     @classmethod
     def validate_claude_budget(cls, v: float) -> float:

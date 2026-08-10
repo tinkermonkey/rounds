@@ -408,3 +408,26 @@ class TestPhoneHomeSettings:
     def test_non_positive_cooldown_raises_at_construction(self) -> None:
         with pytest.raises(Exception, match="phone_home_cooldown_hours must be positive"):
             _settings(phone_home_cooldown_hours=0)
+
+
+class TestSelfTelemetrySettings:
+    """Tests for self-telemetry configuration fields and validation."""
+
+    def test_defaults(self) -> None:
+        s = _settings()
+        assert s.enable_self_telemetry is False
+        assert s.self_telemetry_metric_export_interval_seconds == 60
+
+    def test_zero_export_interval_raises_at_construction(self) -> None:
+        with pytest.raises(
+            Exception,
+            match="self_telemetry_metric_export_interval_seconds must be positive",
+        ):
+            _settings(self_telemetry_metric_export_interval_seconds=0)
+
+    def test_negative_export_interval_raises_at_construction(self) -> None:
+        with pytest.raises(
+            Exception,
+            match="self_telemetry_metric_export_interval_seconds must be positive",
+        ):
+            _settings(self_telemetry_metric_export_interval_seconds=-1)
