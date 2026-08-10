@@ -702,6 +702,11 @@ class DashboardMetricsPort(Protocol):
         """Today's accumulated diagnosis cost, broken down by pipeline step."""
         ...
 
+    @property
+    def cost_by_service(self) -> dict[str, float]:
+        """Today's accumulated diagnosis cost, broken down by service."""
+        ...
+
 
 # ============================================================================
 # DRIVING PORTS (Adapters/external systems call into core)

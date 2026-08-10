@@ -80,7 +80,7 @@ def initialize_metrics(
     otlp_endpoint: str | None = None,
     enable_console_export: bool = False,
     export_interval_millis: int = 60000,
-) -> metrics.Meter:
+) -> tuple[metrics.Meter, bool]:
     """Initialize OpenTelemetry metrics for the rounds self-observability dashboard.
 
     Args:
@@ -92,7 +92,10 @@ def initialize_metrics(
             collected metrics, in milliseconds.
 
     Returns:
-        Configured meter instance.
+        Tuple of (configured meter instance, whether any metric reader was
+        successfully configured). When the second element is False, the
+        meter is still usable but every recorded metric is discarded - no
+        reader is attached to export it anywhere.
     """
     resource = Resource.create(
         {
@@ -123,12 +126,19 @@ def initialize_metrics(
         )
         logger.debug("OpenTelemetry console metric exporter enabled")
 
+    if not readers:
+        logger.error(
+            "No metric reader could be configured (OTLP exporter unavailable "
+            "and console export disabled) - all recorded metrics will be "
+            "silently discarded, including the self-observability dashboard gauges."
+        )
+
     provider = MeterProvider(resource=resource, metric_readers=readers)
     metrics.set_meter_provider(provider)
 
     meter = metrics.get_meter(__name__)
     logger.info(f"OpenTelemetry metrics initialized for service: {service_name}")
-    return meter
+    return meter, bool(readers)
 
 
 def register_dashboard_gauges(meter: metrics.Meter, scheduler: DashboardMetricsPort) -> None:
@@ -174,6 +184,17 @@ def register_dashboard_gauges(meter: metrics.Meter, scheduler: DashboardMetricsP
         "rounds.diagnosis.daily_cost_usd_by_step",
         callbacks=[_daily_cost_by_step_callback],
         description="Diagnosis spend accrued today, broken down by pipeline step, in USD",
+        unit="{usd}",
+    )
+
+    def _daily_cost_by_service_callback(options: CallbackOptions) -> Iterable[Observation]:
+        for service, cost in scheduler.cost_by_service.items():
+            yield Observation(cost, {"service": service})
+
+    meter.create_observable_gauge(
+        "rounds.diagnosis.daily_cost_usd_by_service",
+        callbacks=[_daily_cost_by_service_callback],
+        description="Diagnosis spend accrued today, broken down by service, in USD",
         unit="{usd}",
     )
 

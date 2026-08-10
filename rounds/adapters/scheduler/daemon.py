@@ -251,27 +251,26 @@ class DaemonScheduler:
                                     f"Daily budget limit exceeded (${self._daily_cost_usd:.2f}/"
                                     f"${self.budget_limit:.2f}), skipping investigation cycles"
                                 )
-                                # Still poll for errors, but don't diagnose
-                                result = await poll_port.execute_poll_cycle()
-                            else:
-                                # Execute poll cycle
-                                result = await poll_port.execute_poll_cycle()
 
-                                elapsed = loop.time() - poll_start_time
+                            # Still poll for errors even when budget is exceeded,
+                            # just don't diagnose
+                            result = await poll_port.execute_poll_cycle()
 
-                                logger.info(
-                                    f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
-                                    f"{result.errors_found} errors, "
-                                    f"{result.new_signatures} new, "
-                                    f"{result.updated_signatures} updated, "
-                                    f"{result.investigations_queued} investigations queued"
-                                )
-                                span.set_attribute(
-                                    "rounds.poll_cycle.errors_found", result.errors_found
-                                )
-                                span.set_attribute(
-                                    "rounds.poll_cycle.new_signatures", result.new_signatures
-                                )
+                            elapsed = loop.time() - poll_start_time
+
+                            logger.info(
+                                f"Poll cycle #{cycle_number} completed in {elapsed:.2f}s: "
+                                f"{result.errors_found} errors, "
+                                f"{result.new_signatures} new, "
+                                f"{result.updated_signatures} updated, "
+                                f"{result.investigations_queued} investigations queued"
+                            )
+                            span.set_attribute(
+                                "rounds.poll_cycle.errors_found", result.errors_found
+                            )
+                            span.set_attribute(
+                                "rounds.poll_cycle.new_signatures", result.new_signatures
+                            )
 
                         self._poll_latency_histogram.record(
                             loop.time() - poll_start_time, {"outcome": "success"}

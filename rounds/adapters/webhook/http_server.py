@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
-from rounds.core.ports import HealthCheckPort
+from rounds.core.ports import DashboardMetricsPort, HealthCheckPort
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def make_webhook_handler(
     api_key: str | None,
     require_auth: bool,
     health_provider: HealthCheckPort | None = None,
+    metrics_provider: DashboardMetricsPort | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Factory to create a WebhookHTTPHandler class with instance-specific state.
 
@@ -43,6 +44,10 @@ def make_webhook_handler(
         health_provider: Optional source of daemon poll-cycle health used to
             answer /health with real status. When None, /health always
             reports healthy (e.g. webhook mode, which has no poll loop).
+        metrics_provider: Optional source of daemon cost accounting used to
+            answer /dashboard/costs with the live per-service cost breakdown
+            (FR-3.7). When None (e.g. webhook mode, which has no scheduler),
+            /dashboard/costs reports an empty breakdown.
 
     Returns:
         A WebhookHTTPHandler class configured with the provided dependencies
@@ -145,11 +150,18 @@ def make_webhook_handler(
         def do_GET(self) -> None:
             """Handle GET requests.
 
-            Supports health check via GET. Health check is public (no auth required).
+            Supports health check via GET. Health check is public (no auth
+            required); /dashboard/costs exposes cost data so it's gated the
+            same way POST endpoints are.
             """
             if self.path == "/health":
                 # Health check is always public
                 self._send_health_response()
+            elif self.path == "/dashboard/costs":
+                if not self._check_auth():
+                    self.send_error(401, "Unauthorized: invalid or missing API key")
+                    return
+                self._send_dashboard_costs_response()
             else:
                 self.send_error(404, "Not found")
 
@@ -297,6 +309,32 @@ def make_webhook_handler(
                 status_code=200 if snapshot.healthy else 503,
             )
 
+        def _send_dashboard_costs_response(self) -> None:
+            """Answer /dashboard/costs with today's per-service diagnosis cost breakdown.
+
+            Backs FR-3.7 (operator-facing per-service cost accounting).
+            Without a metrics_provider (e.g. webhook mode, which has no
+            scheduler) this reports an empty breakdown rather than failing.
+            """
+            if metrics_provider is None:
+                self._send_response({"daily_cost_usd": 0.0, "cost_by_service": {}})
+                return
+
+            try:
+                daily_cost_usd = metrics_provider.daily_cost_usd
+                cost_by_service = metrics_provider.cost_by_service
+            except Exception as e:
+                logger.error(f"Error getting cost dashboard data: {e}", exc_info=True)
+                self._send_response({"error": "dashboard query failed"}, status_code=503)
+                return
+
+            self._send_response(
+                {
+                    "daily_cost_usd": daily_cost_usd,
+                    "cost_by_service": cost_by_service,
+                }
+            )
+
         def _send_response(self, data: dict[str, Any], status_code: int = 200) -> None:
             """Send JSON response."""
             self.send_response(status_code)
@@ -326,6 +364,7 @@ class WebhookHTTPServer:
         api_key: str | None = None,
         require_auth: bool = False,
         health_provider: HealthCheckPort | None = None,
+        metrics_provider: DashboardMetricsPort | None = None,
     ):
         """Initialize the HTTP server.
 
@@ -340,6 +379,9 @@ class WebhookHTTPServer:
                          If True, api_key must be provided.
             health_provider: Optional source of daemon poll-cycle health used
                 to answer /health with real status instead of always "healthy".
+            metrics_provider: Optional source of daemon cost accounting used
+                to answer /dashboard/costs with the live per-service cost
+                breakdown (FR-3.7).
 
         Raises:
             ValueError: If require_auth=True but api_key is not provided.
@@ -350,6 +392,7 @@ class WebhookHTTPServer:
         self.api_key = api_key
         self.require_auth = require_auth
         self.health_provider = health_provider
+        self.metrics_provider = metrics_provider
         self.server: HTTPServer | None = None
         self._server_task: asyncio.Task[None] | None = None
 
@@ -377,6 +420,7 @@ class WebhookHTTPServer:
             api_key=self.api_key,
             require_auth=self.require_auth,
             health_provider=self.health_provider,
+            metrics_provider=self.metrics_provider,
         )
 
         # Create the HTTP server

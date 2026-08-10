@@ -748,13 +748,20 @@ async def bootstrap(
             if traces_endpoint.endswith("/v1/traces")
             else traces_endpoint
         )
-        self_telemetry_meter = initialize_metrics(
+        self_telemetry_meter, metrics_exporting = initialize_metrics(
             service_name=settings.self_telemetry_service_name,
             otlp_endpoint=metrics_endpoint or None,
             enable_console_export=settings.self_telemetry_console_export,
             export_interval_millis=settings.self_telemetry_metric_export_interval_seconds * 1000,
         )
-        logger.info("Self-telemetry enabled")
+        if metrics_exporting:
+            logger.info("Self-telemetry enabled")
+        else:
+            logger.warning(
+                "Self-telemetry tracing enabled, but metrics export is disabled: "
+                "no metric reader could be configured. The self-observability "
+                "dashboard gauges will not be exported."
+            )
     else:
         # Use a no-op tracer if telemetry is disabled
         trace.get_tracer(__name__)
@@ -1091,6 +1098,7 @@ async def bootstrap(
                     api_key=settings.webhook_api_key if settings.webhook_api_key else None,
                     require_auth=settings.webhook_require_auth,
                     health_provider=scheduler,
+                    metrics_provider=scheduler,
                 )
                 # The daemon's core job is polling/diagnosing errors, not
                 # serving /health - a port conflict (e.g. another process
