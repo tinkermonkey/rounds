@@ -126,8 +126,10 @@ class Investigator:
             )
 
         # 5. Persist diagnosis before notification
-        # IMPORTANT: Check notification BEFORE changing status to DIAGNOSED
-        # so that medium-confidence NEW signatures can still notify
+        # IMPORTANT: original_status was captured before this mutation (line 96)
+        # so should_notify() below can still see the pre-diagnosis status
+        # (e.g. to allow medium-confidence NEW signatures to notify) even
+        # though signature.status is now DIAGNOSED.
         signature.mark_diagnosed(diagnosis)
         try:
             await self.store.update(signature)

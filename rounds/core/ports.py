@@ -737,17 +737,14 @@ class PollPort(ABC):
         1. Query telemetry backend for recent errors
         2. Normalize errors into ErrorEvent objects
         3. Fingerprint and deduplicate against signature database
-        4. For each new signature:
-           - Queue for investigation
-           - Estimate diagnosis cost
-           - If within budget, invoke diagnosis
-           - Store diagnosis result
-           - Notify developers
+        4. Persist new or updated signatures, queued with status NEW
+           for a later investigation cycle
+
+        Diagnosis, cost estimation, result storage, and notification
+        happen in execute_investigation_cycle(), not here.
 
         Should handle errors gracefully:
         - If telemetry backend is down, backoff and retry
-        - If diagnosis exceeds budget, skip and log
-        - If notification fails, log but don't fail the cycle
 
         Returns:
             PollResult with summary of errors found and signatures created.
