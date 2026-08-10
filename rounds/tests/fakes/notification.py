@@ -23,6 +23,7 @@ class FakeNotificationPort(NotificationPort):
         self.report_summary_call_count = 0
         self.report_alert_call_count = 0
         self.close_resolved_issue_call_count = 0
+        self.close_call_count = 0
         self.should_fail: bool = False
         self.fail_message: str = "Notification failed"
         # Configurable return value for report(), simulating a channel that
@@ -79,6 +80,15 @@ class FakeNotificationPort(NotificationPort):
 
         self.closed_resolved_issues.append(signature)
 
+    async def close(self) -> None:
+        """Close connections and clean up resources.
+
+        Captures the call for test assertions. Unlike the other methods,
+        this ignores `should_fail` — tests that need `close()` itself to
+        raise should call it directly rather than via `should_fail`.
+        """
+        self.close_call_count += 1
+
     def get_last_diagnosis_report(self) -> tuple[Signature, Diagnosis] | None:
         """Get the most recent diagnosis report, if any."""
         if self.reported_diagnoses:
@@ -120,5 +130,6 @@ class FakeNotificationPort(NotificationPort):
         self.report_summary_call_count = 0
         self.report_alert_call_count = 0
         self.close_resolved_issue_call_count = 0
+        self.close_call_count = 0
         self.should_fail = False
         self.fail_message = "Notification failed"

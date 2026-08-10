@@ -43,7 +43,9 @@ class DigestNotificationAdapter(NotificationPort):
     diagnosis as batch-qualifying, it's buffered instead of forwarded, and
     `report()` returns None — consistent with the "suppressed by the
     channel's own gating logic" case already documented on
-    NotificationPort.report().
+    NotificationPort.report(). `close()` is also special: it flushes any
+    still-buffered entries before delegating, so shutdown never silently
+    discards a partially-filled window.
 
     Buffered entries accumulate until `flush_if_due()` finds the window has
     elapsed — see DaemonScheduler, which owns the flush timer and calls it
@@ -108,7 +110,37 @@ class DigestNotificationAdapter(NotificationPort):
         await self.inner.close_resolved_issue(signature)
 
     async def close(self) -> None:
-        """Pass through unchanged."""
+        """Flush any buffered digest entries before delegating to inner.close().
+
+        Without this, diagnoses batched into an open window are silently
+        discarded on daemon shutdown. Flush failure is logged, not raised,
+        so a broken digest channel never prevents `inner.close()` from
+        running and releasing its own resources.
+        """
+        async with self._lock:
+            entries = self._buffer
+            self._buffer = []
+            window_start = self._window_start
+
+        if entries:
+            now = datetime.now(UTC)
+            stats = self._build_digest_stats(entries, window_start, now)
+            try:
+                await self.inner.report_summary(stats)
+            except Exception:
+                async with self._lock:
+                    self._buffer = entries + self._buffer
+                logger.error(
+                    f"Failed to flush WARN digest on shutdown "
+                    f"({len(entries)} diagnoses may be lost)",
+                    exc_info=True,
+                )
+            else:
+                logger.info(
+                    f"Flushed WARN digest on shutdown: {len(entries)} diagnoses across "
+                    f"{len(stats['services'])} services"
+                )
+
         await self.inner.close()
 
     @property
@@ -132,6 +164,12 @@ class DigestNotificationAdapter(NotificationPort):
         Returns:
             True if the window was due and flushed (the buffer may have been
             empty), False if the window hasn't elapsed yet.
+
+        Raises:
+            Exception: Whatever `inner.report_summary()` raises. On failure,
+                the flushed entries and window start are restored so nothing
+                is lost — the next due check retries the same window rather
+                than silently dropping the batched diagnoses.
         """
         async with self._lock:
             if now - self._window_start < window:
@@ -143,7 +181,13 @@ class DigestNotificationAdapter(NotificationPort):
 
         if entries:
             stats = self._build_digest_stats(entries, window_start, now)
-            await self.inner.report_summary(stats)
+            try:
+                await self.inner.report_summary(stats)
+            except Exception:
+                async with self._lock:
+                    self._buffer = entries + self._buffer
+                    self._window_start = window_start
+                raise
             logger.info(
                 f"Flushed WARN digest: {len(entries)} diagnoses across "
                 f"{len(stats['services'])} services"

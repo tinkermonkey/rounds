@@ -227,3 +227,70 @@ async def test_other_notification_methods_pass_through_unchanged(
     assert inner.report_summary_call_count == 1
     assert inner.report_alert_call_count == 1
     assert inner.close_resolved_issue_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_flush_failure_restores_buffer_and_window_for_retry(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """If report_summary() raises, the flushed entries and window aren't lost."""
+    window_start = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage, window_start=window_start)
+    sig_a = _make_signature(service="svc-a")
+    await adapter.report(sig_a, _make_diagnosis())
+
+    inner.set_should_fail(True, "digest channel unavailable")
+    now = window_start + timedelta(days=1)
+
+    with pytest.raises(RuntimeError, match="digest channel unavailable"):
+        await adapter.flush_if_due(now, timedelta(days=1))
+
+    # Entry survives the failed flush instead of being dropped.
+    assert adapter.pending_count == 1
+
+    # Retrying immediately succeeds because the window was restored, not advanced.
+    inner.set_should_fail(False)
+    flushed = await adapter.flush_if_due(now, timedelta(days=1))
+
+    assert flushed is True
+    assert adapter.pending_count == 0
+    assert inner.report_summary_call_count == 2  # first attempt failed, retry succeeded
+    stats = inner.get_last_summary_report()
+    assert stats is not None
+    assert stats["signatures"][0]["signature_id"] == sig_a.id
+
+
+@pytest.mark.asyncio
+async def test_close_flushes_buffered_entries_before_delegating(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """close() flushes any buffered digest entries instead of discarding them."""
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage)
+    sig_a = _make_signature(service="svc-a")
+    await adapter.report(sig_a, _make_diagnosis())
+
+    await adapter.close()
+
+    assert inner.report_summary_call_count == 1
+    stats = inner.get_last_summary_report()
+    assert stats is not None
+    assert stats["signatures"][0]["signature_id"] == sig_a.id
+    assert adapter.pending_count == 0
+    assert inner.close_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_still_closes_inner_when_flush_fails(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """A broken digest channel on shutdown must not prevent inner.close() from running."""
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage)
+    await adapter.report(_make_signature(), _make_diagnosis())
+
+    inner.set_should_fail(True, "digest channel unavailable")
+
+    await adapter.close()
+
+    assert inner.close_call_count == 1
+    # Failed flush restores the buffer rather than silently dropping it.
+    assert adapter.pending_count == 1
