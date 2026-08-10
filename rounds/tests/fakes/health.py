@@ -12,3 +12,11 @@ class FakeHealthCheckPort:
     def get_health_snapshot(self) -> HealthSnapshot:
         """Return the preconfigured snapshot."""
         return self.snapshot
+
+
+class FakeFailingHealthCheckPort:
+    """HealthCheckPort that raises, simulating a broken health check."""
+
+    def get_health_snapshot(self) -> HealthSnapshot:
+        """Raise unconditionally, as if computing the snapshot failed."""
+        raise RuntimeError("simulated health snapshot failure")

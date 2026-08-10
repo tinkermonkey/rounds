@@ -7,7 +7,14 @@ import pytest
 
 from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
-from rounds.core.models import Diagnosis, PollResult, Severity, Signature, SignatureStatus
+from rounds.core.models import (
+    Diagnosis,
+    HealthSnapshot,
+    PollResult,
+    Severity,
+    Signature,
+    SignatureStatus,
+)
 from rounds.core.triage import TriageEngine
 from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.poll import FakePollPort
@@ -1027,6 +1034,64 @@ async def test_poll_resumes_after_backoff_expires(
     snapshot = scheduler.get_health_snapshot()
     assert snapshot.healthy is True
     assert snapshot.last_poll_completed_at is not None
+
+
+def test_health_snapshot_rejects_negative_poll_failures() -> None:
+    """HealthSnapshot.__post_init__ rejects a negative failure count, matching
+    every other frozen dataclass in core/models.py that validates invariants.
+    """
+    with pytest.raises(ValueError, match="consecutive_poll_failures"):
+        HealthSnapshot(
+            last_poll_completed_at=None,
+            consecutive_poll_failures=-1,
+            poll_failure_threshold=5,
+        )
+
+
+def test_health_snapshot_rejects_non_positive_threshold() -> None:
+    """HealthSnapshot.__post_init__ rejects a zero/negative threshold, which
+    would otherwise make consecutive_poll_failures < poll_failure_threshold
+    vacuously false (or trivially true for negative thresholds).
+    """
+    with pytest.raises(ValueError, match="poll_failure_threshold"):
+        HealthSnapshot(
+            last_poll_completed_at=None,
+            consecutive_poll_failures=0,
+            poll_failure_threshold=0,
+        )
+
+
+def test_health_snapshot_unhealthy_when_investigation_suspended(
+    poll_port: FakePollPort,
+) -> None:
+    """/health must reflect a tripped investigation circuit breaker even
+    though polling itself is succeeding - otherwise a stuck investigation
+    pipeline would report healthy forever.
+    """
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+    scheduler._investigation_failure_count = 5
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.investigation_suspended is True
+    assert snapshot.resolution_suspended is False
+    assert snapshot.healthy is False
+
+
+def test_health_snapshot_unhealthy_when_resolution_suspended(
+    poll_port: FakePollPort,
+) -> None:
+    """/health must reflect a tripped resolution circuit breaker even though
+    polling itself is succeeding.
+    """
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+    scheduler._resolution_failure_count = 5
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.resolution_suspended is True
+    assert snapshot.investigation_suspended is False
+    assert snapshot.healthy is False
 
 
 @pytest.mark.asyncio

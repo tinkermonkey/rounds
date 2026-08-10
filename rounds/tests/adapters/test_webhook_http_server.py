@@ -10,7 +10,7 @@ import pytest
 
 from rounds.adapters.webhook.http_server import WebhookHTTPServer
 from rounds.core.models import HealthSnapshot
-from rounds.tests.fakes.health import FakeHealthCheckPort
+from rounds.tests.fakes.health import FakeFailingHealthCheckPort, FakeHealthCheckPort
 from rounds.tests.fakes.management import FakeManagementPort
 from rounds.tests.fakes.poll import FakePollPort
 
@@ -179,7 +179,6 @@ class TestWebhookHealthEndpoint:
         """/health returns 200 and status=healthy when the daemon is healthy."""
         last_poll = datetime.now(UTC)
         snapshot = HealthSnapshot(
-            healthy=True,
             last_poll_completed_at=last_poll,
             consecutive_poll_failures=0,
             poll_failure_threshold=5,
@@ -205,7 +204,6 @@ class TestWebhookHealthEndpoint:
     async def test_health_unhealthy_snapshot_returns_503(self) -> None:
         """/health returns 503 and status=unhealthy once poll failures hit the threshold."""
         snapshot = HealthSnapshot(
-            healthy=False,
             last_poll_completed_at=None,
             consecutive_poll_failures=5,
             poll_failure_threshold=5,
@@ -233,7 +231,6 @@ class TestWebhookHealthEndpoint:
         flip it to unhealthy as long as polling itself keeps succeeding.
         """
         snapshot = HealthSnapshot(
-            healthy=True,
             last_poll_completed_at=datetime.now(UTC),
             consecutive_poll_failures=0,
             poll_failure_threshold=5,
@@ -245,6 +242,35 @@ class TestWebhookHealthEndpoint:
                 conn.request("GET", "/health")
                 response = conn.getresponse()
                 assert response.status == 200
+            finally:
+                conn.close()
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_health_provider_exception_returns_503_not_connection_reset(
+        self,
+    ) -> None:
+        """A health_provider that raises must still get a proper HTTP response -
+        not a dropped connection that monitoring systems misread as "down"
+        instead of "reporting unhealthy".
+        """
+        server = WebhookHTTPServer(
+            webhook_receiver=None,
+            host="127.0.0.1",
+            port=18085,
+            health_provider=FakeFailingHealthCheckPort(),
+        )
+        await server.start()
+        await asyncio.sleep(0.1)
+        try:
+            conn = HTTPConnection("127.0.0.1", 18085, timeout=5)
+            try:
+                conn.request("GET", "/health")
+                response = conn.getresponse()
+                assert response.status == 503
+                body = json.loads(response.read().decode())
+                assert body["status"] == "unhealthy"
             finally:
                 conn.close()
         finally:

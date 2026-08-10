@@ -266,7 +266,21 @@ def make_webhook_handler(
                 self._send_response({"status": "healthy"})
                 return
 
-            snapshot = health_provider.get_health_snapshot()
+            try:
+                snapshot = health_provider.get_health_snapshot()
+            except Exception as e:
+                # A failure to compute the snapshot is not itself proof the
+                # daemon is unhealthy, but we can't claim "healthy" either -
+                # report unhealthy rather than letting the exception propagate
+                # and reset the connection, which would make monitoring
+                # systems report the service as down for the wrong reason.
+                logger.error(f"Error getting health snapshot: {e}", exc_info=True)
+                self._send_response(
+                    {"status": "unhealthy", "error": "health check failed"},
+                    status_code=503,
+                )
+                return
+
             self._send_response(
                 {
                     "status": "healthy" if snapshot.healthy else "unhealthy",
@@ -277,6 +291,8 @@ def make_webhook_handler(
                     ),
                     "consecutive_poll_failures": snapshot.consecutive_poll_failures,
                     "poll_failure_threshold": snapshot.poll_failure_threshold,
+                    "investigation_suspended": snapshot.investigation_suspended,
+                    "resolution_suspended": snapshot.resolution_suspended,
                 },
                 status_code=200 if snapshot.healthy else 503,
             )

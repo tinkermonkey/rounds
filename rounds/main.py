@@ -1092,11 +1092,28 @@ async def bootstrap(
                     require_auth=settings.webhook_require_auth,
                     health_provider=scheduler,
                 )
-                await health_server.start()
+                # The daemon's core job is polling/diagnosing errors, not
+                # serving /health - a port conflict (e.g. another process
+                # already bound to webhook_port) shouldn't crash the whole
+                # daemon when it could run perfectly well without a health
+                # endpoint.
+                health_server_started = False
+                try:
+                    await health_server.start()
+                    health_server_started = True
+                except OSError as e:
+                    logger.error(
+                        f"Failed to start health check server on "
+                        f"{settings.webhook_host}:{settings.webhook_port}: {e}. "
+                        "Continuing without a /health endpoint.",
+                        exc_info=True,
+                    )
+
                 try:
                     await scheduler.start()
                 finally:
-                    await health_server.stop()
+                    if health_server_started:
+                        await health_server.stop()
 
             elif settings.run_mode == "cli":
                 # CLI mode handles interactive commands via CLICommandHandler

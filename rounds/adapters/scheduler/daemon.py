@@ -17,6 +17,15 @@ from rounds.core.ports import DigestFlushPort, NotificationPort, PollPort, Signa
 
 logger = logging.getLogger(__name__)
 
+# Consecutive-failure thresholds for the investigation and resolution circuit
+# breakers. Unlike poll_failure_threshold (configurable via
+# DaemonScheduler.__init__), these are fixed at 5 - kept as named constants
+# rather than inline magic numbers so the suspension-gating logic below and
+# get_health_snapshot()'s investigation_suspended/resolution_suspended flags
+# can't drift out of sync with each other.
+INVESTIGATION_FAILURE_THRESHOLD = 5
+RESOLUTION_FAILURE_THRESHOLD = 5
+
 
 class DaemonScheduler:
     """Asyncio-based daemon scheduler for periodic poll cycles."""
@@ -316,7 +325,7 @@ class DaemonScheduler:
                 # LLM cost (just a store scan and, optionally, issue closes).
                 resolution_now = loop.time()
                 if (
-                    self._resolution_failure_count >= 5
+                    self._resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD
                     and self._resolution_suspended_until is not None
                     and resolution_now < self._resolution_suspended_until
                 ):
@@ -327,7 +336,7 @@ class DaemonScheduler:
                         f"Review logs for root cause; daemon poll loop continues."
                     )
                 else:
-                    if self._resolution_failure_count >= 5:
+                    if self._resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD:
                         logger.info(
                             f"Retrying resolution cycle #{cycle_number} after suspension "
                             f"(previous consecutive failures: {self._resolution_failure_count})"
@@ -365,7 +374,7 @@ class DaemonScheduler:
                             f"(consecutive failures: {self._resolution_failure_count})",
                             exc_info=True,
                         )
-                        if self._resolution_failure_count >= 5:
+                        if self._resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD:
                             logger.critical(
                                 f"Resolution cycle has failed {self._resolution_failure_count} "
                                 f"consecutive times. Suspending resolution for "
@@ -373,7 +382,7 @@ class DaemonScheduler:
                                 f"Review logs for root cause; daemon poll loop continues."
                             )
                             if (
-                                self._resolution_failure_count == 5
+                                self._resolution_failure_count == RESOLUTION_FAILURE_THRESHOLD
                                 and self.notification_port is not None
                             ):
                                 try:
@@ -418,7 +427,7 @@ class DaemonScheduler:
                 ):
                     now = loop.time()
                     if (
-                        self._investigation_failure_count >= 5
+                        self._investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD
                         and self._investigation_suspended_until is not None
                         and now < self._investigation_suspended_until
                     ):
@@ -429,7 +438,7 @@ class DaemonScheduler:
                             f"Review logs for root cause; daemon poll loop continues."
                         )
                     else:
-                        if self._investigation_failure_count >= 5:
+                        if self._investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD:
                             logger.info(
                                 f"Retrying investigation cycle #{cycle_number} after suspension "
                                 f"(previous consecutive failures: {self._investigation_failure_count})"
@@ -474,7 +483,7 @@ class DaemonScheduler:
                                 f"(consecutive failures: {self._investigation_failure_count})",
                                 exc_info=True,
                             )
-                            if self._investigation_failure_count >= 5:
+                            if self._investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD:
                                 logger.critical(
                                     f"Investigation cycle has failed {self._investigation_failure_count} "
                                     f"consecutive times. Suspending investigations for "
@@ -482,7 +491,7 @@ class DaemonScheduler:
                                     f"Review logs for root cause; daemon poll loop continues."
                                 )
                                 if (
-                                    self._investigation_failure_count == 5
+                                    self._investigation_failure_count == INVESTIGATION_FAILURE_THRESHOLD
                                     and self.notification_port is not None
                                 ):
                                     try:
@@ -664,17 +673,31 @@ class DaemonScheduler:
         return dict(self._signature_counts_by_status)
 
     def get_health_snapshot(self) -> HealthSnapshot:
-        """Read-only snapshot of poll-cycle health, for monitoring endpoints.
+        """Read-only snapshot of daemon health, for monitoring endpoints.
+
+        May be called from a different thread than the one running the poll
+        loop (e.g. the HTTP server thread answering /health), so each
+        mutable counter is read into a local variable exactly once and that
+        local is reused everywhere it's needed - never re-reading the
+        attribute - so a concurrent increment from the poll loop can't
+        produce an internally contradictory snapshot.
 
         Reports unhealthy once consecutive_poll_failures reaches
-        poll_failure_threshold, independent of the investigation and
-        resolution failure counters and of any single telemetry backend.
+        poll_failure_threshold, or once the investigation or resolution
+        circuit breaker has tripped, independent of any single telemetry
+        backend.
         """
+        poll_failure_count = self._poll_failure_count
         return HealthSnapshot(
-            healthy=self._poll_failure_count < self.poll_failure_threshold,
             last_poll_completed_at=self._last_poll_completed_at,
-            consecutive_poll_failures=self._poll_failure_count,
+            consecutive_poll_failures=poll_failure_count,
             poll_failure_threshold=self.poll_failure_threshold,
+            investigation_suspended=(
+                self._investigation_failure_count >= INVESTIGATION_FAILURE_THRESHOLD
+            ),
+            resolution_suspended=(
+                self._resolution_failure_count >= RESOLUTION_FAILURE_THRESHOLD
+            ),
         )
 
     async def run_investigation_cycle(self) -> None:

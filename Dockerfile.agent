@@ -103,6 +103,14 @@ RUN python3 --version && \
     ruff --version
 
 # ============================================================================
+# Health Check
+# ============================================================================
+# Drives container-level auto-restart on hang: daemon mode exposes /health
+# (see rounds/adapters/webhook/http_server.py) regardless of NOTIFICATION_BACKEND.
+HEALTHCHECK --interval=120s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# ============================================================================
 # Default command
 # ============================================================================
 CMD ["/bin/bash"]

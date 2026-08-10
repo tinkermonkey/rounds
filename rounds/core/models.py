@@ -523,19 +523,51 @@ class ResolutionResult:
 
 @dataclass(frozen=True)
 class HealthSnapshot:
-    """Read-only snapshot of daemon poll-cycle health.
+    """Read-only snapshot of daemon health.
 
-    Reflects only the daemon's own polling loop (consecutive
-    execute_poll_cycle() failures), not the health of any single
-    dependency such as the telemetry backend, so an outage there alone
-    doesn't flip the daemon to unhealthy unless it also makes polling
-    itself fail repeatedly.
+    Reflects the daemon's own polling loop (consecutive
+    execute_poll_cycle() failures) plus the investigation and resolution
+    circuit breakers, not the health of any single dependency such as the
+    telemetry backend, so an outage there alone doesn't flip the daemon to
+    unhealthy unless it also makes one of these pipelines fail repeatedly.
     """
 
-    healthy: bool
     last_poll_completed_at: datetime | None
     consecutive_poll_failures: int
     poll_failure_threshold: int
+    investigation_suspended: bool = False
+    resolution_suspended: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate invariants.
+
+        Raises:
+            ValueError: If consecutive_poll_failures is negative or
+                poll_failure_threshold is not positive.
+        """
+        if self.consecutive_poll_failures < 0:
+            raise ValueError(
+                "consecutive_poll_failures must be >= 0, "
+                f"got {self.consecutive_poll_failures}"
+            )
+        if self.poll_failure_threshold <= 0:
+            raise ValueError(
+                f"poll_failure_threshold must be > 0, got {self.poll_failure_threshold}"
+            )
+
+    @property
+    def healthy(self) -> bool:
+        """Overall daemon health: polling within threshold and no circuit breaker tripped.
+
+        Derived rather than stored so callers can never construct an
+        internally contradictory snapshot (e.g. healthy=True alongside
+        consecutive_poll_failures at or above poll_failure_threshold).
+        """
+        return (
+            self.consecutive_poll_failures < self.poll_failure_threshold
+            and not self.investigation_suspended
+            and not self.resolution_suspended
+        )
 
 
 @dataclass(frozen=True)
