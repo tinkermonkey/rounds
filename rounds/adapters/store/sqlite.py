@@ -62,8 +62,10 @@ class SQLiteSignatureStore(SignatureStorePort):
         if self._schema_initialized:
             try:
                 wal_conn = await aiosqlite.connect(str(self.db_path))
-                await wal_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                await wal_conn.close()
+                try:
+                    await wal_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    await wal_conn.close()
             except Exception:
                 logger.warning("WAL checkpoint on shutdown failed", exc_info=True)
 
