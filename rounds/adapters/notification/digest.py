@@ -8,6 +8,7 @@ through to the wrapped channel unchanged.
 
 import asyncio
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -198,13 +199,30 @@ class DigestNotificationAdapter(NotificationPort):
     def _build_digest_stats(
         entries: list[_DigestEntry], window_start: datetime, window_end: datetime
     ) -> dict[str, Any]:
-        """Build the report_summary() payload for a flushed digest window."""
+        """Build the report_summary() payload for a flushed digest window.
+
+        Includes both the digest-native fields (type, window_start/end, count,
+        services, signatures) and the total_signatures/total_errors_seen/
+        by_status/by_service fields that every report_summary() implementation
+        (stdout, markdown, github_issues) actually renders via dict.get(). Without
+        the latter, those adapters silently fall back to their zero/empty
+        defaults and a flushed digest produces an invisible, all-zero summary.
+        by_status is repurposed as a confidence-level breakdown (low/medium/high)
+        since _DigestEntry doesn't carry a Signature status - it's the closest
+        analogous categorical dimension the digest actually has.
+        """
+        by_service: dict[str, int] = defaultdict(int)
+        by_confidence: dict[str, int] = defaultdict(int)
+        for entry in entries:
+            by_service[entry.service] += 1
+            by_confidence[entry.confidence] += 1
+
         return {
             "type": "warn_digest",
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "count": len(entries),
-            "services": sorted({entry.service for entry in entries}),
+            "services": sorted(by_service),
             "signatures": [
                 {
                     "signature_id": entry.signature_id,
@@ -215,4 +233,8 @@ class DigestNotificationAdapter(NotificationPort):
                 }
                 for entry in entries
             ],
+            "total_signatures": len(entries),
+            "total_errors_seen": len(entries),
+            "by_status": dict(by_confidence),
+            "by_service": dict(by_service),
         }
