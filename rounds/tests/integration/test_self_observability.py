@@ -7,13 +7,14 @@ self-telemetry is enabled - not just that the wiring compiles.
 """
 
 import asyncio
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import opentelemetry.metrics._internal as metrics_internal
 import opentelemetry.trace as trace_api
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader, MetricsData, NumberDataPoint
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -26,7 +27,7 @@ from rounds.tests.fakes.store import FakeSignatureStorePort
 
 
 @pytest.fixture
-def otel_in_memory():
+def otel_in_memory() -> Iterator[tuple[InMemorySpanExporter, InMemoryMetricReader]]:
     """Install fresh in-memory tracer/meter providers for the duration of a test.
 
     OpenTelemetry's global providers can only be set once per process (a
@@ -79,7 +80,9 @@ def _make_signature(status: SignatureStatus, service: str = "api") -> Signature:
 
 
 @pytest.mark.asyncio
-async def test_run_loop_emits_cycle_spans_and_latency_histograms(otel_in_memory):
+async def test_run_loop_emits_cycle_spans_and_latency_histograms(
+    otel_in_memory: tuple[InMemorySpanExporter, InMemoryMetricReader],
+) -> None:
     """Poll, investigation, and resolution cycles each emit a span and a
     histogram data point, with the counts store used for signature gauges."""
     span_exporter, metric_reader = otel_in_memory
@@ -129,7 +132,9 @@ async def test_run_loop_emits_cycle_spans_and_latency_histograms(otel_in_memory)
 
 
 @pytest.mark.asyncio
-async def test_dashboard_gauges_report_live_cost_and_signature_counts(otel_in_memory):
+async def test_dashboard_gauges_report_live_cost_and_signature_counts(
+    otel_in_memory: tuple[InMemorySpanExporter, InMemoryMetricReader],
+) -> None:
     """The observable gauges reflect the scheduler's live cost/count state
     at collection time, with no polling loop required."""
     _, metric_reader = otel_in_memory
@@ -158,7 +163,8 @@ async def test_dashboard_gauges_report_live_cost_and_signature_counts(otel_in_me
     assert status_points == [1]
 
 
-def _collect_metric_names(metrics_data) -> set[str]:
+def _collect_metric_names(metrics_data: MetricsData | None) -> set[str]:
+    assert metrics_data is not None
     names: set[str] = set()
     for resource_metrics in metrics_data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
@@ -167,7 +173,8 @@ def _collect_metric_names(metrics_data) -> set[str]:
     return names
 
 
-def _collect_gauge_data_points(metrics_data, metric_name: str) -> list[float]:
+def _collect_gauge_data_points(metrics_data: MetricsData | None, metric_name: str) -> list[float]:
+    assert metrics_data is not None
     values: list[float] = []
     for resource_metrics in metrics_data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
@@ -175,5 +182,6 @@ def _collect_gauge_data_points(metrics_data, metric_name: str) -> list[float]:
                 if metric.name != metric_name:
                     continue
                 for point in metric.data.data_points:
+                    assert isinstance(point, NumberDataPoint)
                     values.append(point.value)
     return values
