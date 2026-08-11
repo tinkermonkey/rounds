@@ -519,13 +519,18 @@ class NotificationPort(ABC):
 
     @abstractmethod
     async def report(
-        self, signature: Signature, diagnosis: Diagnosis
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
     ) -> datetime | None:
         """Report a diagnosed signature through whatever channel the adapter implements.
 
         Args:
             signature: The signature that was diagnosed.
             diagnosis: The diagnosis results to report.
+            immediate: When True, the caller requires this diagnosis to be
+                delivered right away — e.g. a user-initiated reinvestigate()
+                — and the report must bypass any batching/digest deferral an
+                adapter would otherwise apply. Adapters with no batching
+                concept (most of them) simply ignore this flag.
 
         Returns:
             The timestamp to record as the signature's alert cooldown

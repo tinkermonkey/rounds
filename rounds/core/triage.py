@@ -109,21 +109,24 @@ class TriageEngine:
 
         Only meaningful for diagnoses that already passed should_notify() —
         this narrows that set down to the low-priority tail that can safely
-        wait for the next digest window. High-confidence and critical-tagged
-        diagnoses always bypass batching so they're never held back.
+        wait for the next digest window.
+
+        The rule is an OR, not an AND: low-confidence diagnoses always
+        batch regardless of severity or tags, and WARN-or-below/non-critical
+        signatures always batch regardless of confidence.
 
         Considers:
-        - Confidence level (high confidence is always immediate)
-        - Critical tag (always immediate)
-        - Signature severity (only WARN-level-or-below qualifies for batching)
+        - Confidence level (low confidence always batches)
+        - Signature severity and critical tag (WARN-or-below, non-critical
+          signatures batch regardless of confidence)
         """
-        if diagnosis.confidence == self.high_confidence_threshold:
-            return False
+        if diagnosis.confidence == "low":
+            return True
 
-        if "critical" in signature.tags:
-            return False
-
-        return signature.max_severity.rank <= self.batch_severity_ceiling.rank
+        return (
+            signature.max_severity.rank <= self.batch_severity_ceiling.rank
+            and "critical" not in signature.tags
+        )
 
     def calculate_priority(self, signature: Signature) -> int:
         """Order signatures for investigation when multiple are pending.

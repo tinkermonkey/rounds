@@ -27,11 +27,12 @@ class StdoutNotificationAdapter(NotificationPort):
         self.verbose = verbose
 
     async def report(
-        self, signature: Signature, diagnosis: Diagnosis
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
     ) -> datetime | None:
         """Report a diagnosed signature to stdout.
 
-        Stdout has no cooldown concept, so this always returns None.
+        Stdout has no batching concept, so `immediate` has no effect. Stdout
+        has no cooldown concept either, so this always returns None.
         """
         # Format header
         header = self._format_header(signature)

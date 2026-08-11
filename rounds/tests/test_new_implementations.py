@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from rounds.adapters.cli.commands import CLICommandHandler, run_command
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.telemetry.grafana_stack import GrafanaStackTelemetryAdapter
@@ -341,6 +342,51 @@ class TestManagementService:
 
         # Notification must have been called exactly once regardless of triage
         assert notification.report_call_count == 1
+        # ...and with immediate=True, so a wrapped digest adapter can never
+        # silently defer a user-initiated reinvestigation into a batch.
+        assert notification.report_immediate_flags == [True]
+
+    async def test_reinvestigate_bypasses_digest_batching(
+        self, store: FakeSignatureStorePort, sample_signature: Signature
+    ) -> None:
+        """A user-initiated reinvestigate() is delivered immediately, never buffered.
+
+        Regression test: DigestNotificationAdapter classifies every report()
+        call via should_batch(), and a low-confidence diagnosis on this
+        signature's default ERROR severity qualifies for batching. Without
+        the immediate=True bypass, reinvestigate() would silently defer the
+        result into the next digest window instead of delivering it now.
+        """
+        inner = FakeNotificationPort()
+        digest = DigestNotificationAdapter(inner=inner, triage=TriageEngine())
+        diagnosis_engine = FakeDiagnosisPort()
+        diagnosis_engine.set_default_diagnosis(
+            Diagnosis(
+                root_cause="root",
+                evidence=(),
+                suggested_fix="fix",
+                confidence="low",
+                diagnosed_at=datetime.now(tz=UTC),
+                model="model",
+                cost_usd=0.0,
+            )
+        )
+        service = ManagementService(
+            store=store,
+            telemetry=FakeTelemetryPort(),
+            diagnosis_engine=diagnosis_engine,
+            notification=digest,
+            triage=TriageEngine(),
+            codebase_path=".",
+        )
+
+        sample_signature.status = SignatureStatus.DIAGNOSED
+        await store.save(sample_signature)
+
+        await service.reinvestigate("sig-123")
+
+        assert inner.report_call_count == 1
+        assert digest.pending_count == 0
 
 
 # --- CLICommandHandler Tests ---

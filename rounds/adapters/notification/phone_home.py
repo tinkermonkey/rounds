@@ -81,8 +81,14 @@ class PhoneHomeNotificationAdapter(NotificationPort):
             await self._client.aclose()
             self._client = None
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
         """POST a self-contained alert for the signature, if it qualifies.
+
+        Phone-home has no batching concept, so `immediate` has no effect —
+        qualification is still governed solely by mute status, severity
+        gate, and cooldown.
 
         Returns:
             The timestamp the alert was sent, for the caller to record as

@@ -128,7 +128,9 @@ def triage_engine() -> TriageEngine:
 class FailingNotificationPort(FakeNotificationPort):
     """Extends FakeNotificationPort to simulate notification failures."""
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> None:
         """Always fails."""
         raise RuntimeError("Notification service is unavailable")
 
@@ -578,10 +580,10 @@ class TestTriageEngine:
         )
         assert triage_engine.should_batch(info_signature, diagnosis)
 
-    def test_should_not_batch_error_severity(
+    def test_should_batch_low_confidence_error_severity(
         self, triage_engine: TriageEngine, signature: Signature
     ) -> None:
-        """ERROR/FATAL signatures are never batched, regardless of confidence."""
+        """Low confidence always batches (OR rule), even at ERROR/FATAL severity."""
         error_signature = Signature(
             id=signature.id,
             fingerprint=signature.fingerprint,
@@ -604,12 +606,40 @@ class TestTriageEngine:
             model="model",
             cost_usd=0.0,
         )
-        assert not triage_engine.should_batch(error_signature, diagnosis)
+        assert triage_engine.should_batch(error_signature, diagnosis)
 
-    def test_should_not_batch_high_confidence(
+    def test_should_not_batch_high_confidence_error_severity(
         self, triage_engine: TriageEngine, signature: Signature
     ) -> None:
-        """High-confidence diagnoses are never batched, even at WARN severity."""
+        """High-confidence diagnoses above the WARN ceiling are not batched."""
+        error_signature = Signature(
+            id=signature.id,
+            fingerprint=signature.fingerprint,
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash=signature.stack_hash,
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=signature.occurrence_count,
+            status=signature.status,
+            max_severity=Severity.ERROR,
+        )
+        diagnosis = Diagnosis(
+            root_cause="root",
+            evidence=(),
+            suggested_fix="fix",
+            confidence="high",
+            diagnosed_at=datetime.now(),
+            model="model",
+            cost_usd=0.0,
+        )
+        assert not triage_engine.should_batch(error_signature, diagnosis)
+
+    def test_should_batch_high_confidence_warn_severity(
+        self, triage_engine: TriageEngine, signature: Signature
+    ) -> None:
+        """WARN-or-below, non-critical signatures batch even at high confidence (OR rule)."""
         warn_signature = Signature(
             id=signature.id,
             fingerprint=signature.fingerprint,
@@ -632,12 +662,41 @@ class TestTriageEngine:
             model="model",
             cost_usd=0.0,
         )
-        assert not triage_engine.should_batch(warn_signature, diagnosis)
+        assert triage_engine.should_batch(warn_signature, diagnosis)
 
-    def test_should_not_batch_critical_tag(
+    def test_should_not_batch_critical_tag_non_low_confidence(
         self, triage_engine: TriageEngine, signature: Signature
     ) -> None:
-        """Critical-tagged signatures are never batched, even at WARN severity."""
+        """Critical-tagged signatures are not batched, provided confidence isn't low."""
+        critical_signature = Signature(
+            id=signature.id,
+            fingerprint=signature.fingerprint,
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash=signature.stack_hash,
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=signature.occurrence_count,
+            status=signature.status,
+            tags=frozenset(["critical"]),
+            max_severity=Severity.WARN,
+        )
+        diagnosis = Diagnosis(
+            root_cause="root",
+            evidence=(),
+            suggested_fix="fix",
+            confidence="medium",
+            diagnosed_at=datetime.now(),
+            model="model",
+            cost_usd=0.0,
+        )
+        assert not triage_engine.should_batch(critical_signature, diagnosis)
+
+    def test_should_batch_low_confidence_critical_tag(
+        self, triage_engine: TriageEngine, signature: Signature
+    ) -> None:
+        """Low confidence always batches (OR rule), even for a critical-tagged signature."""
         critical_signature = Signature(
             id=signature.id,
             fingerprint=signature.fingerprint,
@@ -661,7 +720,7 @@ class TestTriageEngine:
             model="model",
             cost_usd=0.0,
         )
-        assert not triage_engine.should_batch(critical_signature, diagnosis)
+        assert triage_engine.should_batch(critical_signature, diagnosis)
 
     def test_calculate_priority_frequency_component(
         self, triage_engine: TriageEngine
@@ -2138,7 +2197,9 @@ class TestAlertCooldownPersistence:
         alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
 
         class PartiallyFailingNotificationPort(FakeNotificationPort):
-            async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime:
+            async def report(
+                self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+            ) -> datetime:
                 raise PartialNotificationError(alerted_at, RuntimeError("github unreachable"))
 
         telemetry = FakeTelemetryPort()
@@ -2527,7 +2588,9 @@ class TestManagementService:
         alerted_at = datetime(2024, 1, 1, 13, 0, 0, tzinfo=UTC)
 
         class PartiallyFailingNotificationPort(FakeNotificationPort):
-            async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime:
+            async def report(
+                self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+            ) -> datetime:
                 raise PartialNotificationError(alerted_at, RuntimeError("github unreachable"))
 
         signature = Signature(

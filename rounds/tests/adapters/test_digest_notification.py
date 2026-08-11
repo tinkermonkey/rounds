@@ -71,12 +71,17 @@ async def test_batch_qualifying_diagnosis_is_buffered_not_reported(
 
 
 @pytest.mark.asyncio
-async def test_high_confidence_diagnosis_bypasses_batching(
+async def test_high_confidence_error_severity_bypasses_batching(
     inner: FakeNotificationPort, triage: TriageEngine
 ) -> None:
-    """High-confidence diagnoses are always forwarded immediately, never held for the digest."""
+    """High-confidence diagnoses above the WARN ceiling are forwarded immediately.
+
+    should_batch() is an OR rule: WARN-or-below/non-critical signatures batch
+    regardless of confidence, so confidence alone only bypasses batching once
+    severity is above the WARN ceiling too.
+    """
     adapter = DigestNotificationAdapter(inner=inner, triage=triage)
-    signature = _make_signature(max_severity=Severity.WARN)
+    signature = _make_signature(max_severity=Severity.ERROR)
     diagnosis = _make_diagnosis(confidence="high")
 
     await adapter.report(signature, diagnosis)
@@ -86,17 +91,63 @@ async def test_high_confidence_diagnosis_bypasses_batching(
 
 
 @pytest.mark.asyncio
+async def test_high_confidence_warn_severity_still_batches(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """WARN-or-below, non-critical signatures batch even at high confidence (OR rule)."""
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage)
+    signature = _make_signature(max_severity=Severity.WARN)
+    diagnosis = _make_diagnosis(confidence="high")
+
+    await adapter.report(signature, diagnosis)
+
+    assert inner.report_call_count == 0
+    assert adapter.pending_count == 1
+
+
+@pytest.mark.asyncio
 async def test_critical_tagged_diagnosis_bypasses_batching(
     inner: FakeNotificationPort, triage: TriageEngine
 ) -> None:
-    """Critical-tagged signatures are always forwarded immediately."""
+    """Critical-tagged signatures bypass batching, provided confidence isn't low."""
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage)
+    signature = _make_signature(max_severity=Severity.WARN, tags=frozenset(["critical"]))
+    diagnosis = _make_diagnosis(confidence="medium")
+
+    await adapter.report(signature, diagnosis)
+
+    assert inner.report_call_count == 1
+    assert adapter.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_bypasses_critical_tag_and_still_batches(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """Low confidence always batches (OR rule), even for a critical-tagged signature."""
     adapter = DigestNotificationAdapter(inner=inner, triage=triage)
     signature = _make_signature(max_severity=Severity.WARN, tags=frozenset(["critical"]))
     diagnosis = _make_diagnosis(confidence="low")
 
     await adapter.report(signature, diagnosis)
 
+    assert inner.report_call_count == 0
+    assert adapter.pending_count == 1
+
+
+@pytest.mark.asyncio
+async def test_immediate_flag_bypasses_batching_regardless_of_classification(
+    inner: FakeNotificationPort, triage: TriageEngine
+) -> None:
+    """report(..., immediate=True) always delivers now - e.g. user-initiated reinvestigate()."""
+    adapter = DigestNotificationAdapter(inner=inner, triage=triage)
+    signature = _make_signature(max_severity=Severity.WARN)
+    diagnosis = _make_diagnosis(confidence="low")
+
+    await adapter.report(signature, diagnosis, immediate=True)
+
     assert inner.report_call_count == 1
+    assert inner.report_immediate_flags == [True]
     assert adapter.pending_count == 0
 
 

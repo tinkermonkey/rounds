@@ -92,9 +92,13 @@ class RepoOwnershipNotificationAdapter(NotificationPort):
             self._github_adapters[key] = self._github_adapter_factory(owner, repo)
         return self._github_adapters[key]
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
         """Route to the owned repo's GitHub issue channel, or markdown if none is owned."""
-        return await self._channel_for(signature.service).report(signature, diagnosis)
+        return await self._channel_for(signature.service).report(
+            signature, diagnosis, immediate=immediate
+        )
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Summaries have no per-service repo to target; always reported via the fallback channel."""

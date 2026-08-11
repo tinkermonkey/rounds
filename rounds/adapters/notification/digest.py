@@ -41,13 +41,15 @@ class DigestNotificationAdapter(NotificationPort):
     """Buffers batch-qualifying diagnoses and reports them as a periodic digest.
 
     Delegates every NotificationPort call to `inner` unchanged, except
-    `report()`: when `enabled` and `triage.should_batch()` classifies the
-    diagnosis as batch-qualifying, it's buffered instead of forwarded, and
-    `report()` returns None — consistent with the "suppressed by the
-    channel's own gating logic" case already documented on
-    NotificationPort.report(). `close()` is also special: it flushes any
-    still-buffered entries before delegating, so shutdown never silently
-    discards a partially-filled window.
+    `report()`: when `immediate` is not set, `enabled` is True, and
+    `triage.should_batch()` classifies the diagnosis as batch-qualifying,
+    it's buffered instead of forwarded, and `report()` returns None —
+    consistent with the "suppressed by the channel's own gating logic" case
+    already documented on NotificationPort.report(). `report(..., immediate=True)`
+    always bypasses batching, for callers (e.g. reinvestigate()) that require
+    immediate delivery regardless of confidence or severity. `close()` is
+    also special: it flushes any still-buffered entries before delegating,
+    so shutdown never silently discards a partially-filled window.
 
     Buffered entries accumulate until `flush_if_due()` finds the window has
     elapsed — see DaemonScheduler, which owns the flush timer and calls it
@@ -79,9 +81,16 @@ class DigestNotificationAdapter(NotificationPort):
         self._window_start = window_start if window_start is not None else datetime.now(UTC)
         self._lock = asyncio.Lock()
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
-        """Buffer batch-qualifying diagnoses; forward everything else immediately."""
-        if self.enabled and self.triage.should_batch(signature, diagnosis):
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
+        """Buffer batch-qualifying diagnoses; forward everything else immediately.
+
+        `immediate=True` bypasses batching entirely — used by user-initiated
+        calls (e.g. reinvestigate()) that must always be delivered right
+        away, never silently deferred into the next digest window.
+        """
+        if not immediate and self.enabled and self.triage.should_batch(signature, diagnosis):
             entry = _DigestEntry(
                 signature_id=signature.id,
                 fingerprint=signature.fingerprint,
@@ -98,7 +107,7 @@ class DigestNotificationAdapter(NotificationPort):
             )
             return None
 
-        return await self.inner.report(signature, diagnosis)
+        return await self.inner.report(signature, diagnosis, immediate=immediate)
 
     async def report_summary(self, stats: dict[str, Any]) -> None:
         """Pass through unchanged — the digest has its own summary path (flush_if_due)."""

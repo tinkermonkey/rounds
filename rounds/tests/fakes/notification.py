@@ -29,14 +29,19 @@ class FakeNotificationPort(NotificationPort):
         # Configurable return value for report(), simulating a channel that
         # performs cooldown-gated alerting (e.g. phone-home).
         self.report_alerted_at: datetime | None = None
+        # Captures the `immediate` flag passed to each report() call, in order.
+        self.report_immediate_flags: list[bool] = []
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
         """Report a diagnosis for a signature.
 
         Captures the report for test assertions. Returns report_alerted_at,
         configurable to simulate a cooldown-gated channel's alert timestamp.
         """
         self.report_call_count += 1
+        self.report_immediate_flags.append(immediate)
 
         if self.should_fail:
             raise RuntimeError(self.fail_message)
@@ -123,6 +128,7 @@ class FakeNotificationPort(NotificationPort):
     def reset(self) -> None:
         """Reset all collected notifications and state."""
         self.reported_diagnoses.clear()
+        self.report_immediate_flags.clear()
         self.reported_summaries.clear()
         self.reported_alerts.clear()
         self.closed_resolved_issues.clear()

@@ -74,12 +74,20 @@ class CompositeNotificationAdapter(NotificationPort):
             raise first_error
         return successes
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
         """Report a diagnosed signature to every configured channel concurrently.
 
         Returns the first non-None alert timestamp among the channels' results
         (in practice, at most one configured channel implements cooldown-gated
         alerting), or None if no channel returned one.
+
+        Args:
+            signature: The signature that was diagnosed.
+            diagnosis: The diagnosis results to report.
+            immediate: Forwarded to every channel unchanged - see
+                NotificationPort.report().
 
         Raises:
             PartialNotificationError: If a sibling channel failed but
@@ -88,7 +96,8 @@ class CompositeNotificationAdapter(NotificationPort):
                 before propagating, since that alert was already delivered.
         """
         successes, first_error = await self._gather(
-            "report", [c.report(signature, diagnosis) for c in self.channels]
+            "report",
+            [c.report(signature, diagnosis, immediate=immediate) for c in self.channels],
         )
         alerted_at = next((r for r in successes if r is not None), None)
         if first_error is not None:
