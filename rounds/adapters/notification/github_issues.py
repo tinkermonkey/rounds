@@ -78,7 +78,7 @@ class GitHubIssueNotificationAdapter(NotificationPort):
             self._client = None
 
     async def report(
-        self, signature: Signature, diagnosis: Diagnosis
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
     ) -> datetime | None:
         """Report a diagnosed signature by creating or updating a GitHub issue.
 
@@ -86,7 +86,9 @@ class GitHubIssueNotificationAdapter(NotificationPort):
         carries the fingerprint label, a recurrence comment is posted to it
         instead of creating a second issue for the same failure pattern.
 
-        GitHub issues have no cooldown concept, so this always returns None.
+        GitHub issues have no batching concept, so `immediate` has no
+        effect. GitHub issues have no cooldown concept either, so this
+        always returns None.
         """
         fingerprint_label = self._fingerprint_label(signature.fingerprint)
         existing_issue = await self._find_existing_issue(fingerprint_label)
@@ -619,6 +621,13 @@ class GitHubIssueNotificationAdapter(NotificationPort):
             lines.append("### By Status")
             for status, count in sorted(by_status.items()):
                 lines.append(f"- **{status.upper()}**: {count}")
+            lines.append("")
+
+        by_confidence = stats.get("by_confidence", {})
+        if by_confidence:
+            lines.append("### By Confidence")
+            for confidence, count in sorted(by_confidence.items()):
+                lines.append(f"- **{confidence.upper()}**: {count}")
             lines.append("")
 
         by_service = stats.get("by_service", {})

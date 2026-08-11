@@ -22,13 +22,14 @@ import urllib.parse
 from typing import Any, Literal
 
 import httpx
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 
 from rounds.adapters.cli.commands import CLICommandHandler
 from rounds.adapters.diagnosis.claude_code import ClaudeCodeDiagnosisAdapter
 from rounds.adapters.notification.composite import CompositeNotificationAdapter
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.notification.github_issues import GitHubIssueNotificationAdapter
 from rounds.adapters.notification.markdown import MarkdownNotificationAdapter
 from rounds.adapters.notification.phone_home import PhoneHomeNotificationAdapter
@@ -732,15 +733,35 @@ async def bootstrap(
     logger.info("Loading Rounds diagnostic system...")
 
     # Step 2.5: Initialize telemetry if enabled
+    self_telemetry_meter: metrics.Meter | None = None
     if settings.enable_self_telemetry:
-        from rounds.telemetry import initialize_telemetry
+        from rounds.telemetry import initialize_metrics, initialize_telemetry
 
         initialize_telemetry(
             service_name=settings.self_telemetry_service_name,
             otlp_endpoint=settings.self_telemetry_otlp_endpoint or None,
             enable_console_export=settings.self_telemetry_console_export,
         )
-        logger.info("Self-telemetry enabled")
+        traces_endpoint = settings.self_telemetry_otlp_endpoint
+        metrics_endpoint = (
+            traces_endpoint[: -len("/v1/traces")] + "/v1/metrics"
+            if traces_endpoint.endswith("/v1/traces")
+            else traces_endpoint
+        )
+        self_telemetry_meter, metrics_exporting = initialize_metrics(
+            service_name=settings.self_telemetry_service_name,
+            otlp_endpoint=metrics_endpoint or None,
+            enable_console_export=settings.self_telemetry_console_export,
+            export_interval_millis=settings.self_telemetry_metric_export_interval_seconds * 1000,
+        )
+        if metrics_exporting:
+            logger.info("Self-telemetry enabled")
+        else:
+            logger.warning(
+                "Self-telemetry tracing enabled, but metrics export is disabled: "
+                "no metric reader could be configured. The self-observability "
+                "dashboard gauges will not be exported."
+            )
     else:
         # Use a no-op tracer if telemetry is disabled
         trace.get_tracer(__name__)
@@ -945,6 +966,18 @@ async def bootstrap(
     fingerprinter = Fingerprinter()
     triage = TriageEngine()
 
+    # WARN digest: batches low-severity/low-confidence diagnoses into a single
+    # periodic summary instead of notifying individually. Wraps the notification
+    # chain built above, so it applies to every configured channel. Disabled by
+    # default, which leaves per-diagnosis notification behavior unchanged.
+    digest_notifier: DigestNotificationAdapter | None = None
+    if settings.warn_digest_enabled:
+        digest_notifier = DigestNotificationAdapter(inner=notification, triage=triage)
+        notification = digest_notifier
+        logger.info(
+            f"WARN digest enabled: flush interval={settings.warn_digest_interval_seconds}s"
+        )
+
     # Create daemon scheduler first (needed for budget tracking in investigator)
     scheduler: DaemonScheduler | None = None
     if settings.run_mode == "daemon":
@@ -953,7 +986,16 @@ async def bootstrap(
             poll_interval_seconds=settings.poll_interval_seconds,
             budget_limit=settings.daily_budget_limit,
             notification_port=notification,
+            service_budget_map=settings.get_service_budget_map(),
+            poll_failure_threshold=settings.poll_failure_threshold,
+            digest_notifier=digest_notifier,
+            digest_interval_seconds=settings.warn_digest_interval_seconds,
+            signature_store=store,
         )
+        if self_telemetry_meter is not None:
+            from rounds.telemetry import register_dashboard_gauges
+
+            register_dashboard_gauges(self_telemetry_meter, scheduler)
 
     # Investigator (orchestrates investigation workflow)
     investigator = Investigator(
@@ -1042,7 +1084,44 @@ async def bootstrap(
             if settings.run_mode == "daemon":
                 # Start daemon polling loop
                 assert scheduler is not None
-                await scheduler.start()
+
+                # Expose /health so a hung or crashed daemon is surfaced to
+                # monitoring even though daemon mode has no other reason to
+                # run an HTTP server. Reuses the webhook server since it
+                # already implements the /health endpoint; webhook_receiver
+                # is omitted because daemon mode has no webhook-triggered
+                # operations.
+                health_server = WebhookHTTPServer(
+                    webhook_receiver=None,
+                    host=settings.webhook_host,
+                    port=settings.webhook_port,
+                    api_key=settings.webhook_api_key if settings.webhook_api_key else None,
+                    require_auth=settings.webhook_require_auth,
+                    health_provider=scheduler,
+                    metrics_provider=scheduler,
+                )
+                # The daemon's core job is polling/diagnosing errors, not
+                # serving /health - a port conflict (e.g. another process
+                # already bound to webhook_port) shouldn't crash the whole
+                # daemon when it could run perfectly well without a health
+                # endpoint.
+                health_server_started = False
+                try:
+                    await health_server.start()
+                    health_server_started = True
+                except OSError as e:
+                    logger.error(
+                        f"Failed to start health check server on "
+                        f"{settings.webhook_host}:{settings.webhook_port}: {e}. "
+                        "Continuing without a /health endpoint.",
+                        exc_info=True,
+                    )
+
+                try:
+                    await scheduler.start()
+                finally:
+                    if health_server_started:
+                        await health_server.stop()
 
             elif settings.run_mode == "cli":
                 # CLI mode handles interactive commands via CLICommandHandler

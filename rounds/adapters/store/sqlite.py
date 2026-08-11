@@ -62,8 +62,10 @@ class SQLiteSignatureStore(SignatureStorePort):
         if self._schema_initialized:
             try:
                 wal_conn = await aiosqlite.connect(str(self.db_path))
-                await wal_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                await wal_conn.close()
+                try:
+                    await wal_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    await wal_conn.close()
             except Exception:
                 logger.warning("WAL checkpoint on shutdown failed", exc_info=True)
 
@@ -112,7 +114,8 @@ class SQLiteSignatureStore(SignatureStorePort):
                         tags TEXT NOT NULL DEFAULT '[]',
                         resolution_threshold_hours INTEGER,
                         last_alerted_at TIMESTAMP,
-                        max_severity TEXT NOT NULL DEFAULT 'ERROR'
+                        max_severity TEXT NOT NULL DEFAULT 'ERROR',
+                        recurrence_count INTEGER NOT NULL DEFAULT 0
                     )
                     """
                 )
@@ -132,6 +135,10 @@ class SQLiteSignatureStore(SignatureStorePort):
                 if "max_severity" not in existing_columns:
                     await conn.execute(
                         "ALTER TABLE signatures ADD COLUMN max_severity TEXT NOT NULL DEFAULT 'ERROR'"
+                    )
+                if "recurrence_count" not in existing_columns:
+                    await conn.execute(
+                        "ALTER TABLE signatures ADD COLUMN recurrence_count INTEGER NOT NULL DEFAULT 0"
                     )
                 # Index for common queries
                 await conn.execute(
@@ -204,8 +211,8 @@ class SQLiteSignatureStore(SignatureStorePort):
                 (id, fingerprint, error_type, service, message_template,
                  stack_hash, first_seen, last_seen, occurrence_count, status,
                  diagnosis_json, tags, resolution_threshold_hours,
-                 last_alerted_at, max_severity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 last_alerted_at, max_severity, recurrence_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signature.id,
@@ -223,6 +230,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                     signature.resolution_threshold_hours,
                     last_alerted_at,
                     signature.max_severity.value,
+                    signature.recurrence_count,
                 ),
             )
             await conn.commit()
@@ -356,12 +364,31 @@ class SQLiteSignatureStore(SignatureStorePort):
             oldest_age_hours = row[0] if row[0] is not None else None
             avg_occurrence = float(row[1]) if row[1] is not None else 0.0
 
+            # Recurrence rate: proportion of signatures that have ever been
+            # resolved (currently RESOLVED, or previously RESOLVED and later
+            # recurred back to NEW) whose recurrence_count is nonzero.
+            cursor = await conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN status = 'resolved' OR recurrence_count > 0
+                        THEN 1 ELSE 0 END) as ever_resolved,
+                    SUM(CASE WHEN recurrence_count > 0 THEN 1 ELSE 0 END) as recurred
+                FROM signatures
+                """
+            )
+            recurrence_row = await cursor.fetchone()
+            assert recurrence_row is not None  # aggregation query always returns a row
+            ever_resolved = recurrence_row[0] or 0
+            recurred = recurrence_row[1] or 0
+            recurrence_rate = recurred / ever_resolved if ever_resolved > 0 else 0.0
+
             return StoreStats(
                 total_signatures=total,
                 by_status=status_counts,
                 by_service=service_counts,
                 oldest_signature_age_hours=oldest_age_hours,
                 avg_occurrence_count=avg_occurrence,
+                recurrence_rate=recurrence_rate,
             )
         finally:
             await self._return_connection(conn)
@@ -373,8 +400,8 @@ class SQLiteSignatureStore(SignatureStorePort):
             ValueError: If row is malformed or contains invalid data.
         """
         try:
-            if not row or len(row) != 15:
-                raise ValueError(f"Invalid row length: expected 15, got {len(row) if row else 0}")
+            if not row or len(row) != 16:
+                raise ValueError(f"Invalid row length: expected 16, got {len(row) if row else 0}")
 
             (
                 sig_id,
@@ -392,6 +419,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 resolution_threshold_hours,
                 last_alerted_at,
                 max_severity,
+                recurrence_count,
             ) = row
 
             # Validate required fields
@@ -463,6 +491,7 @@ class SQLiteSignatureStore(SignatureStorePort):
                 max_severity=Severity(max_severity),
                 resolution_threshold_hours=resolution_threshold_hours,
                 last_alerted_at=last_alerted_at_dt,
+                recurrence_count=recurrence_count,
             )
 
         except ValueError as e:

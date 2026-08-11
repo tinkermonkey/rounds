@@ -73,6 +73,46 @@ class TestGetServiceHostMap:
             _settings(service_host_map='{"svc": 42}')
 
 
+class TestGetServiceBudgetMap:
+    """Tests for Settings.get_service_budget_map()."""
+
+    def test_empty_string_returns_empty_dict(self) -> None:
+        s = _settings(service_budget_map="")
+        assert s.get_service_budget_map() == {}
+
+    def test_default_returns_empty_dict(self) -> None:
+        s = _settings()
+        assert s.get_service_budget_map() == {}
+
+    def test_json_string(self) -> None:
+        s = _settings(service_budget_map='{"my-api": 25.0, "worker": 10}')
+        assert s.get_service_budget_map() == {"my-api": 25.0, "worker": 10.0}
+
+    def test_json_array_raises_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_BUDGET_MAP must be a JSON object"):
+            _settings(service_budget_map="[1, 2, 3]")
+
+    def test_malformed_json_raises_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_BUDGET_MAP must be valid JSON"):
+            _settings(service_budget_map="not json")
+
+    def test_negative_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_BUDGET_MAP values must be non-negative"):
+            _settings(service_budget_map='{"my-api": -5.0}')
+
+    def test_non_numeric_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_BUDGET_MAP values must be non-negative"):
+            _settings(service_budget_map='{"my-api": "expensive"}')
+
+    def test_boolean_values_raise_value_error_at_construction(self) -> None:
+        with pytest.raises(Exception, match="SERVICE_BUDGET_MAP values must be non-negative"):
+            _settings(service_budget_map='{"my-api": true}')
+
+    def test_zero_is_a_valid_cap(self) -> None:
+        s = _settings(service_budget_map='{"my-api": 0}')
+        assert s.get_service_budget_map() == {"my-api": 0.0}
+
+
 class TestGetAgentNodeServiceMap:
     """Tests for Settings.get_agent_node_service_map()."""
 
@@ -368,3 +408,26 @@ class TestPhoneHomeSettings:
     def test_non_positive_cooldown_raises_at_construction(self) -> None:
         with pytest.raises(Exception, match="phone_home_cooldown_hours must be positive"):
             _settings(phone_home_cooldown_hours=0)
+
+
+class TestSelfTelemetrySettings:
+    """Tests for self-telemetry configuration fields and validation."""
+
+    def test_defaults(self) -> None:
+        s = _settings()
+        assert s.enable_self_telemetry is False
+        assert s.self_telemetry_metric_export_interval_seconds == 60
+
+    def test_zero_export_interval_raises_at_construction(self) -> None:
+        with pytest.raises(
+            Exception,
+            match="self_telemetry_metric_export_interval_seconds must be positive",
+        ):
+            _settings(self_telemetry_metric_export_interval_seconds=0)
+
+    def test_negative_export_interval_raises_at_construction(self) -> None:
+        with pytest.raises(
+            Exception,
+            match="self_telemetry_metric_export_interval_seconds must be positive",
+        ):
+            _settings(self_telemetry_metric_export_interval_seconds=-1)

@@ -142,12 +142,24 @@ class FakeSignatureStorePort(SignatureStorePort):
             oldest_age_hours = None
             avg_occurrence = 0.0
 
+        ever_resolved = [
+            sig
+            for sig in self.signatures.values()
+            if sig.status == SignatureStatus.RESOLVED or sig.recurrence_count > 0
+        ]
+        recurrence_rate = (
+            sum(1 for sig in ever_resolved if sig.recurrence_count > 0) / len(ever_resolved)
+            if ever_resolved
+            else 0.0
+        )
+
         return StoreStats(
             total_signatures=len(self.signatures),
             by_status=status_counts,
             by_service=service_counts,
             oldest_signature_age_hours=oldest_age_hours,
             avg_occurrence_count=avg_occurrence,
+            recurrence_rate=recurrence_rate,
         )
 
     def mark_pending(self, signature: Signature) -> None:

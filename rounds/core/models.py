@@ -192,6 +192,11 @@ class Signature:
     # signature (e.g. by the phone-home channel), used to enforce that
     # channel's cooldown window. None means no such alert has been sent yet.
     last_alerted_at: datetime | None = None
+    # Number of times this signature has transitioned from RESOLVED back to
+    # NEW due to a recurrence (see record_occurrence()). Defaults to zero so
+    # existing signatures (persisted before this field existed) don't need a
+    # backfill.
+    recurrence_count: int = 0
 
     def __post_init__(self) -> None:
         """Validate signature invariants on creation or deserialization."""
@@ -211,6 +216,10 @@ class Signature:
             raise ValueError(
                 "resolution_threshold_hours must be positive, got "
                 f"{self.resolution_threshold_hours}"
+            )
+        if self.recurrence_count < 0:
+            raise ValueError(
+                f"recurrence_count must be >= 0, got {self.recurrence_count}"
             )
 
     def mark_investigating(self) -> None:
@@ -272,6 +281,8 @@ class Signature:
         A recurrence against a RESOLVED signature (its issue was already
         auto-closed) transitions it back to NEW so it re-enters the triage and
         investigation pipeline rather than staying dormant under a closed issue.
+        This also increments recurrence_count, so operators can judge whether
+        the auto-close window is calibrated correctly.
 
         Args:
             timestamp: When the new occurrence was observed.
@@ -280,6 +291,7 @@ class Signature:
         """
         if self.status == SignatureStatus.RESOLVED:
             self.status = SignatureStatus.NEW
+            self.recurrence_count += 1
         self.occurrence_count += 1
         if timestamp < self.first_seen:
             self.first_seen = timestamp
@@ -510,6 +522,55 @@ class ResolutionResult:
 
 
 @dataclass(frozen=True)
+class HealthSnapshot:
+    """Read-only snapshot of daemon health.
+
+    Reflects the daemon's own polling loop (consecutive
+    execute_poll_cycle() failures) plus the investigation and resolution
+    circuit breakers, not the health of any single dependency such as the
+    telemetry backend, so an outage there alone doesn't flip the daemon to
+    unhealthy unless it also makes one of these pipelines fail repeatedly.
+    """
+
+    last_poll_completed_at: datetime | None
+    consecutive_poll_failures: int
+    poll_failure_threshold: int
+    investigation_suspended: bool = False
+    resolution_suspended: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate invariants.
+
+        Raises:
+            ValueError: If consecutive_poll_failures is negative or
+                poll_failure_threshold is not positive.
+        """
+        if self.consecutive_poll_failures < 0:
+            raise ValueError(
+                "consecutive_poll_failures must be >= 0, "
+                f"got {self.consecutive_poll_failures}"
+            )
+        if self.poll_failure_threshold <= 0:
+            raise ValueError(
+                f"poll_failure_threshold must be > 0, got {self.poll_failure_threshold}"
+            )
+
+    @property
+    def healthy(self) -> bool:
+        """Overall daemon health: polling within threshold and no circuit breaker tripped.
+
+        Derived rather than stored so callers can never construct an
+        internally contradictory snapshot (e.g. healthy=True alongside
+        consecutive_poll_failures at or above poll_failure_threshold).
+        """
+        return (
+            self.consecutive_poll_failures < self.poll_failure_threshold
+            and not self.investigation_suspended
+            and not self.resolution_suspended
+        )
+
+
+@dataclass(frozen=True)
 class StoreStats:
     """Statistics about the signature store."""
 
@@ -518,6 +579,10 @@ class StoreStats:
     by_service: Mapping[str, int]  # service -> count (immutable at runtime)
     oldest_signature_age_hours: float | None  # None if no signatures
     avg_occurrence_count: float
+    # Proportion (0.0-1.0) of signatures that have ever been resolved
+    # (currently RESOLVED, or previously RESOLVED and later recurred) whose
+    # recurrence_count is nonzero. 0.0 if no signature has ever been resolved.
+    recurrence_rate: float = 0.0
 
     def __post_init__(self) -> None:
         """Convert mutable dicts to immutable proxies.

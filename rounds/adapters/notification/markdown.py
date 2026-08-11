@@ -157,14 +157,16 @@ class MarkdownNotificationAdapter(NotificationPort):
         return date_dir, filename
 
     async def report(
-        self, signature: Signature, diagnosis: Diagnosis
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
     ) -> datetime | None:
         """Report a diagnosed signature to markdown file.
 
         Thread-safe: Uses asyncio.Lock to serialize file writes and prevent
         concurrent modification issues when multiple diagnoses complete simultaneously.
 
-        Markdown files have no cooldown concept, so this always returns None.
+        Markdown files have no batching concept, so `immediate` has no
+        effect. Markdown files have no cooldown concept either, so this
+        always returns None.
         """
         # Format the report entry
         entry = self._format_report_entry(signature, diagnosis)
@@ -375,6 +377,14 @@ class MarkdownNotificationAdapter(NotificationPort):
             lines.append("### By Status")
             for status, count in sorted(by_status.items()):
                 lines.append(f"- **{status.upper()}**: {count}")
+            lines.append("")
+
+        # By confidence
+        by_confidence = stats.get("by_confidence", {})
+        if by_confidence:
+            lines.append("### By Confidence")
+            for confidence, count in sorted(by_confidence.items()):
+                lines.append(f"- **{confidence.upper()}**: {count}")
             lines.append("")
 
         # By service

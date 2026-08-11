@@ -332,9 +332,11 @@ class ManagementService(ManagementPort):
         # Always write the report for manually-triggered reinvestigations.
         # Unlike the automated poll path, the user explicitly requested this
         # investigation, so they should always receive the result regardless
-        # of confidence level or previous status.
+        # of confidence level or previous status - immediate=True bypasses
+        # any digest/batching deferral a wrapped channel would otherwise
+        # apply (see NotificationPort.report()).
         try:
-            alerted_at = await self.notification.report(signature, diagnosis)
+            alerted_at = await self.notification.report(signature, diagnosis, immediate=True)
             if alerted_at is not None:
                 signature.record_alert(alerted_at)
                 await persist_alert_cooldown(self.store, signature)

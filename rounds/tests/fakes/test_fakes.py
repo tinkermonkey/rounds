@@ -387,6 +387,51 @@ class TestFakeSignatureStorePort:
         stats = await store.get_stats()
         assert stats.total_signatures == 1
         assert stats.by_status[SignatureStatus.NEW.value] == 1
+        assert stats.recurrence_rate == 0.0
+
+    @pytest.mark.asyncio
+    async def test_get_stats_recurrence_rate(self, signature: Signature) -> None:
+        """recurrence_rate should reflect the proportion of ever-resolved
+        signatures whose recurrence_count is nonzero."""
+        store = FakeSignatureStorePort()
+
+        never_resolved = signature
+        never_resolved.status = SignatureStatus.NEW
+        await store.save(never_resolved)
+
+        resolved_clean = Signature(
+            id="sig-resolved-clean",
+            fingerprint="fp-resolved-clean",
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash="hash-resolved-clean",
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=1,
+            status=SignatureStatus.RESOLVED,
+        )
+        await store.save(resolved_clean)
+
+        recurred = Signature(
+            id="sig-recurred",
+            fingerprint="fp-recurred",
+            error_type=signature.error_type,
+            service=signature.service,
+            message_template=signature.message_template,
+            stack_hash="hash-recurred",
+            first_seen=signature.first_seen,
+            last_seen=signature.last_seen,
+            occurrence_count=2,
+            status=SignatureStatus.NEW,
+            recurrence_count=1,
+        )
+        await store.save(recurred)
+
+        stats = await store.get_stats()
+
+        # ever_resolved = resolved_clean, recurred = 2; recurred-at-least-once = 1
+        assert stats.recurrence_rate == pytest.approx(0.5)
 
     @pytest.mark.asyncio
     async def test_tracked_operations(self, signature: Signature) -> None:

@@ -13,6 +13,7 @@ Port Interface Categories:
    - UsageQueryPort: Query actual diagnosis cost from OTLP usage data
    - NotificationPort: Report findings to developers
    - BudgetTracker: Track accumulated spend per round step
+   - HealthCheckPort: Expose daemon poll-cycle health for monitoring
 
 2. **Driving Ports** (adapters/external systems call into core)
    - PollPort: Entry point for poll and investigation cycles
@@ -21,12 +22,13 @@ Port Interface Categories:
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from .models import (
     Diagnosis,
     ErrorEvent,
+    HealthSnapshot,
     InvestigationContext,
     InvestigationResult,
     LogEntry,
@@ -517,13 +519,18 @@ class NotificationPort(ABC):
 
     @abstractmethod
     async def report(
-        self, signature: Signature, diagnosis: Diagnosis
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
     ) -> datetime | None:
         """Report a diagnosed signature through whatever channel the adapter implements.
 
         Args:
             signature: The signature that was diagnosed.
             diagnosis: The diagnosis results to report.
+            immediate: When True, the caller requires this diagnosis to be
+                delivered right away — e.g. a user-initiated reinvestigate()
+                — and the report must bypass any batching/digest deferral an
+                adapter would otherwise apply. Adapters with no batching
+                concept (most of them) simply ignore this flag.
 
         Returns:
             The timestamp to record as the signature's alert cooldown
@@ -612,11 +619,97 @@ class BudgetTracker(Protocol):
 
     Costs are attributed per RoundStep so spend can be broken down across
     the full poll -> fingerprint -> diagnose -> confirm cycle, not just the
-    diagnose step where LLM calls currently occur.
+    diagnose step where LLM calls currently occur. Costs incurred while
+    investigating a signature are additionally attributed to that
+    signature's service, enabling per-service budget caps alongside the
+    global daily budget.
     """
 
-    async def record_cost(self, step: RoundStep, cost_usd: float) -> None:
-        """Record a cost incurred by a rounds step towards the daily budget."""
+    async def record_cost(
+        self, step: RoundStep, cost_usd: float, *, service: str | None = None
+    ) -> None:
+        """Record a cost incurred by a rounds step towards the daily budget.
+
+        Args:
+            step: Which rounds step incurred the cost.
+            cost_usd: Cost incurred by that step, in USD.
+            service: The service the cost should also be attributed to for
+                per-service budget tracking. Optional and keyword-only so
+                existing callers are unaffected; omitted for steps (like
+                poll/fingerprint) that aren't attributable to a single
+                signature's service.
+        """
+        ...
+
+    async def is_service_budget_exceeded(self, service: str) -> bool:
+        """Check whether a service's per-service daily budget cap has been reached.
+
+        Returns False when no cap is configured for the service - uncapped
+        services are governed only by the global daily budget.
+        """
+        ...
+
+
+class HealthCheckPort(Protocol):
+    """Protocol for exposing daemon poll-cycle health to monitoring endpoints.
+
+    Lets adapters such as the webhook HTTP server report daemon health
+    (e.g. for /health) without importing the concrete DaemonScheduler
+    adapter directly.
+    """
+
+    def get_health_snapshot(self) -> HealthSnapshot:
+        """Return a read-only snapshot of poll-cycle health state."""
+        ...
+
+
+class DigestFlushPort(Protocol):
+    """Protocol for flushing a periodic digest of batched notifications.
+
+    Lets adapters such as DaemonScheduler drive the WARN-digest flush
+    schedule without importing the concrete DigestNotificationAdapter
+    adapter directly.
+    """
+
+    async def flush_if_due(self, now: datetime, window: timedelta) -> bool:
+        """Flush the digest if at least `window` has elapsed since it opened.
+
+        Args:
+            now: Current timestamp.
+            window: Digest window duration.
+
+        Returns:
+            True if the window was due and flushed (the buffer may have been
+            empty), False if the window hasn't elapsed yet.
+        """
+        ...
+
+
+class DashboardMetricsPort(Protocol):
+    """Protocol for exposing daemon state backing the self-observability dashboard.
+
+    Lets telemetry.py register the dashboard's observable gauges without
+    importing the concrete DaemonScheduler adapter directly.
+    """
+
+    @property
+    def signature_counts_by_status(self) -> dict[str, int]:
+        """Current count of error signatures grouped by status."""
+        ...
+
+    @property
+    def daily_cost_usd(self) -> float:
+        """Today's total accumulated diagnosis cost, in USD."""
+        ...
+
+    @property
+    def cost_by_step(self) -> dict[RoundStep, float]:
+        """Today's accumulated diagnosis cost, broken down by pipeline step."""
+        ...
+
+    @property
+    def cost_by_service(self) -> dict[str, float]:
+        """Today's accumulated diagnosis cost, broken down by service."""
         ...
 
 
@@ -649,17 +742,14 @@ class PollPort(ABC):
         1. Query telemetry backend for recent errors
         2. Normalize errors into ErrorEvent objects
         3. Fingerprint and deduplicate against signature database
-        4. For each new signature:
-           - Queue for investigation
-           - Estimate diagnosis cost
-           - If within budget, invoke diagnosis
-           - Store diagnosis result
-           - Notify developers
+        4. Persist new or updated signatures, queued with status NEW
+           for a later investigation cycle
+
+        Diagnosis, cost estimation, result storage, and notification
+        happen in execute_investigation_cycle(), not here.
 
         Should handle errors gracefully:
         - If telemetry backend is down, backoff and retry
-        - If diagnosis exceeds budget, skip and log
-        - If notification fails, log but don't fail the cycle
 
         Returns:
             PollResult with summary of errors found and signatures created.

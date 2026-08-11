@@ -16,15 +16,18 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from rounds.adapters.webhook.receiver import WebhookReceiver
+from rounds.core.ports import DashboardMetricsPort, HealthCheckPort
 
 logger = logging.getLogger(__name__)
 
 
 def make_webhook_handler(
-    webhook_receiver: WebhookReceiver,
+    webhook_receiver: WebhookReceiver | None,
     event_loop: asyncio.AbstractEventLoop,
     api_key: str | None,
     require_auth: bool,
+    health_provider: HealthCheckPort | None = None,
+    metrics_provider: DashboardMetricsPort | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Factory to create a WebhookHTTPHandler class with instance-specific state.
 
@@ -32,10 +35,19 @@ def make_webhook_handler(
     closure-captured dependencies instead of using class-level mutable state.
 
     Args:
-        webhook_receiver: Receiver for webhook operations
+        webhook_receiver: Receiver for webhook operations. May be None when
+            this server is started only to expose /health (e.g. daemon mode,
+            which has no webhook-triggered operations).
         event_loop: Event loop for async operations
         api_key: Optional API key for authentication
         require_auth: Whether authentication is required
+        health_provider: Optional source of daemon poll-cycle health used to
+            answer /health with real status. When None, /health always
+            reports healthy (e.g. webhook mode, which has no poll loop).
+        metrics_provider: Optional source of daemon cost accounting used to
+            answer /dashboard/costs with the live per-service cost breakdown
+            (FR-3.7). When None (e.g. webhook mode, which has no scheduler),
+            /dashboard/costs reports an empty breakdown.
 
     Returns:
         A WebhookHTTPHandler class configured with the provided dependencies
@@ -83,6 +95,12 @@ def make_webhook_handler(
 
             Routes to appropriate handler based on path.
             """
+            # Health check is always public and doesn't require a webhook
+            # receiver, so it's handled before the receiver/auth checks below.
+            if self.path == "/health":
+                self._send_health_response()
+                return
+
             if not webhook_receiver:
                 self.send_error(500, "Webhook receiver not initialized")
                 return
@@ -92,7 +110,11 @@ def make_webhook_handler(
                 self.send_error(401, "Unauthorized: invalid or missing API key")
                 return
 
-            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                self.send_error(400, "Invalid Content-Length header")
+                return
 
             # Add 1MB body size limit to prevent DoS
             max_body_size = 1024 * 1024
@@ -126,19 +148,24 @@ def make_webhook_handler(
                 self._run_async(self._handle_details(data))
             elif self.path == "/api/list":
                 self._run_async(self._handle_list(data))
-            elif self.path == "/health":
-                self._send_response({"status": "healthy"})
             else:
                 self.send_error(404, "Not found")
 
         def do_GET(self) -> None:
             """Handle GET requests.
 
-            Supports health check via GET. Health check is public (no auth required).
+            Supports health check via GET. Health check is public (no auth
+            required); /dashboard/costs exposes cost data so it's gated the
+            same way POST endpoints are.
             """
             if self.path == "/health":
                 # Health check is always public
-                self._send_response({"status": "healthy"})
+                self._send_health_response()
+            elif self.path == "/dashboard/costs":
+                if not self._check_auth():
+                    self.send_error(401, "Unauthorized: invalid or missing API key")
+                    return
+                self._send_dashboard_costs_response()
             else:
                 self.send_error(404, "Not found")
 
@@ -170,16 +197,21 @@ def make_webhook_handler(
 
         async def _handle_poll(self) -> None:
             """Handle poll trigger request."""
+            # webhook_receiver is guaranteed non-None here: do_POST returns
+            # early (before scheduling any _handle_* coroutine) when it's None.
+            assert webhook_receiver is not None
             result = await webhook_receiver.handle_poll_trigger()
             self._send_response(result)
 
         async def _handle_investigate(self) -> None:
             """Handle investigation trigger request."""
+            assert webhook_receiver is not None
             result = await webhook_receiver.handle_investigation_trigger()
             self._send_response(result)
 
         async def _handle_mute(self, data: dict[str, Any]) -> None:
             """Handle mute signature request."""
+            assert webhook_receiver is not None
             signature_id = data.get("signature_id")
             if not signature_id:
                 self.send_error(400, "Missing signature_id")
@@ -190,6 +222,7 @@ def make_webhook_handler(
 
         async def _handle_resolve(self, data: dict[str, Any]) -> None:
             """Handle resolve signature request."""
+            assert webhook_receiver is not None
             signature_id = data.get("signature_id")
             if not signature_id:
                 self.send_error(400, "Missing signature_id")
@@ -202,6 +235,7 @@ def make_webhook_handler(
 
         async def _handle_retriage(self, data: dict[str, Any]) -> None:
             """Handle retriage signature request."""
+            assert webhook_receiver is not None
             signature_id = data.get("signature_id")
             if not signature_id:
                 self.send_error(400, "Missing signature_id")
@@ -211,6 +245,7 @@ def make_webhook_handler(
 
         async def _handle_reinvestigate(self, data: dict[str, Any]) -> None:
             """Handle reinvestigate signature request."""
+            assert webhook_receiver is not None
             signature_id = data.get("signature_id")
             if not signature_id:
                 self.send_error(400, "Missing signature_id")
@@ -222,6 +257,7 @@ def make_webhook_handler(
 
         async def _handle_details(self, data: dict[str, Any]) -> None:
             """Handle get details request."""
+            assert webhook_receiver is not None
             signature_id = data.get("signature_id")
             if not signature_id:
                 self.send_error(400, "Missing signature_id")
@@ -231,13 +267,81 @@ def make_webhook_handler(
 
         async def _handle_list(self, data: dict[str, Any]) -> None:
             """Handle list signatures request."""
+            assert webhook_receiver is not None
             status = data.get("status")
             result = await webhook_receiver.handle_list_request(status)
             self._send_response(result)
 
-        def _send_response(self, data: dict[str, Any]) -> None:
+        def _send_health_response(self) -> None:
+            """Answer /health, using health_provider for real daemon status when available.
+
+            Without a health_provider (e.g. webhook mode, which has no poll
+            loop) this always reports healthy.
+            """
+            if health_provider is None:
+                self._send_response({"status": "healthy"})
+                return
+
+            try:
+                snapshot = health_provider.get_health_snapshot()
+            except Exception as e:
+                # A failure to compute the snapshot is not itself proof the
+                # daemon is unhealthy, but we can't claim "healthy" either -
+                # report unhealthy rather than letting the exception propagate
+                # and reset the connection, which would make monitoring
+                # systems report the service as down for the wrong reason.
+                logger.error(f"Error getting health snapshot: {e}", exc_info=True)
+                self._send_response(
+                    {"status": "unhealthy", "error": "health check failed"},
+                    status_code=503,
+                )
+                return
+
+            self._send_response(
+                {
+                    "status": "healthy" if snapshot.healthy else "unhealthy",
+                    "last_poll_completed_at": (
+                        snapshot.last_poll_completed_at.isoformat()
+                        if snapshot.last_poll_completed_at is not None
+                        else None
+                    ),
+                    "consecutive_poll_failures": snapshot.consecutive_poll_failures,
+                    "poll_failure_threshold": snapshot.poll_failure_threshold,
+                    "investigation_suspended": snapshot.investigation_suspended,
+                    "resolution_suspended": snapshot.resolution_suspended,
+                },
+                status_code=200 if snapshot.healthy else 503,
+            )
+
+        def _send_dashboard_costs_response(self) -> None:
+            """Answer /dashboard/costs with today's per-service diagnosis cost breakdown.
+
+            Backs FR-3.7 (operator-facing per-service cost accounting).
+            Without a metrics_provider (e.g. webhook mode, which has no
+            scheduler) this reports an empty breakdown rather than failing.
+            """
+            if metrics_provider is None:
+                self._send_response({"daily_cost_usd": 0.0, "cost_by_service": {}})
+                return
+
+            try:
+                daily_cost_usd = metrics_provider.daily_cost_usd
+                cost_by_service = metrics_provider.cost_by_service
+            except Exception as e:
+                logger.error(f"Error getting cost dashboard data: {e}", exc_info=True)
+                self._send_response({"error": "dashboard query failed"}, status_code=503)
+                return
+
+            self._send_response(
+                {
+                    "daily_cost_usd": daily_cost_usd,
+                    "cost_by_service": cost_by_service,
+                }
+            )
+
+        def _send_response(self, data: dict[str, Any], status_code: int = 200) -> None:
             """Send JSON response."""
-            self.send_response(200)
+            self.send_response(status_code)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
@@ -258,21 +362,30 @@ class WebhookHTTPServer:
 
     def __init__(
         self,
-        webhook_receiver: WebhookReceiver,
+        webhook_receiver: WebhookReceiver | None,
         host: str = "0.0.0.0",
         port: int = 8080,
         api_key: str | None = None,
         require_auth: bool = False,
+        health_provider: HealthCheckPort | None = None,
+        metrics_provider: DashboardMetricsPort | None = None,
     ):
         """Initialize the HTTP server.
 
         Args:
             webhook_receiver: WebhookReceiver instance to handle requests.
+                May be None to run a /health-only server (e.g. daemon mode,
+                which has no webhook-triggered operations).
             host: Host to listen on (default 0.0.0.0).
             port: Port to listen on (default 8080).
             api_key: Optional API key for authentication.
             require_auth: Whether to require authentication (default False).
                          If True, api_key must be provided.
+            health_provider: Optional source of daemon poll-cycle health used
+                to answer /health with real status instead of always "healthy".
+            metrics_provider: Optional source of daemon cost accounting used
+                to answer /dashboard/costs with the live per-service cost
+                breakdown (FR-3.7).
 
         Raises:
             ValueError: If require_auth=True but api_key is not provided.
@@ -282,6 +395,8 @@ class WebhookHTTPServer:
         self.port = port
         self.api_key = api_key
         self.require_auth = require_auth
+        self.health_provider = health_provider
+        self.metrics_provider = metrics_provider
         self.server: HTTPServer | None = None
         self._server_task: asyncio.Task[None] | None = None
 
@@ -308,6 +423,8 @@ class WebhookHTTPServer:
             event_loop=asyncio.get_running_loop(),
             api_key=self.api_key,
             require_auth=self.require_auth,
+            health_provider=self.health_provider,
+            metrics_provider=self.metrics_provider,
         )
 
         # Create the HTTP server

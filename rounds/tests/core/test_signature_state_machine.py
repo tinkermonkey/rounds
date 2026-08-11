@@ -415,6 +415,61 @@ def test_record_occurrence_reverts_resolved_signature_to_new(signature: Signatur
     assert signature.last_seen == recurrence_timestamp
 
 
+def test_record_occurrence_increments_recurrence_count_on_resolved_to_new(
+    signature: Signature,
+) -> None:
+    """The RESOLVED->NEW transition should increment recurrence_count, so
+    operators can judge whether the auto-close window is calibrated correctly."""
+    signature.status = SignatureStatus.RESOLVED
+    assert signature.recurrence_count == 0
+
+    signature.record_occurrence(signature.last_seen + timedelta(days=2))
+
+    assert signature.recurrence_count == 1
+
+    signature.status = SignatureStatus.RESOLVED
+    signature.record_occurrence(signature.last_seen + timedelta(days=2))
+
+    assert signature.recurrence_count == 2
+
+
+def test_record_occurrence_does_not_increment_recurrence_count_for_non_resolved_status(
+    signature: Signature,
+) -> None:
+    """recurrence_count should only increment at the RESOLVED->NEW transition,
+    not on ordinary occurrences of a signature that was never resolved."""
+    assert signature.status == SignatureStatus.NEW
+
+    signature.record_occurrence(signature.last_seen + timedelta(hours=1))
+
+    assert signature.recurrence_count == 0
+
+
+def test_signature_defaults_recurrence_count_to_zero(signature: Signature) -> None:
+    """New signatures default recurrence_count to zero, so no backfill is
+    required for existing signatures deserialized without this field."""
+    assert signature.recurrence_count == 0
+
+
+@pytest.mark.parametrize("invalid_count", [-1, -5])
+def test_signature_rejects_negative_recurrence_count(invalid_count: int) -> None:
+    """A negative recurrence_count (e.g. from a corrupt row) must be rejected."""
+    with pytest.raises(ValueError, match=r"recurrence_count must be >= 0"):
+        Signature(
+            id="sig-004",
+            fingerprint="fp-004",
+            error_type="NullPointerError",
+            service="billing-service",
+            message_template="Null reference in handler",
+            stack_hash="hash-stack-004",
+            first_seen=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC),
+            occurrence_count=1,
+            status=SignatureStatus.NEW,
+            recurrence_count=invalid_count,
+        )
+
+
 def test_record_occurrence_does_not_alter_non_resolved_status(signature: Signature) -> None:
     """record_occurrence should not touch status for signatures that aren't RESOLVED."""
     signature.status = SignatureStatus.DIAGNOSED

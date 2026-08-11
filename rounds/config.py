@@ -214,11 +214,50 @@ class Settings(BaseSettings):
             "(populated from Diagnosis.suggested_resolution_hours)."
         ),
     )
+    poll_failure_threshold: int = Field(
+        default=5,
+        description=(
+            "Number of consecutive poll-cycle failures before the daemon "
+            "suspends polling, sends an operator alert, and the /health "
+            "endpoint reports unhealthy."
+        ),
+    )
+
+    # WARN digest configuration
+    warn_digest_enabled: bool = Field(
+        default=False,
+        description=(
+            "Batch WARN-level/informational diagnoses into a single periodic "
+            "digest notification instead of notifying individually. Higher-severity "
+            "or higher-confidence diagnoses are always notified immediately. "
+            "When False (default), per-diagnosis notification behavior is unchanged."
+        ),
+    )
+    warn_digest_interval_seconds: int = Field(
+        default=86400,
+        description=(
+            "How often to flush the WARN digest, in seconds (default: one day). "
+            "Configured independently of POLL_INTERVAL_SECONDS. Only relevant "
+            "when WARN_DIGEST_ENABLED is true."
+        ),
+    )
 
     # Budget controls
     daily_budget_limit: float = Field(
         default=100.0,
         description="Daily limit for diagnosis spending in USD",
+    )
+    service_budget_map: str = Field(
+        default="",
+        description=(
+            "JSON map from telemetry service name to a daily USD diagnosis "
+            "budget cap for that service, distinct from DAILY_BUDGET_LIMIT. "
+            "Once a service's accumulated diagnosis cost for the day reaches "
+            "its cap, investigation is skipped for that service's signatures "
+            "for the rest of the day; services with no entry here are only "
+            "governed by DAILY_BUDGET_LIMIT. "
+            'Example: SERVICE_BUDGET_MAP={"my-api": 25.0, "worker": 10.0}'
+        ),
     )
 
     # Logging configuration
@@ -335,6 +374,14 @@ class Settings(BaseSettings):
     self_telemetry_console_export: bool = Field(
         default=False,
         description="Enable console export for rounds CLI telemetry (for debugging)",
+    )
+    self_telemetry_metric_export_interval_seconds: int = Field(
+        default=60,
+        description=(
+            "How often self-telemetry metrics (poll/investigation/resolution "
+            "cycle latency, signature counts by status, diagnosis cost) are "
+            "exported, in seconds. Only relevant when ENABLE_SELF_TELEMETRY is true."
+        ),
     )
 
     @field_validator("service_host_map")
@@ -478,6 +525,30 @@ class Settings(BaseSettings):
             raise ValueError("poll_batch_size must be positive")
         return v
 
+    @field_validator("poll_failure_threshold")
+    @classmethod
+    def validate_poll_failure_threshold(cls, v: int) -> int:
+        """Ensure poll failure threshold is positive."""
+        if v <= 0:
+            raise ValueError("poll_failure_threshold must be positive")
+        return v
+
+    @field_validator("warn_digest_interval_seconds")
+    @classmethod
+    def validate_warn_digest_interval_seconds(cls, v: int) -> int:
+        """Ensure the WARN digest interval is positive."""
+        if v <= 0:
+            raise ValueError("warn_digest_interval_seconds must be positive")
+        return v
+
+    @field_validator("self_telemetry_metric_export_interval_seconds")
+    @classmethod
+    def validate_self_telemetry_metric_export_interval(cls, v: int) -> int:
+        """Ensure the self-telemetry metric export interval is positive."""
+        if v <= 0:
+            raise ValueError("self_telemetry_metric_export_interval_seconds must be positive")
+        return v
+
     @field_validator("claude_code_budget_usd")
     @classmethod
     def validate_claude_budget(cls, v: float) -> float:
@@ -500,6 +571,33 @@ class Settings(BaseSettings):
         """Ensure budget limit is non-negative."""
         if v < 0:
             raise ValueError("daily_budget_limit must be non-negative")
+        return v
+
+    @field_validator("service_budget_map")
+    @classmethod
+    def validate_service_budget_map(cls, v: str) -> str:
+        """Validate SERVICE_BUDGET_MAP is valid JSON with non-negative numeric values."""
+        stripped = v.strip()
+        if not stripped:
+            return v
+        try:
+            result = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"SERVICE_BUDGET_MAP must be valid JSON: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"SERVICE_BUDGET_MAP must be a JSON object, got {type(result).__name__}"
+            )
+        invalid = {
+            k: val
+            for k, val in result.items()
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0
+        }
+        if invalid:
+            raise ValueError(
+                f"SERVICE_BUDGET_MAP values must be non-negative numbers, "
+                f"got invalid values: {invalid}"
+            )
         return v
 
     @field_validator("error_lookback_minutes")
@@ -636,6 +734,22 @@ class Settings(BaseSettings):
                 f"SERVICE_HOST_MAP values must be strings, got non-string values: {non_string}"
             )
         return result
+
+    def get_service_budget_map(self) -> dict[str, float]:
+        """Parse service_budget_map string into a dict mapping service → daily USD cap.
+
+        Returns an empty dict when SERVICE_BUDGET_MAP is not configured, meaning
+        no service has a per-service cap (all services are governed only by
+        DAILY_BUDGET_LIMIT).
+        Expects JSON format: ``{"my-api": 25.0, "worker": 10.0}``
+        """
+        v = self.service_budget_map.strip()
+        if not v:
+            return {}
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ValueError(f"SERVICE_BUDGET_MAP must be a JSON object, got {type(result).__name__}")
+        return {k: float(val) for k, val in result.items()}
 
     def get_service_repo_map(self) -> dict[str, str]:
         """Parse service_repo_map string into a dict mapping service → 'owner/repo'.

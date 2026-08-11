@@ -23,19 +23,25 @@ class FakeNotificationPort(NotificationPort):
         self.report_summary_call_count = 0
         self.report_alert_call_count = 0
         self.close_resolved_issue_call_count = 0
+        self.close_call_count = 0
         self.should_fail: bool = False
         self.fail_message: str = "Notification failed"
         # Configurable return value for report(), simulating a channel that
         # performs cooldown-gated alerting (e.g. phone-home).
         self.report_alerted_at: datetime | None = None
+        # Captures the `immediate` flag passed to each report() call, in order.
+        self.report_immediate_flags: list[bool] = []
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> datetime | None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> datetime | None:
         """Report a diagnosis for a signature.
 
         Captures the report for test assertions. Returns report_alerted_at,
         configurable to simulate a cooldown-gated channel's alert timestamp.
         """
         self.report_call_count += 1
+        self.report_immediate_flags.append(immediate)
 
         if self.should_fail:
             raise RuntimeError(self.fail_message)
@@ -79,6 +85,15 @@ class FakeNotificationPort(NotificationPort):
 
         self.closed_resolved_issues.append(signature)
 
+    async def close(self) -> None:
+        """Close connections and clean up resources.
+
+        Captures the call for test assertions. Unlike the other methods,
+        this ignores `should_fail` — tests that need `close()` itself to
+        raise should call it directly rather than via `should_fail`.
+        """
+        self.close_call_count += 1
+
     def get_last_diagnosis_report(self) -> tuple[Signature, Diagnosis] | None:
         """Get the most recent diagnosis report, if any."""
         if self.reported_diagnoses:
@@ -113,6 +128,7 @@ class FakeNotificationPort(NotificationPort):
     def reset(self) -> None:
         """Reset all collected notifications and state."""
         self.reported_diagnoses.clear()
+        self.report_immediate_flags.clear()
         self.reported_summaries.clear()
         self.reported_alerts.clear()
         self.closed_resolved_issues.clear()
@@ -120,5 +136,6 @@ class FakeNotificationPort(NotificationPort):
         self.report_summary_call_count = 0
         self.report_alert_call_count = 0
         self.close_resolved_issue_call_count = 0
+        self.close_call_count = 0
         self.should_fail = False
         self.fail_message = "Notification failed"

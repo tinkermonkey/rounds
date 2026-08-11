@@ -5,8 +5,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from rounds.adapters.notification.digest import DigestNotificationAdapter
 from rounds.adapters.scheduler.daemon import DaemonScheduler
-from rounds.core.models import PollResult
+from rounds.core.models import (
+    Diagnosis,
+    HealthSnapshot,
+    PollResult,
+    Severity,
+    Signature,
+    SignatureStatus,
+)
+from rounds.core.triage import TriageEngine
 from rounds.tests.fakes.notification import FakeNotificationPort
 from rounds.tests.fakes.poll import FakePollPort
 
@@ -126,6 +135,100 @@ async def test_no_budget_limit_allows_unlimited_costs(
     assert await scheduler._is_budget_exceeded() is False
 
 
+# --- Per-service budget cap tests ---
+
+
+@pytest.mark.asyncio
+async def test_service_budget_exceeded_blocks_investigation(
+    poll_port: FakePollPort,
+) -> None:
+    """Test that a service's per-service cap is detected as exceeded once reached."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 3.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is False
+
+    await scheduler.record_cost("diagnose", 2.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is True
+    assert scheduler.cost_by_service == {"noisy-service": 5.00}
+
+
+@pytest.mark.asyncio
+async def test_uncapped_service_never_reports_exceeded(
+    poll_port: FakePollPort,
+) -> None:
+    """A service with no entry in service_budget_map is only governed by the global budget."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 1000.00, service="quiet-service")
+    assert await scheduler.is_service_budget_exceeded("quiet-service") is False
+
+
+@pytest.mark.asyncio
+async def test_service_budgets_are_independent(
+    poll_port: FakePollPort,
+) -> None:
+    """Exhausting one service's cap must not affect another service's cap."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"service-a": 5.00, "service-b": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 5.00, service="service-a")
+
+    assert await scheduler.is_service_budget_exceeded("service-a") is True
+    assert await scheduler.is_service_budget_exceeded("service-b") is False
+    assert scheduler.cost_by_service == {"service-a": 5.00}
+
+
+@pytest.mark.asyncio
+async def test_service_budget_resets_on_date_change(
+    poll_port: FakePollPort,
+) -> None:
+    """Per-service accumulated cost resets alongside the global daily budget reset."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        service_budget_map={"noisy-service": 5.00},
+    )
+
+    await scheduler.record_cost("diagnose", 5.00, service="noisy-service")
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is True
+
+    original_date = scheduler._budget_date
+    scheduler._budget_date = original_date - timedelta(days=1)
+
+    # First check after the date change should reset and report not-exceeded
+    assert await scheduler.is_service_budget_exceeded("noisy-service") is False
+    assert scheduler.cost_by_service == {}
+    assert scheduler._budget_date == original_date
+
+
+@pytest.mark.asyncio
+async def test_record_cost_without_service_does_not_populate_cost_by_service(
+    poll_port: FakePollPort,
+) -> None:
+    """Costs recorded without a service (e.g. poll/fingerprint) aren't attributed to any service."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+    )
+
+    await scheduler.record_cost("poll", 0.0)
+    await scheduler.record_cost("fingerprint", 0.0)
+
+    assert scheduler.cost_by_service == {}
+
+
 # --- _run_loop Tests ---
 
 
@@ -217,6 +320,20 @@ async def test_run_loop_executes_resolution_cycle_when_budget_exceeded(
     """Resolution detection incurs no LLM cost, so it must keep running on
     the normal cadence even once the daily budget is exhausted — only
     diagnosis (investigation) is gated by budget."""
+    # Queue investigations so that, absent the budget gate, an investigation
+    # cycle would be triggered. This ensures the assertions below actually
+    # exercise the `not budget_exceeded` guard rather than passing vacuously
+    # because nothing was ever queued for investigation.
+    poll_port.set_default_poll_result(
+        PollResult(
+            errors_found=1,
+            new_signatures=1,
+            updated_signatures=0,
+            investigations_queued=1,
+            timestamp=datetime.now(UTC),
+        )
+    )
+
     scheduler = DaemonScheduler(
         poll_port=poll_port,
         poll_interval_seconds=1,
@@ -242,6 +359,9 @@ async def test_run_loop_executes_resolution_cycle_when_budget_exceeded(
     assert (
         poll_port.execute_resolution_cycle_call_count == poll_port.poll_cycle_count
     )
+    # Investigation (diagnosis) is the LLM-cost-incurring step and must be
+    # gated by the budget check, even though investigations were queued.
+    assert poll_port.execute_investigation_cycle_call_count == 0
 
 
 @pytest.mark.asyncio
@@ -805,3 +925,427 @@ async def test_investigation_failure_count_resets_on_success(
     )
 
     assert scheduler._investigation_failure_count == 0
+
+
+# ============================================================================
+# Poll-cycle health / self-monitoring circuit breaker
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_health_snapshot_healthy_before_any_poll(
+    poll_port: FakePollPort,
+) -> None:
+    """A freshly created scheduler reports healthy with no recorded poll yet."""
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is None
+    assert snapshot.consecutive_poll_failures == 0
+    assert snapshot.poll_failure_threshold == 5  # default matches the existing 5-failure pattern
+
+
+@pytest.mark.asyncio
+async def test_last_poll_completed_at_updates_after_success(
+    poll_port: FakePollPort,
+) -> None:
+    """Last-successful-poll timestamp is recorded after each successful poll cycle."""
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=0)
+    scheduler.running = True
+
+    async def stop_after_first_poll() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if poll_port.execute_poll_cycle_call_count >= 1:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(scheduler._run_loop(), stop_after_first_poll())
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is not None
+    assert snapshot.consecutive_poll_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_daemon_continues_after_poll_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Daemon loop must survive 5 consecutive poll-cycle failures and suspend polling."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_suspension() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 5:
+                # Once suspended, execute_poll_cycle is no longer called each
+                # iteration — let a few more empty loop iterations run to
+                # prove the daemon keeps going instead of crashing.
+                await asyncio.sleep(0.05)
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    # If the circuit breaker didn't catch the exception, gather would raise
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_suspension(),
+    )
+
+    assert scheduler._poll_failure_count == 5
+    assert scheduler._poll_suspended_until is not None
+    # Poll cycle was attempted exactly 5 times (once per failure), then
+    # suspended for backoff — no further attempts despite more loop iterations
+    assert poll_port.execute_poll_cycle_call_count == 5
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is False
+    assert snapshot.consecutive_poll_failures >= 5
+    assert snapshot.last_poll_completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_poll_resumes_after_backoff_expires(
+    poll_port: FakePollPort,
+) -> None:
+    """Polling retries after the suspension backoff expires, and resets on success."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Simulate being in the suspended state with an already-expired backoff
+    scheduler._poll_failure_count = 5
+    scheduler._poll_suspended_until = 0.0  # epoch — always in the past
+    # poll_port.should_fail_poll defaults to False, so the retry succeeds
+
+    async def stop_after_reset() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count == 0:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_reset(),
+    )
+
+    assert scheduler._poll_failure_count == 0
+    assert scheduler._poll_suspended_until is None
+    assert poll_port.execute_poll_cycle_call_count >= 1
+
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is True
+    assert snapshot.last_poll_completed_at is not None
+
+
+def test_health_snapshot_rejects_negative_poll_failures() -> None:
+    """HealthSnapshot.__post_init__ rejects a negative failure count, matching
+    every other frozen dataclass in core/models.py that validates invariants.
+    """
+    with pytest.raises(ValueError, match="consecutive_poll_failures"):
+        HealthSnapshot(
+            last_poll_completed_at=None,
+            consecutive_poll_failures=-1,
+            poll_failure_threshold=5,
+        )
+
+
+def test_health_snapshot_rejects_non_positive_threshold() -> None:
+    """HealthSnapshot.__post_init__ rejects a zero/negative threshold, which
+    would otherwise make consecutive_poll_failures < poll_failure_threshold
+    vacuously false (or trivially true for negative thresholds).
+    """
+    with pytest.raises(ValueError, match="poll_failure_threshold"):
+        HealthSnapshot(
+            last_poll_completed_at=None,
+            consecutive_poll_failures=0,
+            poll_failure_threshold=0,
+        )
+
+
+def test_health_snapshot_unhealthy_when_investigation_suspended(
+    poll_port: FakePollPort,
+) -> None:
+    """/health must reflect a tripped investigation circuit breaker even
+    though polling itself is succeeding - otherwise a stuck investigation
+    pipeline would report healthy forever.
+    """
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+    scheduler._investigation_failure_count = 5
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.investigation_suspended is True
+    assert snapshot.resolution_suspended is False
+    assert snapshot.healthy is False
+
+
+def test_health_snapshot_unhealthy_when_resolution_suspended(
+    poll_port: FakePollPort,
+) -> None:
+    """/health must reflect a tripped resolution circuit breaker even though
+    polling itself is succeeding.
+    """
+    scheduler = DaemonScheduler(poll_port=poll_port, poll_interval_seconds=1)
+    scheduler._resolution_failure_count = 5
+
+    snapshot = scheduler.get_health_snapshot()
+
+    assert snapshot.resolution_suspended is True
+    assert snapshot.investigation_suspended is False
+    assert snapshot.healthy is False
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_on_poll_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification is sent via NotificationPort when poll failures hit the threshold."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 5:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    assert notification_port.report_alert_call_count == 1
+    alert = notification_port.reported_alerts[0]
+    assert alert["alert"] == "poll_cycle_pipeline_suspended"
+    assert alert["consecutive_failures"] == 5
+
+
+@pytest.mark.asyncio
+async def test_notification_sent_only_once_per_poll_failure_run(
+    poll_port: FakePollPort,
+) -> None:
+    """Notification fires exactly once when the poll threshold is crossed, not again after."""
+    notification_port = FakeNotificationPort()
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        notification_port=notification_port,
+    )
+    scheduler.running = True
+
+    # Pre-set to 4 failures; one more crosses the threshold (5), then failures
+    # accumulate past 5 with an already-expired suspension so retries run immediately
+    scheduler._poll_failure_count = 4
+    scheduler._poll_suspended_until = 0.0  # always expired
+    poll_port.should_fail_poll = True
+
+    async def stop_after_extra_failures() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 8:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_extra_failures(),
+    )
+
+    # Threshold crossed only once, so notification fires exactly once
+    assert notification_port.report_alert_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_failure_count_independent_of_investigation_and_resolution(
+    poll_port: FakePollPort,
+) -> None:
+    """Poll failure counter is tracked independently of investigation/resolution counters."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+    )
+    scheduler.running = True
+
+    # Poll succeeds every cycle; resolution fails every cycle. With no poll
+    # failures, investigations never queue (default PollResult has
+    # investigations_queued=0), so the investigation cycle is never invoked —
+    # pre-seed its failure count to prove it stays untouched.
+    scheduler._investigation_failure_count = 3
+    poll_port.should_fail_resolution = True
+
+    async def stop_after_a_few_cycles() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if poll_port.execute_resolution_cycle_call_count >= 3:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_a_few_cycles(),
+    )
+
+    assert scheduler._poll_failure_count == 0
+    assert scheduler._investigation_failure_count == 3
+    assert scheduler._resolution_failure_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_custom_poll_failure_threshold(
+    poll_port: FakePollPort,
+) -> None:
+    """poll_failure_threshold is configurable and gates both suspension and health status."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=0,
+        budget_limit=1000.0,
+        poll_failure_threshold=2,
+    )
+    scheduler.running = True
+    poll_port.should_fail_poll = True
+
+    async def stop_after_threshold() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if scheduler._poll_failure_count >= 2:
+                await scheduler.stop()
+                return
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        stop_after_threshold(),
+    )
+
+    # Suspended after only 2 failures (not the default 5), and calls stop there
+    assert poll_port.execute_poll_cycle_call_count == 2
+    snapshot = scheduler.get_health_snapshot()
+    assert snapshot.healthy is False
+    assert snapshot.poll_failure_threshold == 2
+
+
+# --- WARN Digest Flush Tests ---
+
+
+def _make_batchable_signature(service: str = "svc") -> Signature:
+    """A DIAGNOSED, WARN-severity signature that qualifies for digest batching."""
+    now = datetime.now(UTC)
+    return Signature(
+        id=f"sig-{service}",
+        fingerprint=f"fp-{service}",
+        error_type="TransientError",
+        service=service,
+        message_template="transient failure",
+        stack_hash="hash-warn",
+        first_seen=now,
+        last_seen=now,
+        occurrence_count=1,
+        status=SignatureStatus.DIAGNOSED,
+        max_severity=Severity.WARN,
+    )
+
+
+def _make_low_confidence_diagnosis() -> Diagnosis:
+    return Diagnosis(
+        root_cause="root",
+        evidence=(),
+        suggested_fix="fix",
+        confidence="low",
+        diagnosed_at=datetime.now(UTC),
+        model="model",
+        cost_usd=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_loop_flushes_digest_when_window_elapsed(
+    poll_port: FakePollPort,
+) -> None:
+    """DaemonScheduler drives the digest flush timer on its own schedule,
+    decoupled from poll_interval_seconds - a digest_interval_seconds of 0
+    means every loop iteration is due."""
+    inner = FakeNotificationPort()
+    digest_notifier = DigestNotificationAdapter(inner=inner, triage=TriageEngine())
+    await digest_notifier.report(_make_batchable_signature(), _make_low_confidence_diagnosis())
+    assert digest_notifier.pending_count == 1
+
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+        digest_notifier=digest_notifier,
+        digest_interval_seconds=0,
+    )
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert inner.report_summary_call_count == 1
+    stats = inner.get_last_summary_report()
+    assert stats is not None
+    assert stats["count"] == 1
+    # Window rolled over after the flush, and the buffer is empty again -
+    # a second iteration must not re-report the same diagnosis.
+    assert digest_notifier.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_loop_without_digest_notifier_never_flushes(
+    poll_port: FakePollPort,
+) -> None:
+    """digest_notifier=None (the default) disables digest flushing entirely -
+    current per-diagnosis notification behavior is unaffected."""
+    scheduler = DaemonScheduler(
+        poll_port=poll_port,
+        poll_interval_seconds=1,
+        budget_limit=1000.0,
+    )
+    assert scheduler.digest_notifier is None
+    scheduler.running = True
+
+    async def run_then_stop() -> None:
+        await asyncio.sleep(0.05)
+        await scheduler.stop()
+
+    await asyncio.gather(
+        scheduler._run_loop(),
+        run_then_stop(),
+    )
+
+    assert poll_port.poll_cycle_count > 0

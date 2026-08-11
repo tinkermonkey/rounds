@@ -183,6 +183,15 @@ class PollService(PollPort):
 
         for signature in pending:
             if self.triage.should_investigate(signature):
+                if self.budget_tracker is not None and await self.budget_tracker.is_service_budget_exceeded(
+                    signature.service
+                ):
+                    logger.warning(
+                        f"Skipping investigation for signature {signature.fingerprint} "
+                        f"(service={signature.service}): per-service daily budget cap exhausted"
+                    )
+                    continue
+
                 investigations_attempted += 1
                 try:
                     diagnosis = await self.investigator.investigate(signature)

@@ -7,7 +7,7 @@ conditions.
 
 from datetime import UTC, datetime, timedelta
 
-from .models import Confidence, Diagnosis, Signature, SignatureStatus
+from .models import Confidence, Diagnosis, Severity, Signature, SignatureStatus
 
 
 class TriageEngine:
@@ -21,6 +21,7 @@ class TriageEngine:
         min_occurrence_for_investigation: int = 3,
         investigation_cooldown_hours: int = 24,
         high_confidence_threshold: Confidence = "high",
+        batch_severity_ceiling: Severity = Severity.WARN,
     ):
         if min_occurrence_for_investigation <= 0:
             raise ValueError(
@@ -35,6 +36,9 @@ class TriageEngine:
         self.min_occurrence_for_investigation = min_occurrence_for_investigation
         self.investigation_cooldown_hours = investigation_cooldown_hours
         self.high_confidence_threshold = high_confidence_threshold
+        # Diagnoses at or below this severity qualify for WARN-digest batching
+        # (see should_batch()), e.g. WARN, INFO, DEBUG, TRACE but not ERROR/FATAL.
+        self.batch_severity_ceiling = batch_severity_ceiling
 
     def should_investigate(self, signature: Signature) -> bool:
         """Is this signature worth sending to the diagnosis engine?
@@ -98,6 +102,31 @@ class TriageEngine:
             return True
 
         return False
+
+    def should_batch(self, signature: Signature, diagnosis: Diagnosis) -> bool:
+        """Should a notify-worthy diagnosis be deferred into the periodic
+        WARN digest instead of sent as an individual immediate notification?
+
+        Only meaningful for diagnoses that already passed should_notify() —
+        this narrows that set down to the low-priority tail that can safely
+        wait for the next digest window.
+
+        The rule is an OR, not an AND: low-confidence diagnoses always
+        batch regardless of severity or tags, and WARN-or-below/non-critical
+        signatures always batch regardless of confidence.
+
+        Considers:
+        - Confidence level (low confidence always batches)
+        - Signature severity and critical tag (WARN-or-below, non-critical
+          signatures batch regardless of confidence)
+        """
+        if diagnosis.confidence == "low":
+            return True
+
+        return (
+            signature.max_severity.rank <= self.batch_severity_ceiling.rank
+            and "critical" not in signature.tags
+        )
 
     def calculate_priority(self, signature: Signature) -> int:
         """Order signatures for investigation when multiple are pending.

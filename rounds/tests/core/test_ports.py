@@ -379,7 +379,9 @@ class MockUsageQueryPort(UsageQueryPort):
 class MockNotificationPort(NotificationPort):
     """Mock implementation of NotificationPort for testing."""
 
-    async def report(self, signature: Signature, diagnosis: Diagnosis) -> None:
+    async def report(
+        self, signature: Signature, diagnosis: Diagnosis, *, immediate: bool = False
+    ) -> None:
         """Mock implementation."""
         pass
 
