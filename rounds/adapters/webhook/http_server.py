@@ -47,7 +47,7 @@ def make_webhook_handler(
         metrics_provider: Optional source of daemon cost accounting used to
             answer /dashboard/costs with the live per-service cost breakdown
             (FR-3.7). When None (e.g. webhook mode, which has no scheduler),
-            /dashboard/costs reports an empty breakdown.
+            /dashboard/costs reports a zeroed breakdown with data_available=False.
 
     Returns:
         A WebhookHTTPHandler class configured with the provided dependencies
@@ -318,10 +318,18 @@ def make_webhook_handler(
 
             Backs FR-3.7 (operator-facing per-service cost accounting).
             Without a metrics_provider (e.g. webhook mode, which has no
-            scheduler) this reports an empty breakdown rather than failing.
+            scheduler), reports a zeroed breakdown with data_available=False
+            so monitoring consumers can tell "no costs incurred" apart from
+            "cost data unavailable" instead of reading fabricated zeros as real.
             """
             if metrics_provider is None:
-                self._send_response({"daily_cost_usd": 0.0, "cost_by_service": {}})
+                self._send_response(
+                    {
+                        "daily_cost_usd": 0.0,
+                        "cost_by_service": {},
+                        "data_available": False,
+                    }
+                )
                 return
 
             try:
@@ -336,6 +344,7 @@ def make_webhook_handler(
                 {
                     "daily_cost_usd": daily_cost_usd,
                     "cost_by_service": cost_by_service,
+                    "data_available": True,
                 }
             )
 

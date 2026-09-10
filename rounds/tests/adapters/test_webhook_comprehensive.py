@@ -102,6 +102,38 @@ class TestWebhookAuthentication:
         finally:
             conn.close()
 
+    @pytest.mark.asyncio
+    async def test_valid_x_api_key_header_succeeds(
+        self, auth_server: WebhookHTTPServer
+    ) -> None:
+        """Should accept requests authenticated via X-API-Key instead of Bearer."""
+        conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
+
+        try:
+            headers = {"X-API-Key": "test-secret-key"}
+            conn.request("POST", "/poll", headers=headers)
+            response = conn.getresponse()
+
+            assert response.status != 401
+        finally:
+            conn.close()
+
+    @pytest.mark.asyncio
+    async def test_invalid_x_api_key_header_fails(
+        self, auth_server: WebhookHTTPServer
+    ) -> None:
+        """Should reject requests with an incorrect X-API-Key header."""
+        conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
+
+        try:
+            headers = {"X-API-Key": "wrong-key"}
+            conn.request("POST", "/poll", headers=headers)
+            response = conn.getresponse()
+
+            assert response.status == 401
+        finally:
+            conn.close()
+
 
 class TestWebhookDoSProtection:
     """Tests for DoS protection mechanisms."""

@@ -230,7 +230,7 @@ class TestWebhookHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_health_unaffected_by_telemetry_backend(self) -> None:
-        """Health reflects only the poll-cycle circuit breaker state handed to it —
+        """Health reflects only the poll-cycle circuit breaker state handed to it -
         it never queries a telemetry backend, so a telemetry outage alone can't
         flip it to unhealthy as long as polling itself keeps succeeding.
         """
@@ -315,8 +315,9 @@ class TestWebhookDashboardCostsEndpoint:
     async def test_dashboard_costs_without_provider_returns_empty_breakdown(
         self,
     ) -> None:
-        """Without a metrics_provider (e.g. webhook mode), reports an empty
-        breakdown rather than failing.
+        """Without a metrics_provider (e.g. webhook mode), reports a zeroed
+        breakdown flagged with data_available=False rather than failing or
+        letting the fabricated zeros be mistaken for "no costs incurred".
         """
         server = WebhookHTTPServer(
             webhook_receiver=None,
@@ -332,7 +333,11 @@ class TestWebhookDashboardCostsEndpoint:
                 response = conn.getresponse()
                 assert response.status == 200
                 body = json.loads(response.read().decode())
-                assert body == {"daily_cost_usd": 0.0, "cost_by_service": {}}
+                assert body == {
+                    "daily_cost_usd": 0.0,
+                    "cost_by_service": {},
+                    "data_available": False,
+                }
             finally:
                 conn.close()
         finally:
@@ -361,6 +366,7 @@ class TestWebhookDashboardCostsEndpoint:
                 body = json.loads(response.read().decode())
                 assert body["daily_cost_usd"] == 42.75
                 assert body["cost_by_service"] == {"api": 30.0, "worker": 12.75}
+                assert body["data_available"] is True
             finally:
                 conn.close()
         finally:
