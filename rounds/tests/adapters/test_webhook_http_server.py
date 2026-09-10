@@ -230,7 +230,7 @@ class TestWebhookHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_health_unaffected_by_telemetry_backend(self) -> None:
-        """Health reflects only the poll-cycle circuit breaker state handed to it —
+        """Health reflects only the poll-cycle circuit breaker state handed to it -
         it never queries a telemetry backend, so a telemetry outage alone can't
         flip it to unhealthy as long as polling itself keeps succeeding.
         """
@@ -315,8 +315,9 @@ class TestWebhookDashboardCostsEndpoint:
     async def test_dashboard_costs_without_provider_returns_empty_breakdown(
         self,
     ) -> None:
-        """Without a metrics_provider (e.g. webhook mode), reports an empty
-        breakdown rather than failing.
+        """Without a metrics_provider (e.g. webhook mode), reports a zeroed
+        breakdown flagged with data_available=False rather than failing or
+        letting the fabricated zeros be mistaken for "no costs incurred".
         """
         server = WebhookHTTPServer(
             webhook_receiver=None,
@@ -332,7 +333,11 @@ class TestWebhookDashboardCostsEndpoint:
                 response = conn.getresponse()
                 assert response.status == 200
                 body = json.loads(response.read().decode())
-                assert body == {"daily_cost_usd": 0.0, "cost_by_service": {}}
+                assert body == {
+                    "daily_cost_usd": 0.0,
+                    "cost_by_service": {},
+                    "data_available": False,
+                }
             finally:
                 conn.close()
         finally:
@@ -361,6 +366,7 @@ class TestWebhookDashboardCostsEndpoint:
                 body = json.loads(response.read().decode())
                 assert body["daily_cost_usd"] == 42.75
                 assert body["cost_by_service"] == {"api": 30.0, "worker": 12.75}
+                assert body["data_available"] is True
             finally:
                 conn.close()
         finally:
@@ -369,7 +375,11 @@ class TestWebhookDashboardCostsEndpoint:
     @pytest.mark.asyncio
     async def test_dashboard_costs_provider_exception_returns_503(self) -> None:
         """A metrics_provider that raises must still get a proper HTTP response -
-        not a dropped connection with a leaked traceback.
+        not a dropped connection with a leaked traceback - and must still carry
+        data_available=False like every other "no real numbers" response, not
+        omit the field entirely (round-1 review finding on PR #169: the field
+        was only wired into the no-provider and success paths, leaving this,
+        the one case data_available exists to flag, without it at all).
         """
         server = WebhookHTTPServer(
             webhook_receiver=None,
@@ -387,6 +397,7 @@ class TestWebhookDashboardCostsEndpoint:
                 assert response.status == 503
                 body = json.loads(response.read().decode())
                 assert body["error"] == "dashboard query failed"
+                assert body["data_available"] is False
             finally:
                 conn.close()
         finally:
