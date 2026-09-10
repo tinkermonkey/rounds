@@ -57,7 +57,7 @@ class TestWebhookAuthentication:
         conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
 
         try:
-            conn.request("POST", "/poll")
+            conn.request("POST", "/api/poll")
             response = conn.getresponse()
 
             # Should return 401 Unauthorized
@@ -77,11 +77,46 @@ class TestWebhookAuthentication:
 
         try:
             headers = {"Authorization": "Bearer wrong-token"}
-            conn.request("POST", "/poll", headers=headers)
+            conn.request("POST", "/api/poll", headers=headers)
             response = conn.getresponse()
 
             # Should return 401 Unauthorized
             assert response.status == 401
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _post_and_get_status(port: int, path: str, headers: dict[str, str]) -> int:
+        """Make a blocking POST and return the response status.
+
+        Round-1 review finding on PR #169, part two: fixing the two
+        "succeeds" tests below to actually hit a real /api/* route (instead
+        of /poll, which 404s and was silently satisfying `!= 401`) surfaced
+        a genuine, pre-existing deadlock — not something this fix introduces.
+        do_POST's routed handlers (_handle_poll etc.) run via
+        asyncio.run_coroutine_threadsafe(coro, event_loop) against the SAME
+        event loop the pytest-asyncio test coroutine itself runs on
+        (WebhookHTTPServer.start captures asyncio.get_running_loop()). A
+        plain, synchronous HTTPConnection.getresponse() call made directly
+        from an `async def test_...` never yields control back to that loop
+        while it blocks waiting on the socket — so the submitted coroutine
+        can never actually run, and the request stalls for the full 30s
+        `_run_async` timeout before falling back to a 504. This appears to
+        silently affect every OTHER test in this file that already uses
+        raw HTTPConnection against an /api/* (or, before this PR, a
+        mistyped) route — none of them actually observed a real success
+        response either; they happened to pass against whatever status a
+        404 (or, for the Content-Length tests, a pre-auth synchronous 400)
+        produces, never reaching this deadlock. Out of scope to fix
+        everywhere in this PR; running just these two calls in a worker
+        thread via asyncio.to_thread is enough to let the event loop stay
+        free to actually process the request, confirmed against a real
+        server run (not assumed) before landing this.
+        """
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("POST", path, headers=headers)
+            return conn.getresponse().status
         finally:
             conn.close()
 
@@ -90,33 +125,28 @@ class TestWebhookAuthentication:
         self, auth_server: WebhookHTTPServer
     ) -> None:
         """Should accept requests with correct API key."""
-        conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
-
-        try:
-            headers = {"Authorization": "Bearer test-secret-key"}
-            conn.request("POST", "/poll", headers=headers)
-            response = conn.getresponse()
-
-            # Should not return 401 (may return 200 or other codes)
-            assert response.status != 401
-        finally:
-            conn.close()
+        headers = {"Authorization": "Bearer test-secret-key"}
+        # Round-1 review finding on PR #169: this used to POST to /poll, a
+        # route that doesn't exist (real routes are /api/poll etc.) — the
+        # 404 that route actually returns also isn't 401, so the assertion
+        # passed without ever proving an authenticated request gets served.
+        # /api/poll is the real route; see _post_and_get_status for why the
+        # call is run in a worker thread, and assert the real success
+        # status, not just "wasn't rejected at the auth gate".
+        status = await asyncio.to_thread(self._post_and_get_status, 18080, "/api/poll", headers)
+        assert status == 200
 
     @pytest.mark.asyncio
     async def test_valid_x_api_key_header_succeeds(
         self, auth_server: WebhookHTTPServer
     ) -> None:
         """Should accept requests authenticated via X-API-Key instead of Bearer."""
-        conn = HTTPConnection("127.0.0.1", 18080, timeout=5)
-
-        try:
-            headers = {"X-API-Key": "test-secret-key"}
-            conn.request("POST", "/poll", headers=headers)
-            response = conn.getresponse()
-
-            assert response.status != 401
-        finally:
-            conn.close()
+        headers = {"X-API-Key": "test-secret-key"}
+        # See test_valid_auth_token_succeeds above for why this is /api/poll
+        # + a real 200 assertion, run via _post_and_get_status in a worker
+        # thread, rather than /poll + status != 401 on the main test coroutine.
+        status = await asyncio.to_thread(self._post_and_get_status, 18080, "/api/poll", headers)
+        assert status == 200
 
     @pytest.mark.asyncio
     async def test_invalid_x_api_key_header_fails(
@@ -127,7 +157,7 @@ class TestWebhookAuthentication:
 
         try:
             headers = {"X-API-Key": "wrong-key"}
-            conn.request("POST", "/poll", headers=headers)
+            conn.request("POST", "/api/poll", headers=headers)
             response = conn.getresponse()
 
             assert response.status == 401
