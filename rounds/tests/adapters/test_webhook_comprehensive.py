@@ -13,6 +13,32 @@ from rounds.tests.fakes.management import FakeManagementPort
 from rounds.tests.fakes.poll import FakePollPort
 
 
+def _blocking_post(
+    port: int, path: str, headers: dict[str, str] | None = None, body: str | None = None
+) -> tuple[int, str]:
+    """Make a blocking POST and return (status, response_body).
+
+    Same deadlock this works around as TestWebhookAuthentication's
+    _post_and_get_status (see its docstring for the full explanation):
+    do_POST's routed handlers run via
+    asyncio.run_coroutine_threadsafe(coro, event_loop) against the SAME
+    event loop an `async def test_...` coroutine itself runs on, so a
+    plain synchronous HTTPConnection.getresponse() call made directly from
+    the test coroutine would block that loop and the submitted coroutine
+    could never run. Callers that actually reach a routed handler (as
+    opposed to being rejected earlier, during auth/Content-Length/JSON
+    parsing — none of which schedule anything on the loop) must run this
+    via asyncio.to_thread.
+    """
+    conn = HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request("POST", path, body=body, headers=headers or {})
+        response = conn.getresponse()
+        return response.status, response.read().decode()
+    finally:
+        conn.close()
+
+
 class TestWebhookAuthentication:
     """Tests for webhook authentication mechanisms."""
 
@@ -214,7 +240,12 @@ class TestWebhookDoSProtection:
         conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
 
         try:
-            conn.putrequest("POST", "/investigate")
+            # Content-Length is validated before path routing (see
+            # http_server.py's do_POST), so the exact path doesn't affect
+            # this test's outcome — but /api/investigate is the real
+            # route, not /investigate (see _blocking_post's docstring and
+            # PR #169 for the same class of typo on /poll).
+            conn.putrequest("POST", "/api/investigate")
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", str(1024 * 1024 + 1))
             conn.endheaders()
@@ -235,7 +266,10 @@ class TestWebhookDoSProtection:
         conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
 
         try:
-            conn.putrequest("POST", "/investigate")
+            # Same non-effect on outcome as test_oversized_body_rejected
+            # above — Content-Length is validated before routing — fixed
+            # to the real route for the same clarity reason.
+            conn.putrequest("POST", "/api/investigate")
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", "not-a-number")
             conn.endheaders()
@@ -251,21 +285,25 @@ class TestWebhookDoSProtection:
     async def test_normal_size_body_accepted(
         self, dos_server: WebhookHTTPServer
     ) -> None:
-        """Should accept requests with reasonable body size."""
-        conn = HTTPConnection("127.0.0.1", 18081, timeout=5)
+        """Should accept requests with reasonable body size.
 
-        try:
-            # Create a small valid JSON body
-            small_body = json.dumps({"signature_id": "test-123"})
+        Was posting to /investigate, which 404s (the real route is
+        /api/investigate — same class of typo fixed for /poll in PR #169)
+        — so this used to pass vacuously against a 404 rather than ever
+        reaching the real handler. Fixed to the real route, and run via
+        asyncio.to_thread since that now schedules a coroutine back onto
+        this same test's event loop (see _blocking_post's docstring).
+        """
+        # Create a small valid JSON body
+        small_body = json.dumps({"signature_id": "test-123"})
+        headers = {"Content-Type": "application/json"}
 
-            headers = {"Content-Type": "application/json"}
-            conn.request("POST", "/investigate", body=small_body, headers=headers)
-            response = conn.getresponse()
+        status, _ = await asyncio.to_thread(
+            _blocking_post, 18081, "/api/investigate", headers, small_body
+        )
 
-            # Should not reject based on size (may fail for other reasons)
-            assert response.status != 413
-        finally:
-            conn.close()
+        # Should not reject based on size (may fail for other reasons)
+        assert status != 413
 
 
 class TestWebhookJSONParsing:
@@ -314,8 +352,13 @@ class TestWebhookJSONParsing:
         try:
             invalid_json = "{this is not valid json"
 
+            # JSON parsing happens before path routing (see http_server.py's
+            # do_POST), so the exact path doesn't affect this test's
+            # outcome — but /api/investigate is the real route, not
+            # /investigate, fixed for the same clarity reason as the
+            # other /investigate typos in this file.
             headers = {"Content-Type": "application/json"}
-            conn.request("POST", "/investigate", body=invalid_json, headers=headers)
+            conn.request("POST", "/api/investigate", body=invalid_json, headers=headers)
             response = conn.getresponse()
 
             # Should return 400 Bad Request
@@ -325,21 +368,24 @@ class TestWebhookJSONParsing:
 
     @pytest.mark.asyncio
     async def test_valid_json_accepted(self, json_server: WebhookHTTPServer) -> None:
-        """Should accept valid JSON payloads."""
-        conn = HTTPConnection("127.0.0.1", 18082, timeout=5)
+        """Should accept valid JSON payloads.
 
-        try:
-            valid_json = json.dumps({"signature_id": "test-456"})
+        Was posting to /investigate, which 404s (the real route is
+        /api/investigate) — a 404 trivially satisfies `status != 400`, so
+        this used to pass without ever reaching the real handler. Fixed to
+        the real route, and run via asyncio.to_thread for the same
+        deadlock reason as test_normal_size_body_accepted above.
+        """
+        valid_json = json.dumps({"signature_id": "test-456"})
+        headers = {"Content-Type": "application/json"}
 
-            headers = {"Content-Type": "application/json"}
-            conn.request("POST", "/investigate", body=valid_json, headers=headers)
-            response = conn.getresponse()
+        status, body = await asyncio.to_thread(
+            _blocking_post, 18082, "/api/investigate", headers, valid_json
+        )
 
-            # Should not return 400 for JSON parsing
-            # (may return other errors like 404 if signature doesn't exist)
-            assert response.status != 400 or "JSON" not in response.read().decode()
-        finally:
-            conn.close()
+        # Should not return 400 for JSON parsing
+        # (may return other errors like 404 if signature doesn't exist)
+        assert status != 400 or "JSON" not in body
 
 
 class TestWebhookReceiverConcurrency:
